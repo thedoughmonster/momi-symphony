@@ -55,6 +55,7 @@ export class HostController {
       })
       const turn = await this.client.request<{ turn: { id: string } }>("turn/start", {
         threadId: started.thread.id, clientUserMessageId: input.work_id,
+        approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
         input: [{ type: "text", text: input.instruction, text_elements: [] }],
         responsesapiClientMetadata: { work_id: input.work_id,
           issue_identifier: input.issue_identifier },
@@ -64,7 +65,8 @@ export class HostController {
             disposition: { enum: ["completed", "failed", "interrupted"] },
             summary: { type: "string", maxLength: 1000 } } },
       })
-      await this.ledger.accept(input.work_id, started.thread.id, turn.turn.id)
+      const accepted = await this.ledger.accept(input.work_id, started.thread.id, turn.turn.id)
+      await this.recover(accepted)
       return { thread_id: started.thread.id, turn_id: turn.turn.id }
     } catch (error) {
       await this.ledger.ambiguous(input.work_id); throw error
