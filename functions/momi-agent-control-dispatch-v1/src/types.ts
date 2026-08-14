@@ -1,3 +1,5 @@
+import type { AgentAction } from "../../../src/actions.ts"
+
 export type DispatchInput = { work_id: string; capability_token: string }
 
 export type TerminalInput = DispatchInput & {
@@ -14,6 +16,7 @@ export type ClaimedDispatch = {
   work_id: string
   issue_id: string
   issue_identifier: string
+  action: AgentAction
   issue_url: string
   project_id: string | null
   project_name: string | null
@@ -33,6 +36,7 @@ export type HostAcceptance = { thread_id: string; turn_id: string }
 export type TerminalContext = {
   issue_id: string
   issue_identifier: string
+  action: AgentAction
   linear_comment_id: string | null
 }
 

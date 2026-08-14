@@ -13,7 +13,7 @@ export function buildLinearComment(work: ClaimedDispatch, terminal?: TerminalInp
     : work.rejection_code
     ? `- Final disposition: rejected (${work.rejection_code})`
     : "- Run state: task accepted; terminal result pending"
-  return `${marker}\n## Codex run\n\n- Action: \`execute-run\`\n` +
+  return `${marker}\n## Codex run\n\n- Action: \`${work.action}\`\n` +
     `- Dispatch: \`${work.work_id}\`\n${task}\n` +
     `- Symphony: intentionally not invoked by the direct Codex executor\n` +
     `- Recorded at: ${new Date().toISOString()}\n${state}`

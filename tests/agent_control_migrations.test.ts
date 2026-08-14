@@ -5,6 +5,7 @@ import test from "node:test"
 const foundationPath = "supabase/migrations/20260814125234_create_agent_control.sql"
 const adapterPath = "supabase/migrations/20260814125236_add_agent_control_dispatch_trigger_adapter.sql"
 const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_control_host_endpoint.sql"
+const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_action_catalog.sql"
 
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
@@ -52,4 +53,18 @@ test("host endpoint stays private, HTTPS-only, and resolves at claim time", asyn
   assert.match(hostConfig, /grant execute on function momi_agent_ops\.claim_dispatch_v2/)
   assert.match(hostConfig, /revoke all on function momi_agent_ops\.claim_dispatch_v2/)
   assert.doesNotMatch(hostConfig, /\bnet\.http_post\b/)
+})
+
+test("action catalog preserves one idempotent dispatch and private write-back", async () => {
+  const migration = await readFile(actionCatalogPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  for (const action of ["execute-run", "validate-issue", "investigate-issue",
+    "cleanup", "decompose", "run-discovery"]) assert.match(migration, new RegExp(action))
+  assert.match(migration, /p_action is null/)
+  assert.match(migration, /disposition := 'duplicate'/)
+  assert.match(migration, /'linear:' \|\| p_delivery_id::text \|\| ':' \|\| p_action/)
+  assert.match(migration, /create function momi_agent_ops\.claim_dispatch_v3/)
+  assert.match(migration, /create function momi_agent_ops\.record_terminal_v2/)
+  assert.match(migration, /action_label_removed_at/)
+  assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })

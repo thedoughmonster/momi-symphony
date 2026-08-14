@@ -8,7 +8,7 @@ export async function recordLinearWriteback(
 ): Promise<boolean> {
   const sql = getDatabase()
   const rows = await sql<{ recorded: boolean }[]>`
-    select momi_agent_ops.record_linear_writeback_v1(
+    select momi_agent_ops.record_linear_writeback_v2(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${commentId}::uuid, true, ${hasRun}
     ) as recorded

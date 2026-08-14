@@ -1,5 +1,6 @@
 import type { JSONValue } from "postgres"
 
+import { AGENT_ACTIONS } from "../../../src/actions.ts"
 import type { NormalizedLinearEvent } from "./types.ts"
 
 export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent | null {
@@ -43,11 +44,13 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     ? names(updated.labels)
     : [...new Set(beforeIds.flatMap((id) => labelNamesById.get(id) ?? []))].sort()
   const after = labelsChanged ? names(data.labels) : []
-  const executeLabelId = labelObjects.find((label) => label.name === "execute-run")?.id
-  const executeRunAdded = labelsChanged && after.includes("execute-run") &&
-    (beforeIds.length > 0 || Object.prototype.hasOwnProperty.call(updated, "labelIds")
-      ? typeof executeLabelId === "string" && !beforeIds.includes(executeLabelId)
-      : !before.includes("execute-run"))
+  const usesIds = Object.prototype.hasOwnProperty.call(updated, "labelIds")
+  const addedActions = labelsChanged ? AGENT_ACTIONS.filter((action) => {
+    const labelId = labelObjects.find((label) => label.name === action)?.id
+    return after.includes(action) && (usesIds
+      ? typeof labelId === "string" && !beforeIds.includes(labelId)
+      : !before.includes(action))
+  }) : []
   const text = (candidate: unknown) => typeof candidate === "string" ? candidate : null
   const number = (candidate: unknown) => typeof candidate === "number" ? candidate : null
   return {
@@ -61,7 +64,7 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     issueUrl: text(payload.url) ?? text(data.url),
     projectId: text(data.projectId) ?? text(project.id),
     projectName: text(data.projectName) ?? text(project.name),
-    executeRunAdded,
+    action: addedActions.length === 1 ? addedActions[0] : null,
     changedFields: labelsChanged ? { labels: { before, after } } : {},
   }
 }

@@ -10,6 +10,7 @@ const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {
   let claimCount = 0; let hostCount = 0; let hasRun = false
   const work = { work_id: input.work_id, issue_id: "issue", issue_identifier: "MOX-151",
+    action: "execute-run",
     issue_url: "https://linear.app/issue", project_id: "project",
     project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
     base_branch: "dev", active_states: ["Todo"],
@@ -33,6 +34,7 @@ test("one claimed dispatch creates one host task and replay is duplicate", async
 test("unknown project writes an explanation without creating a task", async () => {
   let hostCount = 0; let marker = true
   const work = { work_id: input.work_id, issue_id: "issue", issue_identifier: "MOX-151",
+    action: "validate-issue",
     issue_url: "https://linear.app/issue", project_id: "unknown", project_name: "Other",
     repository: null, base_branch: null, active_states: null, host_dispatch_url: null,
     rejection_code: "unknown_project", delivery_phase: "writeback",

@@ -63,11 +63,15 @@
     ],
     "private_routines": [
       "momi_agent_ops.accept_linear_webhook_v1",
+      "momi_agent_ops.accept_linear_webhook_v2",
       "momi_agent_ops.claim_dispatch_v1",
       "momi_agent_ops.claim_dispatch_v2",
+      "momi_agent_ops.claim_dispatch_v3",
       "momi_agent_ops.record_host_acceptance_v1",
       "momi_agent_ops.record_linear_writeback_v1",
+      "momi_agent_ops.record_linear_writeback_v2",
       "momi_agent_ops.record_terminal_v1",
+      "momi_agent_ops.record_terminal_v2",
       "momi_agent_ops.retry_dispatch_v1",
       "momi_agent_ops.run_dispatch_recovery_v1",
       "momi_agent_ops.wake_agent_control_dispatch"

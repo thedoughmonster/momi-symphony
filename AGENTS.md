@@ -1,6 +1,6 @@
 # Agent Control Rules
 
-- Accept only the `execute-run` action in this slice; `has-run` is output only.
+- Accept only the declared action catalog; `has-run` is output only.
 - Verify Linear signatures over untouched bytes before trusting parsed fields.
 - Normalize label changes only from `updatedFrom`, never the full issue object.
 - Keep `momi_agent_ops` private and expose no Data API relation or routine.
@@ -8,4 +8,4 @@
 - Project mappings come from the owned table and fail closed when absent.
 - A dispatch may create at most one Codex thread; ambiguous starts stay blocked.
 - Archive only after a terminal App Server turn notification is observed.
-- Do not invoke Symphony or implement parent, cancellation, or other action labels.
+- Never invoke Symphony; parent-run and cancellation behavior remain out of scope.

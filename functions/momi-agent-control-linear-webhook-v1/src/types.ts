@@ -1,5 +1,7 @@
 import type { JSONValue } from "postgres"
 
+import type { AgentAction } from "../../../src/actions.ts"
+
 export type LabelChange = { before: string[]; after: string[] }
 
 export type NormalizedLinearEvent = {
@@ -13,7 +15,7 @@ export type NormalizedLinearEvent = {
   issueUrl: string | null
   projectId: string | null
   projectName: string | null
-  executeRunAdded: boolean
+  action: AgentAction | null
   changedFields: { labels: LabelChange } | Record<string, never>
 }
 

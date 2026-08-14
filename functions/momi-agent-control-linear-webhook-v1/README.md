@@ -4,7 +4,7 @@
 
 Linear signs a sealed envelope. This function checks the seal before opening
 the envelope, stores the complete letter, and creates work only when the label
-change explicitly says `execute-run` was added.
+change explicitly adds exactly one declared action.
 
 ## Trigger And Input
 
@@ -12,7 +12,9 @@ Linear sends an HTTPS `POST` issue webhook. `GET` is a configuration-only probe.
 
 The untouched UTF-8 body, `Linear-Signature`, and `Linear-Delivery` headers.
 Only `update` events for `Issue` can request work, and only a changed `labels`
-field in `updatedFrom` is semantic evidence.
+field in `updatedFrom` is semantic evidence. The declared catalog is
+`execute-run`, `validate-issue`, `investigate-issue`, `cleanup`, `decompose`,
+and `run-discovery`; multi-action additions are ignored as ambiguous.
 
 ## Output
 

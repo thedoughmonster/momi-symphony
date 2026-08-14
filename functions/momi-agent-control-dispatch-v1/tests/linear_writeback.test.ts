@@ -4,7 +4,7 @@ import test from "node:test"
 import { reconcileLinear } from "../src/reconcile_linear.ts"
 import type { ClaimedDispatch } from "../src/types.ts"
 
-test("consumes execute-run, adds has-run, and creates one marker-bound comment", async () => {
+test("consumes the accepted action, adds has-run, and writes its marker", async () => {
   const priorDeno = Object.getOwnPropertyDescriptor(globalThis, "Deno")
   const priorFetch = globalThis.fetch
   const requests: Array<{ query: string; variables: Record<string, unknown> }> = []
@@ -19,8 +19,8 @@ test("consumes execute-run, adds has-run, and creates one marker-bound comment",
       Response.json({ data: { issue: {
       id: "00000000-0000-4000-8000-000000000010", identifier: "MOX-151",
       state: { name: "Todo" }, labels: { nodes: [
-        { id: "execute-id", name: "execute-run" }, { id: "feature-id", name: "Feature" }] },
-      team: { labels: { nodes: [{ id: "execute-id", name: "execute-run" },
+        { id: "action-id", name: "decompose" }, { id: "feature-id", name: "Feature" }] },
+      team: { labels: { nodes: [{ id: "action-id", name: "decompose" },
         { id: "has-id", name: "has-run" }] } }, comments: { nodes: [] } } } }))
     if (request.query.includes("AgentControlLabels")) {
       return Promise.resolve(Response.json({ data: { issueUpdate: { success: true } } }))
@@ -32,6 +32,7 @@ test("consumes execute-run, adds has-run, and creates one marker-bound comment",
     const work = { work_id: "00000000-0000-4000-8000-000000000001",
       issue_id: "00000000-0000-4000-8000-000000000010", issue_identifier: "MOX-151",
       issue_url: "https://linear.app/issue/MOX-151", project_id: "project",
+      action: "decompose",
       project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
       base_branch: "dev", active_states: ["Todo"], rejection_code: null,
       delivery_phase: "writeback", thread_id: "thread-1", turn_id: "turn-1",
@@ -41,6 +42,7 @@ test("consumes execute-run, adds has-run, and creates one marker-bound comment",
     assert.deepEqual(labels?.variables.labelIds, ["feature-id", "has-id"])
     const comment = requests.find((request) => request.query.includes("CommentCreate"))
     assert.match(String(comment?.variables.body), /momi-agent-control:00000000/)
+    assert.match(String(comment?.variables.body), /Action: `decompose`/)
     assert.match(String(comment?.variables.body), /Symphony: intentionally not invoked/)
   } finally {
     globalThis.fetch = priorFetch

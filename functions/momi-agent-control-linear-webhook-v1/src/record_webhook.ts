@@ -5,12 +5,12 @@ export async function recordWebhook(record: WebhookRecord): Promise<WebhookDispo
   const sql = getDatabase()
   const rows = await sql<WebhookDisposition[]>`
     select disposition, dispatch_id::text
-    from momi_agent_ops.accept_linear_webhook_v1(
+    from momi_agent_ops.accept_linear_webhook_v2(
       ${record.deliveryId}::uuid, ${record.webhookId}::uuid,
       ${record.rawBodyHex}, ${sql.json(record.payload)}::jsonb,
       ${record.authResult}, ${record.eventType}, ${record.eventAction},
       ${record.issueId}::uuid, ${record.issueIdentifier}, ${record.issueUrl},
-      ${record.projectId}::uuid, ${record.projectName}, ${record.executeRunAdded},
+      ${record.projectId}::uuid, ${record.projectName}, ${record.action},
       ${sql.json(record.changedFields)}::jsonb
     )
   `
