@@ -9,7 +9,7 @@ const terminal: TerminalInput = { event: "terminal",
   capability_token: "00000000-0000-4000-8000-000000000002",
   thread_id: "thread-1", turn_id: "turn-1", readiness_result: "ready",
   terminal_disposition: "completed", archived_at: "2026-08-14T12:00:00.000Z",
-  summary: "Handed to human review." }
+  summary: "Merged to dev; deployment pending." }
 
 test("terminal completion persists reconciled Linear evidence", async () => {
   let recordedComment: string | null = null
