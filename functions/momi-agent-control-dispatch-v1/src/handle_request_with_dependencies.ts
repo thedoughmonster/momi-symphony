@@ -21,8 +21,7 @@ export async function handleRequestWithDependencies(
     hostSecret: string },
 ): Promise<Response> {
   if (request.method === "GET") {
-    const ready = Boolean(Deno.env.get("MOMI_CODEX_HOST_ADAPTER_URL")?.trim() &&
-      Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() &&
+    const ready = Boolean(Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() &&
       readLinearAccessToken())
     return Response.json({ ok: ready, function_key: "momi.agent_control.dispatch.v1" })
   }

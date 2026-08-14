@@ -6,9 +6,12 @@ export async function callCodexHost(
   capabilityToken: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<HostAcceptance> {
-  const configured = Deno.env.get("MOMI_CODEX_HOST_ADAPTER_URL")?.trim() ?? ""
+  const configured = work.host_dispatch_url?.trim() ?? ""
   const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
-  const url = new URL(configured)
+  let url: URL
+  try { url = new URL(configured) } catch {
+    throw new Error("codex_host_url_unconfigured")
+  }
   const loopback = new Set(["localhost", "127.0.0.1", "::1"]).has(url.hostname)
   if ((!loopback && url.protocol !== "https:") || !secret) {
     throw new Error("codex_host_configuration_refused")

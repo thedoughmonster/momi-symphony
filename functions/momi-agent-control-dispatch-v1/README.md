@@ -24,8 +24,9 @@ JSON reports `accepted`, `active`, `completed`, `duplicate`, `rejected`, or
 
 ## Side Effects
 
-The function atomically claims private work, calls only the configured Codex
-host, and performs marker-bound Linear label/comment reconciliation. Failures
+The function atomically claims private work, resolves that project's private
+HTTPS Codex-host endpoint, and performs marker-bound Linear label/comment
+reconciliation. Failures
 release work with bounded backoff. Host idempotency prevents duplicate tasks.
 
 ## Tests

@@ -20,6 +20,7 @@ export type ClaimedDispatch = {
   repository: string | null
   base_branch: string | null
   active_states: string[] | null
+  host_dispatch_url: string | null
   rejection_code: "unknown_project" | null
   delivery_phase: "host" | "writeback"
   thread_id: string | null

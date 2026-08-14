@@ -4,6 +4,7 @@ import test from "node:test"
 
 const foundationPath = "supabase/migrations/20260814125234_create_agent_control.sql"
 const adapterPath = "supabase/migrations/20260814125236_add_agent_control_dispatch_trigger_adapter.sql"
+const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_control_host_endpoint.sql"
 
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
@@ -38,4 +39,17 @@ test("ADR-0004 trigger sends only work identity and transient capability token",
   assert.match(adapter, /wake_capability_token = null/)
   assert.match(adapter, /after insert or update of wake_capability_token/)
   assert.match(adapter, /momi-agent-control-dispatch-recovery-v1/)
+})
+
+test("host endpoint stays private, HTTPS-only, and resolves at claim time", async () => {
+  const hostConfig = await readFile(hostConfigPath, "utf8")
+  assert.equal(hostConfig.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(hostConfig, /add column host_dispatch_url text/)
+  assert.match(hostConfig, /host_dispatch_url ~ '\^https:\/\//)
+  assert.match(hostConfig, /create function momi_agent_ops\.claim_dispatch_v2/)
+  assert.match(hostConfig, /mapping\.host_dispatch_url/)
+  assert.match(hostConfig, /left join momi_agent_ops\.project_mappings mapping/)
+  assert.match(hostConfig, /grant execute on function momi_agent_ops\.claim_dispatch_v2/)
+  assert.match(hostConfig, /revoke all on function momi_agent_ops\.claim_dispatch_v2/)
+  assert.doesNotMatch(hostConfig, /\bnet\.http_post\b/)
 })

@@ -23,6 +23,7 @@ not implement the broader action catalog or parent/cancellation coordination.
 
 Runtime secrets are `SUPABASE_DB_URL`, `LINEAR_WEBHOOK_SECRET`,
 `LINEAER_ACCESS` (with `LINEAR_API_KEY` accepted as a compatibility fallback),
-and `MOMI_CODEX_HOST_SECRET`. Host-specific paths and URLs are
-configuration, not committed data. Hosted activation remains a post-review
+and `MOMI_CODEX_HOST_SECRET`. The HTTPS host endpoint is private project
+configuration in `momi_agent_ops.project_mappings`; host-specific paths are
+not committed. Hosted activation remains a post-review
 release step; no local command applies these migrations or deploys functions.

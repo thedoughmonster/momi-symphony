@@ -6,8 +6,9 @@ export async function claimDispatch(input: DispatchInput): Promise<ClaimedDispat
   const rows = await sql<ClaimedDispatch[]>`
     select work_id::text, issue_id::text, issue_identifier, issue_url,
       project_id::text, project_name, repository, base_branch, active_states,
-      rejection_code, delivery_phase, thread_id, turn_id, linear_comment_id::text
-    from momi_agent_ops.claim_dispatch_v1(
+      host_dispatch_url, rejection_code, delivery_phase, thread_id, turn_id,
+      linear_comment_id::text
+    from momi_agent_ops.claim_dispatch_v2(
       ${input.work_id}::uuid, ${input.capability_token}::uuid
     )
   `
