@@ -67,6 +67,7 @@ test("one canonical dispatch creates one App Server task and archives it once", 
       { type: "dangerFullAccess" })
     const replay = { ...dispatch,
       capability_token: "00000000-0000-4000-8000-000000000009" }
+    await ledger.ambiguous(dispatch.work_id)
     assert.deepEqual(await controller.dispatch(replay),
       { thread_id: "thread-visible-1", turn_id: "turn-visible-1" })
     assert.equal(client.requests.filter((request) => request.method === "thread/start").length, 1)
@@ -114,13 +115,21 @@ test("replay recovers a raced terminal notification after resume failure", async
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(ledger.get(dispatch.work_id)?.state, "accepted")
     assert.equal(callbackRecord, null)
-    await controller.dispatch({ ...dispatch,
-      capability_token: "00000000-0000-4000-8000-000000000019" })
+    await ledger.ambiguous(dispatch.work_id)
+    const restartedClient = new FakeAppServer()
+    restartedClient.resumeTurns = client.resumeTurns
+    const restartedLedger = new HostLedger(join(directory, "ledger.json"))
+    const restarted = new HostController(restartedClient, restartedLedger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
+      baseBranch: "dev",
+    }, async (record) => { callbackRecord = record; callbackResolve?.() })
+    await restarted.start()
     await callbackDone
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(callbackRecord?.terminal?.terminal_disposition, "interrupted")
-    assert.equal(ledger.get(dispatch.work_id)?.callbackSent, true)
-    assert.equal(client.requests.filter((request) => request.method === "thread/archive").length, 1)
+    assert.equal(restartedLedger.get(dispatch.work_id)?.callbackSent, true)
+    assert.equal(restartedClient.requests.filter(
+      (request) => request.method === "thread/archive").length, 1)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

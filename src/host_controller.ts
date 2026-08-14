@@ -27,7 +27,11 @@ export class HostController {
     for (const record of this.ledger.recoverable()) {
       try {
         if (record.state === "terminal") await this.deliverCallback(record)
-        else await this.recover(record)
+        else {
+          const accepted = record.state === "ambiguous"
+            ? await this.ledger.accept(record.workId, record.threadId!, record.turnId!) : record
+          await this.recover(accepted)
+        }
       } catch {
         // Durable records remain recoverable after a transient startup failure.
       }

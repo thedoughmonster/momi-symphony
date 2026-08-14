@@ -30,7 +30,9 @@ export class HostLedger {
 
   recoverable(): HostRecord[] {
     return [...this.records.values()].filter((record) =>
-      record.state === "accepted" || (record.state === "terminal" && !record.callbackSent))
+      record.state === "accepted" ||
+      (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
+      (record.state === "terminal" && !record.callbackSent))
   }
 
   async reserve(workId: string, fingerprint: string, token: string): Promise<HostRecord> {
