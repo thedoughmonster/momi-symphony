@@ -1,9 +1,11 @@
+import { readLinearAccessToken } from "./read_linear_access_token.ts"
+
 export async function linearGraphql<T>(
   query: string,
   variables: Record<string, unknown>,
   fetchImpl: typeof fetch = fetch,
 ): Promise<T> {
-  const token = Deno.env.get("LINEAR_API_KEY")?.trim() ?? ""
+  const token = readLinearAccessToken()
   if (!token) throw new Error("linear_api_configuration_unavailable")
   const response = await fetchImpl("https://api.linear.app/graphql", {
     method: "POST",

@@ -29,6 +29,7 @@
   "secrets": [
     "SUPABASE_DB_URL",
     "LINEAR_WEBHOOK_SECRET",
+    "LINEAER_ACCESS",
     "LINEAR_API_KEY",
     "MOMI_CODEX_HOST_SECRET"
   ],

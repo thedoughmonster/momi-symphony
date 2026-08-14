@@ -22,6 +22,7 @@ Linear and never reach Codex. This service does not dispatch Symphony and does
 not implement the broader action catalog or parent/cancellation coordination.
 
 Runtime secrets are `SUPABASE_DB_URL`, `LINEAR_WEBHOOK_SECRET`,
-`LINEAR_API_KEY`, and `MOMI_CODEX_HOST_SECRET`. Host-specific paths and URLs are
+`LINEAER_ACCESS` (with `LINEAR_API_KEY` accepted as a compatibility fallback),
+and `MOMI_CODEX_HOST_SECRET`. Host-specific paths and URLs are
 configuration, not committed data. Hosted activation remains a post-review
 release step; no local command applies these migrations or deploys functions.

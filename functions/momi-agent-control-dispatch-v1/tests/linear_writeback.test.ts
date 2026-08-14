@@ -9,7 +9,7 @@ test("consumes execute-run, adds has-run, and creates one marker-bound comment",
   const priorFetch = globalThis.fetch
   const requests: Array<{ query: string; variables: Record<string, unknown> }> = []
   Object.defineProperty(globalThis, "Deno", { configurable: true,
-    value: { env: { get: (name: string) => name === "LINEAR_API_KEY" ? "token" : undefined } } })
+    value: { env: { get: (name: string) => name === "LINEAER_ACCESS" ? "token" : undefined } } })
   globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
     const request = JSON.parse(String(init?.body)) as {
       query: string; variables: Record<string, unknown>

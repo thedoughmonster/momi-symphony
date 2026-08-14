@@ -6,6 +6,7 @@ import { processDispatch } from "./process_dispatch.ts"
 import { processTerminal } from "./process_terminal.ts"
 import { reconcileLinear } from "./reconcile_linear.ts"
 import { reconcileTerminal } from "./reconcile_terminal.ts"
+import { readLinearAccessToken } from "./read_linear_access_token.ts"
 import { recordHostAcceptance } from "./record_host_acceptance.ts"
 import { recordLinearWriteback } from "./record_linear_writeback.ts"
 import { recordTerminal } from "./record_terminal.ts"
@@ -22,7 +23,7 @@ export async function handleRequestWithDependencies(
   if (request.method === "GET") {
     const ready = Boolean(Deno.env.get("MOMI_CODEX_HOST_ADAPTER_URL")?.trim() &&
       Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() &&
-      Deno.env.get("LINEAR_API_KEY")?.trim())
+      readLinearAccessToken())
     return Response.json({ ok: ready, function_key: "momi.agent_control.dispatch.v1" })
   }
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 })
