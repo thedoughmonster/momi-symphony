@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["work_id", "capability_token"],
+      "properties": {
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "readiness_result", "terminal_disposition", "archived_at"],
+      "properties": {
+        "event": {"const": "terminal"},
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "thread_id": {"type": "string"},
+        "turn_id": {"type": "string"},
+        "readiness_result": {"enum": ["ready", "unready", "failed"]},
+        "terminal_disposition": {"enum": ["completed", "failed", "interrupted"]},
+        "archived_at": {"type": "string", "format": "date-time"},
+        "summary": {"type": "string", "maxLength": 1000}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

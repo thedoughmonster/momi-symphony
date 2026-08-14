@@ -1,0 +1,27 @@
+{
+  "$schema": "../../../../schemas/function-manifest-v1.schema.json",
+  "function_key": "momi.agent_control.dispatch.v1",
+  "contract_version": 1,
+  "purpose": "Deliver one claimed Linear action to Codex and reconcile durable task state back to Linear.",
+  "owner_service": "agent-control",
+  "function_type": "coordinator",
+  "capability": "deliver",
+  "boundary": "momi_internal",
+  "runtime": "supabase_edge",
+  "route_path": "/functions/v1/momi-agent-control-dispatch-v1",
+  "authentication_policy_key": "durable.work_token_and_host_callback.v1",
+  "entrypoint": "index.ts",
+  "input_schema": "contracts/input.schema.json",
+  "output_schema": "contracts/output.schema.json",
+  "probe": {"method": "GET", "acceptable_statuses": [200]},
+  "timeout_policy_key": "momi.agent_control.short_delivery.v1",
+  "retry_policy_key": "momi.agent_control.dispatch_backoff.v1",
+  "idempotency_policy_key": "momi.agent_control.dispatch_task.v1",
+  "required_capabilities": ["database_read", "database_write", "external_delivery"],
+  "declared_side_effects": [
+    "claims_agent_dispatch",
+    "creates_codex_task",
+    "reconciles_linear_action",
+    "records_terminal_archive"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ok", "disposition"],
+  "properties": {
+    "ok": {"type": "boolean"},
+    "disposition": {
+      "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying"]
+    },
+    "thread_id": {"type": "string"}
+  },
+  "additionalProperties": false
+}
