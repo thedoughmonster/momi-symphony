@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "edge-runtime": "jsr:@supabase/functions-js@2.110.2/edge-runtime.d.ts",
+    "postgres": "npm:postgres@3.4.3"
+  }
+}
