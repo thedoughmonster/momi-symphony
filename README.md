@@ -22,6 +22,8 @@ The first project mapping is Backend Stabilization to
 `thedoughmonster/momi-backend` on `dev`. Unknown projects are explained in
 Linear and never reach Codex. This service does not dispatch Symphony and does
 not implement the broader action catalog or parent/cancellation coordination.
+The surfaced task follows the named issue's own bounded scope, so bootstrap
+exclusions do not prevent later issues from implementing those capabilities.
 
 Runtime secrets are `SUPABASE_DB_URL`, `LINEAR_WEBHOOK_SECRET`,
 `LINEAER_ACCESS` (with `LINEAR_API_KEY` accepted as a compatibility fallback),
