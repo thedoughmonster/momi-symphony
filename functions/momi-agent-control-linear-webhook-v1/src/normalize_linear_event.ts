@@ -20,7 +20,8 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
   const projectValue = data.project
   const project = projectValue && typeof projectValue === "object" && !Array.isArray(projectValue)
     ? projectValue as Record<string, unknown> : {}
-  const labelsChanged = Object.prototype.hasOwnProperty.call(updated, "labels")
+  const labelsChanged = Object.prototype.hasOwnProperty.call(updated, "labels") ||
+    Object.prototype.hasOwnProperty.call(updated, "labelIds")
   const names = (candidate: unknown): string[] => {
     if (!Array.isArray(candidate)) return []
     return [...new Set(candidate.flatMap((label) => {
@@ -30,10 +31,23 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
       return typeof name === "string" ? [name] : []
     }))].sort()
   }
-  const before = labelsChanged ? names(updated.labels) : []
+  const labelObjects = Array.isArray(data.labels)
+    ? data.labels.filter((label) => label && typeof label === "object" && !Array.isArray(label))
+      .map((label) => label as Record<string, unknown>) : []
+  const beforeIds = Array.isArray(updated.labelIds)
+    ? updated.labelIds.filter((id): id is string => typeof id === "string") : []
+  const labelNamesById = new Map(labelObjects.flatMap((label) =>
+    typeof label.id === "string" && typeof label.name === "string"
+      ? [[label.id, label.name] as const] : []))
+  const before = Object.prototype.hasOwnProperty.call(updated, "labels")
+    ? names(updated.labels)
+    : [...new Set(beforeIds.flatMap((id) => labelNamesById.get(id) ?? []))].sort()
   const after = labelsChanged ? names(data.labels) : []
-  const executeRunAdded = labelsChanged && !before.includes("execute-run") &&
-    after.includes("execute-run")
+  const executeLabelId = labelObjects.find((label) => label.name === "execute-run")?.id
+  const executeRunAdded = labelsChanged && after.includes("execute-run") &&
+    (beforeIds.length > 0 || Object.prototype.hasOwnProperty.call(updated, "labelIds")
+      ? typeof executeLabelId === "string" && !beforeIds.includes(executeLabelId)
+      : !before.includes("execute-run"))
   const text = (candidate: unknown) => typeof candidate === "string" ? candidate : null
   const number = (candidate: unknown) => typeof candidate === "number" ? candidate : null
   return {

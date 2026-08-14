@@ -29,6 +29,22 @@ test("normalizes only a newly added execute-run label from updatedFrom", () => {
     before: ["Feature"], after: ["Feature", "execute-run"] } })
 })
 
+test("normalizes Linear labelIds changes from the hosted webhook shape", () => {
+  const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
+    updatedFrom: { labelIds: ["feature-id"] }, data: {
+      labelIds: ["execute-id", "feature-id"],
+      labels: [{ id: "execute-id", name: "execute-run" },
+        { id: "feature-id", name: "Feature" }] } }
+  const event = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify(payload)))
+  assert.equal(event?.executeRunAdded, true)
+  assert.deepEqual(event?.changedFields, { labels: {
+    before: ["Feature"], after: ["Feature", "execute-run"] } })
+
+  payload.updatedFrom.labelIds = ["execute-id", "feature-id"]
+  assert.equal(normalizeLinearEvent(new TextEncoder().encode(
+    JSON.stringify(payload)))?.executeRunAdded, false)
+})
+
 test("does not infer a change from the post-update issue object", () => {
   const payload = { action: "update", type: "Issue", updatedFrom: { title: "old" },
     data: { labels: [{ name: "execute-run" }] } }
