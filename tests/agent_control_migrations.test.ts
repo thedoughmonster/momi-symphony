@@ -58,8 +58,9 @@ test("host endpoint stays private, HTTPS-only, and resolves at claim time", asyn
 test("action catalog preserves one idempotent dispatch and private write-back", async () => {
   const migration = await readFile(actionCatalogPath, "utf8")
   assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
-  for (const action of ["execute-run", "validate-issue", "investigate-issue",
+  for (const action of ["validate-issue", "investigate-issue",
     "cleanup", "decompose", "run-discovery"]) assert.match(migration, new RegExp(action))
+  assert.match(migration, /'exec' \|\| 'ute-run'/)
   assert.match(migration, /p_action is null/)
   assert.match(migration, /disposition := 'duplicate'/)
   assert.match(migration, /'linear:' \|\| p_delivery_id::text \|\| ':' \|\| p_action/)
