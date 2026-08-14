@@ -1,0 +1,36 @@
+{
+  "$schema": "../../schemas/service-manifest-v1.schema.json",
+  "schema_version": 1,
+  "service_key": "agent-control-host",
+  "purpose": "Translate authenticated canonical agent dispatches into idempotent local Codex App Server tasks.",
+  "kind": "destination_adapter",
+  "service_type": "destination_adapter",
+  "lifecycle_status": "active",
+  "functions": [],
+  "contracts": {
+    "provides": ["momi.agent_control.host_dispatch.v1"],
+    "consumes": []
+  },
+  "database": {"read": [], "write": []},
+  "network": {"outbound_hosts": ["configured:agent_control_callback_url"]},
+  "secrets": ["MOMI_CODEX_HOST_SECRET"],
+  "configuration": [
+    "MOMI_AGENT_CONTROL_CALLBACK_URL",
+    "MOMI_CODEX_WORKSPACE_ROOT",
+    "MOMI_AGENT_CONTROL_LEDGER_PATH",
+    "MOMI_CODEX_REPOSITORY",
+    "MOMI_CODEX_BASE_BRANCH",
+    "MOMI_AGENT_CONTROL_HOST",
+    "MOMI_AGENT_CONTROL_PORT"
+  ],
+  "deployment": {"owns": [], "depends_on": []},
+  "runtime_dependencies": [
+    "node:child_process",
+    "node:crypto",
+    "node:fs/promises",
+    "node:http",
+    "node:path",
+    "node:readline"
+  ],
+  "approved_packages": []
+}

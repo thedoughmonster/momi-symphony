@@ -1,0 +1,52 @@
+export type HostDispatch = {
+  schema_version: 1
+  work_id: string
+  capability_token: string
+  issue_id: string
+  issue_identifier: string
+  issue_url: string
+  project_id: string
+  project_name: string
+  repository: string
+  base_branch: string
+  active_states: string[]
+  instruction: string
+}
+
+export type TerminalSummary = {
+  readiness_result: "ready" | "unready" | "failed"
+  terminal_disposition: "completed" | "failed" | "interrupted"
+  summary: string
+}
+
+export type HostRecord = {
+  workId: string
+  fingerprint: string
+  capabilityToken: string
+  state: "reserved" | "accepted" | "terminal" | "ambiguous"
+  threadId: string | null
+  turnId: string | null
+  terminal: (TerminalSummary & { archivedAt: string }) | null
+  callbackSent: boolean
+  updatedAt: string
+}
+
+export type AppServerClient = {
+  connect(): Promise<void>
+  request<T>(method: string, params: unknown): Promise<T>
+  onNotification(listener: (notification: Record<string, unknown>) => void): void
+}
+
+export type HostConfiguration = {
+  workspaceRoot: string
+  repository: string
+  baseBranch: string
+}
+
+export type HostAcceptance = { thread_id: string; turn_id: string }
+
+export type TurnShape = {
+  id: string
+  status: "completed" | "interrupted" | "failed" | "inProgress"
+  items: Array<Record<string, unknown>>
+}

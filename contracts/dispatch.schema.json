@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "work_id", "capability_token", "issue_id", "issue_identifier", "issue_url", "project_id", "project_name", "repository", "base_branch", "active_states", "instruction"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "work_id": {"type": "string", "format": "uuid"},
+    "capability_token": {"type": "string", "format": "uuid"},
+    "issue_id": {"type": "string", "format": "uuid"},
+    "issue_identifier": {"type": "string"},
+    "issue_url": {"type": "string", "format": "uri"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "project_name": {"type": "string"},
+    "repository": {"type": "string"},
+    "base_branch": {"type": "string"},
+    "active_states": {"type": "array", "items": {"type": "string"}},
+    "instruction": {"type": "string", "maxLength": 4000}
+  },
+  "additionalProperties": false
+}
