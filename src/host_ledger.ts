@@ -53,7 +53,8 @@ export class HostLedger {
 
   async accept(workId: string, threadId: string, turnId: string): Promise<HostRecord> {
     const record = this.require(workId)
-    if (record.state === "ambiguous") throw new Error("host_start_ambiguous")
+    if ((record.threadId && record.threadId !== threadId) ||
+      (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
     record.state = "accepted"; record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }

@@ -42,7 +42,13 @@ export class HostController {
       dispatchFingerprint(input), input.capability_token)
     if (prior) {
       if (record.threadId && record.turnId) {
-        if (record.state === "terminal" && !record.callbackSent) this.scheduleCallback(record)
+        const resumed = record.state === "ambiguous"
+          ? await this.ledger.accept(input.work_id, record.threadId, record.turnId) : record
+        if (resumed.state === "terminal" && !resumed.callbackSent) {
+          this.scheduleCallback(resumed)
+        } else if (resumed.state === "accepted") {
+          void this.recover(resumed).catch(() => undefined)
+        }
         return { thread_id: record.threadId, turn_id: record.turnId }
       }
       throw new Error(record.state === "ambiguous"
@@ -66,7 +72,7 @@ export class HostController {
             summary: { type: "string", maxLength: 1000 } } },
       })
       const accepted = await this.ledger.accept(input.work_id, started.thread.id, turn.turn.id)
-      await this.recover(accepted)
+      void this.recover(accepted).catch(() => undefined)
       return { thread_id: started.thread.id, turn_id: turn.turn.id }
     } catch (error) {
       await this.ledger.ambiguous(input.work_id); throw error
