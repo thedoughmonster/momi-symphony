@@ -13,7 +13,9 @@ function with only a work ID and one-use capability token.
 
 The dispatch function claims durable work, calls the authenticated Codex host
 adapter, and reconciles `execute-run`, `has-run`, and one marker-bound Linear
-comment. The host adapter talks to the installed Codex App Server, persists its
+comment. The durable dispatch proves that `execute-run` was added, so consuming
+the label after task creation does not invalidate the task's readiness check.
+The host adapter talks to the installed Codex App Server, persists its
 idempotency reservation outside the repository, and archives terminal threads.
 
 The first project mapping is Backend Stabilization to
