@@ -40,7 +40,7 @@ test("each non-execution action has a distinct bounded route", () => {
     ["investigate-issue", /evidence-backed investigation/],
     ["cleanup", /Linear metadata and stale run bookkeeping/],
     ["decompose", /executable child issues/],
-    ["run-discovery", /bounded discovery/],
+    ["run-discovery", /persistent interactive discovery task/],
   ]
   for (const [action, expected] of expectations) {
     const instruction = buildCodexInstruction({ ...baseWork, action } as ClaimedDispatch)
@@ -49,4 +49,12 @@ test("each non-execution action has a distinct bounded route", () => {
     assert.match(instruction, /Never invoke Symphony/)
     assert.doesNotMatch(instruction, /draft PR/)
   }
+})
+
+test("discovery asks one question and does not request structured terminal output", () => {
+  const instruction = buildCodexInstruction({ ...baseWork,
+    action: "run-discovery" } as ClaimedDispatch)
+  assert.match(instruction, /ask one concise high-value question/)
+  assert.match(instruction, /task remains open/)
+  assert.doesNotMatch(instruction, /Return only the requested structured/)
 })

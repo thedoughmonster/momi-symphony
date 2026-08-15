@@ -19,12 +19,17 @@ export async function callCodexHost(
   const response = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ schema_version: 1, work_id: work.work_id,
+    body: JSON.stringify({ schema_version: 2, work_id: work.work_id,
       capability_token: capabilityToken, issue_id: work.issue_id,
       issue_identifier: work.issue_identifier, issue_url: work.issue_url,
       project_id: work.project_id, project_name: work.project_name,
       repository: work.repository, base_branch: work.base_branch,
-      active_states: work.active_states, instruction: buildCodexInstruction(work) }),
+      active_states: work.active_states,
+      interaction_mode: work.action === "run-discovery" ? "interactive" : "one_shot",
+      thread_name: work.action === "run-discovery"
+        ? `${work.issue_identifier} · interactive discovery`
+        : `${work.issue_identifier} · ${work.action}`,
+      instruction: buildCodexInstruction(work) }),
     signal: AbortSignal.timeout(10_000),
   })
   const body = await response.json().catch(() => null) as Record<string, unknown> | null

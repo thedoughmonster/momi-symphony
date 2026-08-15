@@ -4,7 +4,8 @@
 
 This service turns one declared Linear action label into durable Codex work.
 It keeps a private receipt at every step so retries cannot accidentally create
-a second task, then archives the task when its turn is terminal.
+a second task. One-shot actions archive after their terminal turn; discovery
+hands one named task to the user for an ongoing conversation.
 
 Linear sends a signed webhook to the ingress function. The service records the
 complete source envelope and creates work only when `updatedFrom` proves that
@@ -21,8 +22,9 @@ idempotency reservation outside the repository, and archives terminal threads.
 The first project mapping is Backend Stabilization to
 `thedoughmonster/momi-backend` on `dev`. Unknown projects are explained in
 Linear and never reach Codex. `execute-run` owns direct implementation;
-`validate-issue`, `investigate-issue`, `cleanup`, `decompose`, and
-`run-discovery` receive distinct non-execution instructions. `cancel-run`
+`validate-issue`, `investigate-issue`, `cleanup`, and `decompose` receive
+distinct one-shot non-execution instructions. `run-discovery` starts a named,
+unstructured, multi-turn task and asks one question at a time. `cancel-run`
 withdraws queued work, requests interruption of an exact active host turn, or
 records an already-terminal, absent-target, or operator-intervention result.
 

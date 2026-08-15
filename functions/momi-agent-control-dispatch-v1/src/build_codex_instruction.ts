@@ -33,8 +33,10 @@ const actionInstructions: Record<AgentAction, string[]> = {
     "Do not implement the children or change repository files.",
   ],
   "run-discovery": [
-    "Run bounded discovery for the issue and record findings, open questions, and next work.",
-    "Do not implement, change repository files, or create a branch or PR.",
+    "This is a persistent interactive discovery task, not a one-shot report.",
+    "Orient from the issue and bounded evidence, then ask one concise high-value question.",
+    "Continue across user turns and refine Linear only after the user confirms decisions.",
+    "Do not dump raw findings, implement, change repository files, or create a branch or PR.",
   ],
 }
 
@@ -53,6 +55,8 @@ export function buildCodexInstruction(work: ClaimedDispatch): string {
     ...actionInstructions[work.action],
     "Never invoke Symphony for this action.",
     "No action authorizes production deployment or promotion without separate explicit approval.",
-    "Return only the requested structured readiness/disposition summary when finished.",
+    work.action === "run-discovery"
+      ? "Respond conversationally; the task remains open for the user's next message."
+      : "Return only the requested structured readiness/disposition summary when finished.",
   ].join("\n")
 }

@@ -2,6 +2,12 @@ import type { ClaimedDispatch, TerminalInput } from "./types.ts"
 
 export function buildLinearComment(work: ClaimedDispatch, terminal?: TerminalInput): string {
   const marker = `<!-- momi-agent-control:${work.work_id} -->`
+  if (work.action === "run-discovery") {
+    if (work.rejection_code) return `${marker}\nDiscovery unavailable · ${work.rejection_code}.`
+    if (terminal) return `${marker}\nDiscovery stopped · ${terminal.summary || "Task archived."}`
+    return `${marker}\nDiscovery active · continue in Codex task ` +
+      `\`${work.issue_identifier} · interactive discovery\`.`
+  }
   if (work.action === "cancel-run") {
     if (work.rejection_code) {
       return `${marker}\n## Codex run cancellation\n\n- Action: \`cancel-run\`\n` +
