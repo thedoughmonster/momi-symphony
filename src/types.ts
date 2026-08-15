@@ -1,5 +1,5 @@
 export type HostDispatch = {
-  schema_version: 1
+  schema_version: 1 | 2
   work_id: string
   capability_token: string
   issue_id: string
@@ -10,6 +10,8 @@ export type HostDispatch = {
   repository: string
   base_branch: string
   active_states: string[]
+  interaction_mode: "one_shot" | "interactive"
+  thread_name: string
   instruction: string
 }
 
@@ -44,7 +46,8 @@ export type HostRecord = {
   workId: string
   fingerprint: string
   capabilityToken: string
-  state: "reserved" | "accepted" | "terminal" | "ambiguous"
+  state: "reserved" | "accepted" | "interactive" | "terminal" | "ambiguous"
+  interactionMode?: "one_shot" | "interactive"
   threadId: string | null
   turnId: string | null
   terminal: (TerminalSummary & { archivedAt: string }) | null

@@ -1,8 +1,10 @@
 import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
 import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
+import { finishInteractiveArchive } from "./finish_interactive_archive.ts"
 import { HostLedger } from "./host_ledger.ts"
 import { parseTerminalNotification } from "./parse_terminal_notification.ts"
+import { parseThreadArchived } from "./parse_thread_archived.ts"
 import { sendTerminalCallback } from "./send_terminal_callback.ts"
 import { startHostTask } from "./start_host_task.ts"
 import type { AppServerClient, HostAcceptance, HostConfiguration,
@@ -10,6 +12,7 @@ import type { AppServerClient, HostAcceptance, HostConfiguration,
 export class HostController {
   private finalizing = new Set<string>()
   private callbackTimers = new Set<string>()
+  private notifications: Promise<void> = Promise.resolve()
   private readonly client: AppServerClient
   private readonly ledger: HostLedger
   private readonly config: HostConfiguration
@@ -19,11 +22,11 @@ export class HostController {
     callback: (record: HostRecord) => Promise<void> = sendTerminalCallback) {
     this.client = client; this.ledger = ledger; this.config = config; this.callback = callback
   }
-
   async start(): Promise<void> {
     await this.ledger.load(); await this.client.connect()
     this.client.onNotification((notification) => {
-      void this.handleNotification(notification).catch(() => undefined)
+      this.notifications = this.notifications.then(
+        () => this.handleNotification(notification)).catch(() => undefined)
     })
     for (const record of this.ledger.recoverable()) {
       try {
@@ -44,7 +47,7 @@ export class HostController {
       input.base_branch !== this.config.baseBranch) throw new Error("host_mapping_refused")
     const prior = this.ledger.get(input.work_id)
     const record = await this.ledger.reserve(input.work_id,
-      dispatchFingerprint(input), input.capability_token)
+      dispatchFingerprint(input), input.capability_token, input.interaction_mode)
     if (prior) {
       if (record.threadId && record.turnId) {
         const resumed = record.state === "ambiguous"
@@ -69,12 +72,24 @@ export class HostController {
       await this.ledger.ambiguous(input.work_id); throw error
     }
   }
-
-  cancel(input: HostCancellation): Promise<HostCancellationResult> {
-    return cancelHostWork(this.client, this.ledger, this.config, input)
+  async cancel(input: HostCancellation): Promise<HostCancellationResult> {
+    const result = await cancelHostWork(this.client, this.ledger, this.config, input)
+    const target = this.ledger.get(input.target_work_id)
+    if (target?.state === "terminal" && !target.callbackSent) {
+      await this.deliverCallback(target)
+    }
+    return result
   }
 
   private async handleNotification(notification: Record<string, unknown>): Promise<void> {
+    const archivedThread = parseThreadArchived(notification)
+    if (archivedThread) {
+      const record = this.ledger.findByThread(archivedThread)
+      if (record?.state === "interactive" && !record.cancellationRequestedAt) {
+        await finishInteractiveArchive(this.ledger, record, this.callback)
+      }
+      return
+    }
     const terminal = parseTerminalNotification(notification)
     if (!terminal) return
     const record = this.ledger.recoverable().find((candidate) =>
@@ -95,6 +110,10 @@ export class HostController {
     if (!record.threadId || this.finalizing.has(record.workId)) return
     this.finalizing.add(record.workId)
     try {
+      if (record.interactionMode === "interactive" && turn.status === "completed" &&
+        !record.cancellationRequestedAt) {
+        await this.ledger.retainInteractive(record.workId); return
+      }
       await this.client.request("thread/archive", { threadId: record.threadId })
       const archivedAt = new Date().toISOString()
       const terminal = await this.ledger.terminal(

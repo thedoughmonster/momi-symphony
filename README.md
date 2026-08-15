@@ -8,11 +8,15 @@ Codex App Server to start anything. A repeated or ambiguous request therefore
 cannot make a second task.
 
 The adapter accepts only authenticated canonical dispatches. Repository and
-base-branch values must match host configuration. It issues `thread/start` and
-`turn/start`, listens for terminal `turn/completed`, calls `thread/archive`, and
-posts one retryable terminal receipt to the agent-control Edge Function.
+base-branch values must match host configuration. One-shot work issues
+`thread/start` and `turn/start`, listens for terminal `turn/completed`, calls
+`thread/archive`, and posts one retryable terminal receipt to the agent-control
+Edge Function. Interactive discovery names the thread before its first turn,
+leaves it unarchived after normal turn completion, and retains its exact identity
+for later user turns.
 The separate authenticated cancellation contract resolves an exact target work
-record and calls `turn/interrupt` after a successful durable lookup. Queued
+record and calls `turn/interrupt` after a successful durable lookup. A retained
+interactive task is archived directly and emits its terminal receipt. Queued
 cancellation remains in the database owner, while a terminal target is an
 idempotent host success.
 Task acceptance returns before the post-start recovery read; a retry with the

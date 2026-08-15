@@ -24,6 +24,9 @@ export class HostLedger {
   getCancellation(workId: string): HostCancellationRecord | null {
     return this.cancellations.get(workId) ?? null
   }
+  findByThread(threadId: string): HostRecord | null {
+    return [...this.records.values()].find((record) => record.threadId === threadId) ?? null
+  }
 
   async reserveCancellation(
     workId: string, fingerprint: string, targetWorkId: string,
@@ -55,7 +58,10 @@ export class HostLedger {
       (record.state === "terminal" && !record.callbackSent))
   }
 
-  async reserve(workId: string, fingerprint: string, token: string): Promise<HostRecord> {
+  async reserve(
+    workId: string, fingerprint: string, token: string,
+    interactionMode: "one_shot" | "interactive" = "one_shot",
+  ): Promise<HostRecord> {
     const existing = this.records.get(workId)
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("host_idempotency_conflict")
@@ -66,7 +72,7 @@ export class HostLedger {
       return existing
     }
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
-      state: "reserved", threadId: null, turnId: null, terminal: null,
+      state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
       callbackSent: false, cancellationRequestedAt: null,
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
@@ -85,6 +91,15 @@ export class HostLedger {
   async ambiguous(workId: string): Promise<void> {
     const record = this.require(workId)
     record.state = "ambiguous"; record.updatedAt = new Date().toISOString()
+    await this.persist()
+  }
+
+  async retainInteractive(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.interactionMode !== "interactive") {
+      throw new Error("host_interaction_mode_conflict")
+    }
+    record.state = "interactive"; record.updatedAt = new Date().toISOString()
     await this.persist()
   }
 

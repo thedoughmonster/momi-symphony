@@ -49,6 +49,7 @@ test("one canonical dispatch creates one App Server task and archives it once", 
     baseBranch: "dev",
   }, async (record) => { callbackRecord = record; callbackResolve?.() })
   const dispatch: HostDispatch = { schema_version: 1,
+    interaction_mode: "one_shot", thread_name: "MOX-151 · execute-run",
     work_id: "00000000-0000-4000-8000-000000000001",
     capability_token: "00000000-0000-4000-8000-000000000002",
     issue_id: "00000000-0000-4000-8000-000000000003", issue_identifier: "MOX-151",
@@ -102,6 +103,7 @@ test("replay recovers a raced terminal notification after resume failure", async
     baseBranch: "dev",
   }, async (record) => { callbackRecord = record; callbackResolve?.() })
   const dispatch: HostDispatch = { schema_version: 1,
+    interaction_mode: "one_shot", thread_name: "MOX-154 · execute-run",
     work_id: "00000000-0000-4000-8000-000000000011",
     capability_token: "00000000-0000-4000-8000-000000000012",
     issue_id: "00000000-0000-4000-8000-000000000013", issue_identifier: "MOX-154",

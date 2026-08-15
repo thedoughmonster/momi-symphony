@@ -23,6 +23,17 @@ export async function cancelHostWork(
     await ledger.completeCancellation(input.work_id, "already_terminal")
     return { cancellation_state: "already_terminal" }
   }
+  if (target.state === "interactive") {
+    if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
+    await ledger.cancellationRequested(target.workId)
+    await client.request("thread/archive", { threadId: target.threadId })
+    await ledger.terminal(target.workId, { readiness_result: "ready",
+      terminal_disposition: "interrupted",
+      summary: "Interactive discovery task canceled and archived." },
+    new Date().toISOString())
+    await ledger.completeCancellation(input.work_id, "requested")
+    return { cancellation_state: "requested" }
+  }
   if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
   if (target.cancellationRequestedAt) {
     await ledger.completeCancellation(input.work_id, "requested")
