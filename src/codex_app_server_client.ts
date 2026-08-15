@@ -1,27 +1,32 @@
-import { spawn } from "node:child_process"
-import { createInterface } from "node:readline"
+import { homedir } from "node:os"
+import { isAbsolute, join } from "node:path"
+import WebSocket from "ws"
 
 import type { AppServerClient } from "./types.ts"
 
 export class CodexAppServerClient implements AppServerClient {
-  private child: ReturnType<typeof spawn> | null = null
+  private socket: WebSocket | null = null
   private sequence = 0
   private pending = new Map<number, { resolve: (value: unknown) => void;
     reject: (error: Error) => void; timeout: NodeJS.Timeout }>()
   private listener: (notification: Record<string, unknown>) => void = () => undefined
 
   async connect(): Promise<void> {
-    if (this.child) return
-    this.child = spawn("codex", ["app-server", "proxy"], {
-      stdio: ["pipe", "pipe", "ignore"],
-    })
-    if (!this.child.stdout || !this.child.stdin) throw new Error("codex_proxy_unavailable")
-    createInterface({ input: this.child.stdout }).on("line", (line) => this.consume(line))
-    this.child.on("exit", () => {
+    if (this.socket) return
+    const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")
+    if (!isAbsolute(codexHome)) throw new Error("codex_proxy_path_invalid")
+    const path = join(codexHome, "app-server-control", "app-server-control.sock")
+    const socket = new WebSocket(`ws+unix://${path}:/`, { perMessageDeflate: false })
+    this.socket = socket; socket.on("message", (data) => this.consume(data.toString()))
+    socket.on("error", () => undefined)
+    socket.on("close", () => {
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timeout); pending.reject(new Error("codex_proxy_exited"))
       }
-      this.pending.clear(); this.child = null
+      this.pending.clear(); this.socket = null
+    })
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", resolve); socket.once("error", reject)
     })
     await this.request("initialize", { clientInfo: {
       name: "momi-agent-control", title: "MoMi Agent Control", version: "1.0.0",
@@ -34,7 +39,9 @@ export class CodexAppServerClient implements AppServerClient {
   }
 
   request<T>(method: string, params: unknown): Promise<T> {
-    if (!this.child?.stdin) return Promise.reject(new Error("codex_proxy_not_connected"))
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("codex_proxy_not_connected"))
+    }
     const id = ++this.sequence
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -64,7 +71,7 @@ export class CodexAppServerClient implements AppServerClient {
   }
 
   private write(message: unknown): void {
-    if (!this.child?.stdin) throw new Error("codex_proxy_write_failed")
-    this.child.stdin.write(`${JSON.stringify(message)}\n`)
+    if (this.socket?.readyState !== WebSocket.OPEN) throw new Error("codex_proxy_write_failed")
+    this.socket.send(JSON.stringify(message))
   }
 }

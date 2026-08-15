@@ -24,8 +24,9 @@ same work identity promotes known thread/turn IDs and resumes terminal recovery
 without starting a second task. Startup recovery also resumes subscriptions for
 interactive tasks retained across a host restart. Immediate race recovery uses a
 non-resuming `thread/read` so it cannot interrupt the turn it just started.
-The adapter connects through the managed App Server daemon. After an interactive
-turn ends, it unsubscribes its connection so the Codex sidebar can own later turns.
+The adapter connects to the managed App Server daemon through its private Unix
+WebSocket. After an interactive turn ends, it unsubscribes its connection so the
+Codex sidebar can own later turns.
 Because this headless boundary has no approval UI, accepted turns explicitly use
 non-interactive approval and full host access. Keep it behind bearer auth, exact
 repository/base mapping, and a dedicated operator-controlled workspace.

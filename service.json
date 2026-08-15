@@ -25,16 +25,17 @@
     "MOMI_CODEX_REPOSITORY",
     "MOMI_CODEX_BASE_BRANCH",
     "MOMI_AGENT_CONTROL_HOST",
-    "MOMI_AGENT_CONTROL_PORT"
+    "MOMI_AGENT_CONTROL_PORT",
+    "CODEX_HOME"
   ],
   "deployment": {"owns": [], "depends_on": []},
   "runtime_dependencies": [
-    "node:child_process",
     "node:crypto",
     "node:fs/promises",
     "node:http",
+    "node:os",
     "node:path",
-    "node:readline"
+    "ws"
   ],
   "approved_packages": []
 }
