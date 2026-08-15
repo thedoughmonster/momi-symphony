@@ -62,6 +62,7 @@ test("discovery is named, conversational, retained, replayed, and manually archi
         { type: "agentMessage", text: "Which constraint matters most?" }] } } })
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(ledger.get(dispatch.work_id)?.state, "interactive")
+    assert.equal(client.requests.some((item) => item.method === "thread/unsubscribe"), true)
     assert.equal(client.requests.some((item) => item.method === "thread/archive"), false)
     assert.equal(callbackRecord, null)
     assert.deepEqual(await controller.dispatch(dispatch), accepted)
@@ -110,5 +111,6 @@ test("host restart resumes a retained discovery subscription", async () => {
     await restarted.start()
     assert.equal(restartedLedger.get(workId)?.state, "interactive")
     assert.equal(client.requests.some((item) => item.method === "thread/resume"), true)
+    assert.equal(client.requests.some((item) => item.method === "thread/unsubscribe"), true)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

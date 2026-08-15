@@ -33,6 +33,8 @@ export class HostController {
           const accepted = record.state === "ambiguous"
             ? await this.ledger.accept(record.workId, record.threadId!, record.turnId!) : record
           await this.recover(accepted, true)
+          if (accepted.state === "interactive") await this.client.request(
+            "thread/unsubscribe", { threadId: accepted.threadId })
         }
       } catch {
         // Durable records remain recoverable after a transient startup failure.
@@ -90,6 +92,7 @@ export class HostController {
     this.finalizing.add(record.workId)
     try {
       if (record.interactionMode === "interactive" && !record.cancellationRequestedAt) {
+        await this.client.request("thread/unsubscribe", { threadId: record.threadId })
         await this.ledger.retainInteractive(record.workId); return
       }
       await this.client.request("thread/archive", { threadId: record.threadId })

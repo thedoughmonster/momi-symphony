@@ -12,7 +12,7 @@ export class CodexAppServerClient implements AppServerClient {
 
   async connect(): Promise<void> {
     if (this.child) return
-    this.child = spawn("codex", ["app-server", "--stdio"], {
+    this.child = spawn("codex", ["app-server", "proxy"], {
       stdio: ["pipe", "pipe", "ignore"],
     })
     if (!this.child.stdout || !this.child.stdin) throw new Error("codex_proxy_unavailable")
