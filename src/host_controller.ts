@@ -3,6 +3,7 @@ import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
 import { handleHostNotification } from "./handle_host_notification.ts"
 import { HostLedger } from "./host_ledger.ts"
+import { recoverHostTurn } from "./recover_host_turn.ts"
 import { sendTerminalCallback } from "./send_terminal_callback.ts"
 import { startHostTask } from "./start_host_task.ts"
 import type { AppServerClient, HostAcceptance, HostConfiguration,
@@ -31,7 +32,7 @@ export class HostController {
         else {
           const accepted = record.state === "ambiguous"
             ? await this.ledger.accept(record.workId, record.threadId!, record.turnId!) : record
-          await this.recover(accepted)
+          await this.recover(accepted, true)
         }
       } catch {
         // Durable records remain recoverable after a transient startup failure.
@@ -80,20 +81,15 @@ export class HostController {
     return handleHostNotification(notification, this.ledger, this.callback,
       (record, turn) => this.finalize(record, turn))
   }
-  private async recover(record: HostRecord): Promise<void> {
-    if (!record.threadId || !record.turnId) return
-    const response = await this.client.request<{ thread: { turns: TurnShape[] } }>(
-      "thread/resume", { threadId: record.threadId },
-    )
-    const turn = response.thread.turns.find((candidate) => candidate.id === record.turnId)
+  private async recover(record: HostRecord, subscribe = false): Promise<void> {
+    const turn = await recoverHostTurn(this.client, record, subscribe)
     if (turn && turn.status !== "inProgress") await this.finalize(record, turn)
   }
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
     if (!record.threadId || this.finalizing.has(record.workId)) return
     this.finalizing.add(record.workId)
     try {
-      if (record.interactionMode === "interactive" && turn.status === "completed" &&
-        !record.cancellationRequestedAt) {
+      if (record.interactionMode === "interactive" && !record.cancellationRequestedAt) {
         await this.ledger.retainInteractive(record.workId); return
       }
       await this.client.request("thread/archive", { threadId: record.threadId })
