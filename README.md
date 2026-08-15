@@ -21,8 +21,8 @@ cancellation remains in the database owner, while a terminal target is an
 idempotent host success.
 Task acceptance returns before the post-start recovery read; a retry with the
 same work identity promotes known thread/turn IDs and resumes terminal recovery
-without starting a second task. Startup recovery performs the same promotion
-for a known task retained across a host restart. Immediate race recovery uses a
+without starting a second task. Startup recovery also resumes subscriptions for
+interactive tasks retained across a host restart. Immediate race recovery uses a
 non-resuming `thread/read` so it cannot interrupt the turn it just started.
 Because this headless boundary has no approval UI, accepted turns explicitly use
 non-interactive approval and full host access. Keep it behind bearer auth, exact

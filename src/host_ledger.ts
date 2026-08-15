@@ -46,7 +46,7 @@ export class HostLedger {
   }
   recoverable(): HostRecord[] {
     return [...this.records.values()].filter((record) =>
-      record.state === "accepted" ||
+      record.state === "accepted" || record.state === "interactive" ||
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
       (record.state === "terminal" && !record.callbackSent))
   }

@@ -93,3 +93,22 @@ test("an interrupted discovery turn remains available for user recovery", async 
     assert.equal(client.requests.some((item) => item.method === "thread/archive"), false)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
+
+test("host restart resumes a retained discovery subscription", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-restarted-discovery-"))
+  const ledgerPath = join(directory, "ledger.json"); const ledger = new HostLedger(ledgerPath)
+  const workId = "00000000-0000-4000-8000-000000000022"
+  try {
+    await ledger.reserve(workId, "fingerprint", "token", "interactive")
+    await ledger.accept(workId, "thread-discovery-1", "turn-discovery-1")
+    await ledger.retainInteractive(workId)
+    const client = new FakeAppServer(); const restartedLedger = new HostLedger(ledgerPath)
+    const restarted = new HostController(client, restartedLedger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
+      baseBranch: "dev",
+    }, () => Promise.resolve())
+    await restarted.start()
+    assert.equal(restartedLedger.get(workId)?.state, "interactive")
+    assert.equal(client.requests.some((item) => item.method === "thread/resume"), true)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
