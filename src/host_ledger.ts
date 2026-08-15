@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto"
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises"
-import { dirname } from "node:path"
-
-import type { HostRecord, TerminalSummary } from "./types.ts"
+import type { HostCancellationRecord, HostRecord, TerminalSummary } from "./types.ts"
+import { readHostLedger } from "./read_host_ledger.ts"
+import { writeHostLedger } from "./write_host_ledger.ts"
 
 export class HostLedger {
   private records = new Map<string, HostRecord>()
+  private cancellations = new Map<string, HostCancellationRecord>()
   private queue: Promise<void> = Promise.resolve()
   private readonly path: string
 
@@ -14,20 +13,41 @@ export class HostLedger {
   }
 
   async load(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 })
-    let parsed: { records?: HostRecord[] } = {}
-    try {
-      parsed = JSON.parse(await readFile(this.path, "utf8"))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
+    const parsed = await readHostLedger(this.path)
     for (const record of parsed.records ?? []) this.records.set(record.workId, record)
+    for (const record of parsed.cancellations ?? []) this.cancellations.set(record.workId, record)
   }
 
   get(workId: string): HostRecord | null {
     return this.records.get(workId) ?? null
   }
+  getCancellation(workId: string): HostCancellationRecord | null {
+    return this.cancellations.get(workId) ?? null
+  }
 
+  async reserveCancellation(
+    workId: string, fingerprint: string, targetWorkId: string,
+  ): Promise<HostCancellationRecord | null> {
+    const existing = this.cancellations.get(workId)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint || existing.targetWorkId !== targetWorkId) {
+        throw new Error("host_idempotency_conflict")
+      }
+      return existing
+    }
+    this.cancellations.set(workId, { workId, fingerprint, targetWorkId,
+      state: "reserved", updatedAt: new Date().toISOString() })
+    await this.persist(); return null
+  }
+
+  async completeCancellation(
+    workId: string, state: "requested" | "already_terminal",
+  ): Promise<void> {
+    const record = this.cancellations.get(workId)
+    if (!record) throw new Error("host_cancellation_missing")
+    record.state = state; record.updatedAt = new Date().toISOString()
+    await this.persist()
+  }
   recoverable(): HostRecord[] {
     return [...this.records.values()].filter((record) =>
       record.state === "accepted" ||
@@ -47,7 +67,8 @@ export class HostLedger {
     }
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", threadId: null, turnId: null, terminal: null,
-      callbackSent: false, updatedAt: new Date().toISOString() }
+      callbackSent: false, cancellationRequestedAt: null,
+      updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
     await this.persist()
     return record
@@ -79,6 +100,11 @@ export class HostLedger {
     record.callbackSent = true; record.updatedAt = new Date().toISOString()
     await this.persist()
   }
+  async cancellationRequested(workId: string): Promise<void> {
+    const record = this.require(workId)
+    record.cancellationRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist()
+  }
 
   private require(workId: string): HostRecord {
     const record = this.records.get(workId)
@@ -87,13 +113,8 @@ export class HostLedger {
   }
 
   private async persist(): Promise<void> {
-    this.queue = this.queue.then(async () => {
-      const temporary = `${this.path}.${randomUUID()}.tmp`
-      await writeFile(temporary, JSON.stringify({ records: [...this.records.values()] }, null, 2),
-        { encoding: "utf8", mode: 0o600 })
-      await chmod(temporary, 0o600)
-      await rename(temporary, this.path)
-    })
+    this.queue = this.queue.then(() => writeHostLedger(this.path,
+      [...this.records.values()], [...this.cancellations.values()]))
     await this.queue
   }
 }

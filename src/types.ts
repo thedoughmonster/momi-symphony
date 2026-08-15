@@ -19,6 +19,27 @@ export type TerminalSummary = {
   summary: string
 }
 
+export type HostCancellation = {
+  schema_version: 1
+  work_id: string
+  capability_token: string
+  target_work_id: string
+  repository: string
+  base_branch: string
+}
+
+export type HostCancellationResult = {
+  cancellation_state: "requested" | "already_terminal"
+}
+
+export type HostCancellationRecord = {
+  workId: string
+  fingerprint: string
+  targetWorkId: string
+  state: "reserved" | "requested" | "already_terminal"
+  updatedAt: string
+}
+
 export type HostRecord = {
   workId: string
   fingerprint: string
@@ -28,6 +49,7 @@ export type HostRecord = {
   turnId: string | null
   terminal: (TerminalSummary & { archivedAt: string }) | null
   callbackSent: boolean
+  cancellationRequestedAt: string | null
   updatedAt: string
 }
 

@@ -7,3 +7,5 @@
 - Validate repository and base branch against host configuration.
 - Archive only after the exact accepted turn is terminal.
 - Retry only the idempotent terminal callback; do not create another task.
+- Interrupt only the exact durable target turn and treat terminal replay as success.
+- Never invoke Symphony; parent fan-out stays in the visible parent Codex task.

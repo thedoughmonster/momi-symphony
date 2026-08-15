@@ -11,6 +11,10 @@ The adapter accepts only authenticated canonical dispatches. Repository and
 base-branch values must match host configuration. It issues `thread/start` and
 `turn/start`, listens for terminal `turn/completed`, calls `thread/archive`, and
 posts one retryable terminal receipt to the agent-control Edge Function.
+The separate authenticated cancellation contract resolves an exact target work
+record and calls `turn/interrupt` after a successful durable lookup. Queued
+cancellation remains in the database owner, while a terminal target is an
+idempotent host success.
 Task acceptance returns before the post-start recovery read; a retry with the
 same work identity promotes known thread/turn IDs and resumes terminal recovery
 without starting a second task. Startup recovery performs the same promotion

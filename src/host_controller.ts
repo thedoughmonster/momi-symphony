@@ -1,11 +1,12 @@
 import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
+import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
 import { HostLedger } from "./host_ledger.ts"
 import { parseTerminalNotification } from "./parse_terminal_notification.ts"
 import { sendTerminalCallback } from "./send_terminal_callback.ts"
+import { startHostTask } from "./start_host_task.ts"
 import type { AppServerClient, HostAcceptance, HostConfiguration,
-  HostDispatch, HostRecord, TurnShape } from "./types.ts"
-
+  HostCancellation, HostCancellationResult, HostDispatch, HostRecord, TurnShape } from "./types.ts"
 export class HostController {
   private finalizing = new Set<string>()
   private callbackTimers = new Set<string>()
@@ -59,28 +60,18 @@ export class HostController {
         ? "host_start_ambiguous" : "host_dispatch_in_progress")
     }
     try {
-      const started = await this.client.request<{ thread: { id: string } }>("thread/start", {
-        cwd: this.config.workspaceRoot,
-        serviceName: "momi-agent-control", threadSource: "momi_agent_control",
-      })
-      const turn = await this.client.request<{ turn: { id: string } }>("turn/start", {
-        threadId: started.thread.id, clientUserMessageId: input.work_id,
-        approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
-        input: [{ type: "text", text: input.instruction, text_elements: [] }],
-        responsesapiClientMetadata: { work_id: input.work_id,
-          issue_identifier: input.issue_identifier },
-        outputSchema: { type: "object", additionalProperties: false,
-          required: ["readiness_result", "disposition", "summary"], properties: {
-            readiness_result: { enum: ["ready", "unready", "failed"] },
-            disposition: { enum: ["completed", "failed", "interrupted"] },
-            summary: { type: "string", maxLength: 1000 } } },
-      })
-      const accepted = await this.ledger.accept(input.work_id, started.thread.id, turn.turn.id)
+      const started = await startHostTask(this.client, this.config, input)
+      const accepted = await this.ledger.accept(
+        input.work_id, started.thread_id, started.turn_id)
       void this.recover(accepted).catch(() => undefined)
-      return { thread_id: started.thread.id, turn_id: turn.turn.id }
+      return started
     } catch (error) {
       await this.ledger.ambiguous(input.work_id); throw error
     }
+  }
+
+  cancel(input: HostCancellation): Promise<HostCancellationResult> {
+    return cancelHostWork(this.client, this.ledger, this.config, input)
   }
 
   private async handleNotification(notification: Record<string, unknown>): Promise<void> {
