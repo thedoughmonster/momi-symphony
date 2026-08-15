@@ -1,5 +1,6 @@
 export const AGENT_ACTIONS = [
   "execute-run",
+  "cancel-run",
   "validate-issue",
   "investigate-issue",
   "cleanup",

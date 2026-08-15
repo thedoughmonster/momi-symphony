@@ -1,4 +1,5 @@
 import { callCodexHost } from "./call_codex_host.ts"
+import { callCodexCancel } from "./call_codex_cancel.ts"
 import { claimDispatch } from "./claim_dispatch.ts"
 import { isHostAuthorized } from "./is_host_authorized.ts"
 import { parseDispatchInput } from "./parse_dispatch_input.ts"
@@ -8,6 +9,7 @@ import { reconcileLinear } from "./reconcile_linear.ts"
 import { reconcileTerminal } from "./reconcile_terminal.ts"
 import { readLinearAccessToken } from "./read_linear_access_token.ts"
 import { recordHostAcceptance } from "./record_host_acceptance.ts"
+import { recordCancellation } from "./record_cancellation.ts"
 import { recordLinearWriteback } from "./record_linear_writeback.ts"
 import { recordTerminal } from "./record_terminal.ts"
 import { retryDispatch } from "./retry_dispatch.ts"
@@ -42,7 +44,8 @@ export async function handleRequestWithDependencies(
       return Response.json(result)
     }
     const dependencies = injected?.dispatch ?? { claim: claimDispatch,
-      callHost: callCodexHost, hostAccepted: recordHostAcceptance,
+      callHost: callCodexHost, callCancel: callCodexCancel,
+      hostAccepted: recordHostAcceptance, cancellationRecorded: recordCancellation,
       reconcile: reconcileLinear, writeback: recordLinearWriteback,
       retry: retryDispatch }
     return Response.json(await processDispatch(input, dependencies))

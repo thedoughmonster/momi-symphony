@@ -20,9 +20,18 @@ test("execute-run owns validated merge and development release", () => {
   assert.match(instruction, /required checks and feedback resolution/)
   assert.match(instruction, /repository-authorized development release/)
   assert.match(instruction, /durable proof that execute-run was added/)
+  assert.match(instruction, /When direct children exist/)
+  assert.match(instruction, /Durable dispatch: work/)
   assert.match(instruction, /absence must not make the issue unready/)
   assert.match(instruction, /Never invoke Symphony/)
   assert.match(instruction, /separate explicit approval/)
+})
+
+test("cancel-run never creates implementation work", () => {
+  const instruction = buildCodexInstruction({ ...baseWork,
+    action: "cancel-run" } as ClaimedDispatch)
+  assert.match(instruction, /Do not implement or create a task/)
+  assert.doesNotMatch(instruction, /draft PR/)
 })
 
 test("each non-execution action has a distinct bounded route", () => {

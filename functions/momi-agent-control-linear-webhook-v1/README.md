@@ -13,7 +13,7 @@ Linear sends an HTTPS `POST` issue webhook. `GET` is a configuration-only probe.
 The untouched UTF-8 body, `Linear-Signature`, and `Linear-Delivery` headers.
 Only `update` events for `Issue` can request work, and only a changed `labels`
 field in `updatedFrom` is semantic evidence. The declared catalog is
-`execute-run`, `validate-issue`, `investigate-issue`, `cleanup`, `decompose`,
+`execute-run`, `cancel-run`, `validate-issue`, `investigate-issue`, `cleanup`, `decompose`,
 and `run-discovery`; multi-action additions are ignored as ambiguous.
 
 ## Output
@@ -24,8 +24,10 @@ verified events return `400`, and database failures return `503` for retry.
 ## Side Effects
 
 One transaction stores the raw envelope and, when eligible, creates one
-dispatch and run. The function performs no LLM, Codex, Linear API, or downstream
-HTTP call. Duplicate deliveries converge on the existing receipt and work.
+dispatch and run. Child execute work links to an active parent; queued
+cancellation withdraws its exact target in the same transaction. The function
+performs no LLM, Codex, Linear API, or downstream HTTP call. Duplicate
+deliveries converge on the existing receipt and work.
 
 ## Failure Handling
 

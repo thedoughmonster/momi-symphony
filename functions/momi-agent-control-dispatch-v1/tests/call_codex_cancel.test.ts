@@ -1,0 +1,31 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import { callCodexCancel } from "../src/call_codex_cancel.ts"
+import type { ClaimedDispatch } from "../src/types.ts"
+
+test("cancels only an exact claimed target through the private host", async () => {
+  const priorDeno = Object.getOwnPropertyDescriptor(globalThis, "Deno")
+  const work = { work_id: "00000000-0000-4000-8000-000000000001",
+    action: "cancel-run", repository: "thedoughmonster/momi-backend", base_branch: "dev",
+    host_dispatch_url: "https://codex-host.example/v1/dispatch",
+    target_dispatch_id: "00000000-0000-4000-8000-000000000002" } as ClaimedDispatch
+  let requestedUrl = ""; let requestedBody: Record<string, unknown> = {}
+  try {
+    Object.defineProperty(globalThis, "Deno", { configurable: true,
+      value: { env: { get: (name: string) => name === "MOMI_CODEX_HOST_SECRET"
+        ? "test-secret" : undefined } } })
+    const result = await callCodexCancel(work, "capability", (url, init) => {
+      requestedUrl = String(url); requestedBody = JSON.parse(String(init?.body))
+      return Promise.resolve(Response.json({ cancellation_state: "requested" }))
+    })
+    assert.deepEqual(result, { cancellation_state: "requested" })
+    assert.equal(requestedUrl, "https://codex-host.example/v1/cancel")
+    assert.equal(requestedBody.target_work_id, work.target_dispatch_id)
+    await assert.rejects(callCodexCancel({ ...work, target_dispatch_id: null }, "token"),
+      /codex_host_configuration_refused/)
+  } finally {
+    if (priorDeno) Object.defineProperty(globalThis, "Deno", priorDeno)
+    else Reflect.deleteProperty(globalThis, "Deno")
+  }
+})

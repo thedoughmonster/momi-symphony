@@ -15,7 +15,7 @@ test("verifies the exact raw Linear bytes", async () => {
 })
 
 test("routes each newly added declared action from updatedFrom", () => {
-  for (const action of ["execute-run", "validate-issue", "investigate-issue",
+  for (const action of ["execute-run", "cancel-run", "validate-issue", "investigate-issue",
     "cleanup", "decompose", "run-discovery"]) {
     const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
       updatedFrom: { labels: [{ id: "old", name: "Feature" }] }, data: {
@@ -25,6 +25,14 @@ test("routes each newly added declared action from updatedFrom", () => {
     assert.deepEqual(event?.changedFields, { labels: {
       before: ["Feature"], after: ["Feature", action].sort() } })
   }
+})
+
+test("captures the direct parent identity for durable child linkage", () => {
+  const payload = { action: "update", type: "Issue", updatedFrom: { labels: [] },
+    data: { parentId: "00000000-0000-4000-8000-000000000099",
+      labels: [{ name: "execute-run" }] } }
+  const event = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify(payload)))
+  assert.equal(event?.parentIssueId, "00000000-0000-4000-8000-000000000099")
 })
 
 test("normalizes Linear labelIds changes from the hosted webhook shape", () => {

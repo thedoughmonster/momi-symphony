@@ -16,7 +16,8 @@
       "momi.agent_control.linear_webhook.v1"
     ],
     "consumes": [
-      {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v1"}
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v1"},
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_cancel.v1"}
     ]
   },
   "database": {
@@ -64,12 +65,16 @@
     "private_routines": [
       "momi_agent_ops.accept_linear_webhook_v1",
       "momi_agent_ops.accept_linear_webhook_v2",
+      "momi_agent_ops.accept_linear_webhook_v3",
       "momi_agent_ops.claim_dispatch_v1",
       "momi_agent_ops.claim_dispatch_v2",
       "momi_agent_ops.claim_dispatch_v3",
+      "momi_agent_ops.claim_dispatch_v4",
+      "momi_agent_ops.record_cancellation_v1",
       "momi_agent_ops.record_host_acceptance_v1",
       "momi_agent_ops.record_linear_writeback_v1",
       "momi_agent_ops.record_linear_writeback_v2",
+      "momi_agent_ops.record_linear_writeback_v3",
       "momi_agent_ops.record_terminal_v1",
       "momi_agent_ops.record_terminal_v2",
       "momi_agent_ops.retry_dispatch_v1",

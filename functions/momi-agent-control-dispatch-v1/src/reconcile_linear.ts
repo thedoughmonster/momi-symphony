@@ -9,11 +9,12 @@ export async function reconcileLinear(work: ClaimedDispatch): Promise<string> {
   if (issue.identifier !== work.issue_identifier) throw new Error("linear_issue_identity_conflict")
   const action = issue.teamLabels.find((label) => label.name === work.action)
   const hasRun = issue.teamLabels.find((label) => label.name === "has-run")
-  if (!action || (!work.rejection_code && !hasRun)) {
+  const needsRunMarker = work.action !== "cancel-run" && !work.rejection_code
+  if (!action || (needsRunMarker && !hasRun)) {
     throw new Error("linear_action_labels_unavailable")
   }
   const labels = issue.labels.filter((label) => label.id !== action.id)
-  if (!work.rejection_code && hasRun && !labels.some((label) => label.id === hasRun.id)) {
+  if (needsRunMarker && hasRun && !labels.some((label) => label.id === hasRun.id)) {
     labels.push(hasRun)
   }
   await writeLinearLabels(issue.id, labels.map((label) => label.id).sort())

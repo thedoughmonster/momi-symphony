@@ -5,7 +5,7 @@
   "properties": {
     "ok": {"type": "boolean"},
     "disposition": {
-      "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying"]
+      "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "no_target", "operator_intervention"]
     },
     "thread_id": {"type": "string"}
   },

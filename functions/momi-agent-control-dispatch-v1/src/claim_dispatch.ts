@@ -7,8 +7,9 @@ export async function claimDispatch(input: DispatchInput): Promise<ClaimedDispat
     select work_id::text, issue_id::text, issue_identifier, action, issue_url,
       project_id::text, project_name, repository, base_branch, active_states,
       host_dispatch_url, rejection_code, delivery_phase, thread_id, turn_id,
-      linear_comment_id::text
-    from momi_agent_ops.claim_dispatch_v3(
+      linear_comment_id::text, parent_dispatch_id::text, target_dispatch_id::text,
+      cancellation_state
+    from momi_agent_ops.claim_dispatch_v4(
       ${input.work_id}::uuid, ${input.capability_token}::uuid
     )
   `

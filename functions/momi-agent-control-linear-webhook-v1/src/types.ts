@@ -15,6 +15,7 @@ export type NormalizedLinearEvent = {
   issueUrl: string | null
   projectId: string | null
   projectName: string | null
+  parentIssueId: string | null
   action: AgentAction | null
   changedFields: { labels: LabelChange } | Record<string, never>
 }

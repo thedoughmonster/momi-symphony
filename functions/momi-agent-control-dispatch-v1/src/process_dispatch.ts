@@ -16,13 +16,24 @@ export async function processDispatch(
       work.turn_id = host.turn_id
       work.delivery_phase = "writeback"
     }
+    if (work.delivery_phase === "cancel_host") {
+      const result = await dependencies.callCancel(work, input.capability_token)
+      if (!await dependencies.cancellationRecorded(input, result)) {
+        throw new Error("cancellation_record_failed")
+      }
+      work.cancellation_state = result.cancellation_state
+      work.delivery_phase = "writeback"
+    }
     const commentId = await dependencies.reconcile(work)
-    const hasRun = work.rejection_code === null && work.thread_id !== null
+    const hasRun = work.action !== "cancel-run" && work.rejection_code === null &&
+      work.thread_id !== null
     if (!await dependencies.writeback(input, commentId, hasRun)) {
       throw new Error("linear_writeback_record_failed")
     }
     return work.rejection_code
       ? { ok: true, disposition: "rejected" }
+      : work.action === "cancel-run"
+      ? { ok: true, disposition: work.cancellation_state }
       : { ok: true, disposition: "active", thread_id: work.thread_id! }
   } catch (error) {
     const code = (error instanceof Error ? error.message : "dispatch_failed")

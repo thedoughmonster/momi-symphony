@@ -8,4 +8,6 @@
 - Project mappings come from the owned table and fail closed when absent.
 - A dispatch may create at most one Codex thread; ambiguous starts stay blocked.
 - Archive only after a terminal App Server turn notification is observed.
-- Never invoke Symphony; parent-run and cancellation behavior remain out of scope.
+- Parent coordination may create child work only through durable `execute-run` labels.
+- Never invoke Symphony from this service or its host adapter.
+- Cancellation must distinguish queued, active, terminal, and ambiguous host states.

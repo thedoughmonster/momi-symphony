@@ -21,6 +21,9 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
   const projectValue = data.project
   const project = projectValue && typeof projectValue === "object" && !Array.isArray(projectValue)
     ? projectValue as Record<string, unknown> : {}
+  const parentValue = data.parent
+  const parent = parentValue && typeof parentValue === "object" && !Array.isArray(parentValue)
+    ? parentValue as Record<string, unknown> : {}
   const labelsChanged = Object.prototype.hasOwnProperty.call(updated, "labels") ||
     Object.prototype.hasOwnProperty.call(updated, "labelIds")
   const names = (candidate: unknown): string[] => {
@@ -64,6 +67,7 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     issueUrl: text(payload.url) ?? text(data.url),
     projectId: text(data.projectId) ?? text(project.id),
     projectName: text(data.projectName) ?? text(project.name),
+    parentIssueId: text(data.parentId) ?? text(parent.id),
     action: addedActions.length === 1 ? addedActions[0] : null,
     changedFields: labelsChanged ? { labels: { before, after } } : {},
   }

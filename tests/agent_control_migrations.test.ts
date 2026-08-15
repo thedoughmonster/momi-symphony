@@ -6,6 +6,7 @@ const foundationPath = "supabase/migrations/20260814125234_create_agent_control.
 const adapterPath = "supabase/migrations/20260814125236_add_agent_control_dispatch_trigger_adapter.sql"
 const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_control_host_endpoint.sql"
 const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_action_catalog.sql"
+const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_parent_runs.sql"
 
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
@@ -15,6 +16,21 @@ test("private agent ledger is owned, defended, and absent from the Data API", as
   assert.match(foundation, /enable row level security/g)
   assert.match(foundation, /revoke all on schema momi_agent_ops from public, anon, authenticated, service_role/)
   assert.doesNotMatch(config.match(/schemas = \[[^\n]+/)?.[0] ?? "", /momi_agent_ops/)
+})
+
+test("parent runs and cancellation keep reconstructable idempotent evidence", async () => {
+  const migration = await readFile(parentRunsPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /'cancel-run'/)
+  assert.match(migration, /parent_dispatch_id uuid references momi_agent_ops\.dispatches/)
+  assert.match(migration, /dispatches_parent_child_once_idx/)
+  assert.match(migration, /target_dispatch_id uuid references momi_agent_ops\.dispatches/)
+  for (const state of ["queued_cancelled", "requested", "already_terminal",
+    "no_target", "operator_intervention"]) assert.match(migration, new RegExp(state))
+  assert.match(migration, /create function momi_agent_ops\.accept_linear_webhook_v3/)
+  assert.match(migration, /create function momi_agent_ops\.record_cancellation_v1/)
+  assert.match(migration, /archive_state = 'not_applicable'/)
+  assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })
 
 test("receipt, dispatch, claim, retry, and archive evidence are durable and idempotent", async () => {

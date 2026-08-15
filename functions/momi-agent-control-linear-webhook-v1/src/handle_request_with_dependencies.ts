@@ -36,7 +36,7 @@ export async function handleRequestWithDependencies(
   const empty = { payload: {}, webhookId: null, webhookTimestamp: null,
     eventType: null, eventAction: null, issueId: null, issueIdentifier: null,
     issueUrl: null, projectId: null, projectName: null,
-    action: null, changedFields: {} } as const
+    parentIssueId: null, action: null, changedFields: {} } as const
   try {
     const result = await (injected?.persist ?? recordWebhook)({
       ...(normalized ?? empty), deliveryId: deliveryId!, rawBodyHex: rawBodyHex(rawBody),

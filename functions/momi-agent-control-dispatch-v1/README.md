@@ -2,9 +2,9 @@
 
 ## ELI5
 
-This worker picks up one sealed work ticket, asks the local Codex host for one
-visible task, updates Linear, and later records the host's terminal archive
-receipt. Repeated knocks reuse the same ticket and task.
+This worker picks up one sealed work ticket, starts or cancels exact Codex work,
+updates Linear, and later records terminal archive evidence. Repeated knocks
+reuse the same ticket and task.
 
 ## Trigger And Input
 
@@ -19,20 +19,22 @@ secret.
 
 ## Output
 
-JSON reports `accepted`, `active`, `completed`, `duplicate`, `rejected`, or
-`retrying` without exposing the capability token or prompt.
+JSON reports active, cancellation, terminal, duplicate, rejection, or retry
+dispositions without exposing the capability token or prompt.
 
 ## Side Effects
 
 The function atomically claims private work, builds the bounded instruction for
 its stored action, resolves that project's private HTTPS Codex-host endpoint,
-and performs marker-bound Linear label/comment reconciliation. Failures
+and performs marker-bound Linear label/comment reconciliation. Parent/child
+links and queued cancellation are already sealed in the claimed work. Active
+cancellation calls the host's exact turn-interruption contract. Failures
 release work with bounded backoff. Host idempotency prevents duplicate tasks.
 
 ## Tests
 
-Tests cover claim/retry phases, unknown/unready write-back, host idempotency,
-accepted labels/comments, callback replay, and terminal archive bookkeeping.
+Tests cover claim/retry phases, parent linkage, all cancellation states, host
+idempotency, accepted labels/comments, callback replay, and archive bookkeeping.
 
 ## Failure Handling
 

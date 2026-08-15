@@ -2,7 +2,7 @@
 
 ## ELI5
 
-This service turns one declared Linear action label into one visible Codex task.
+This service turns one declared Linear action label into durable Codex work.
 It keeps a private receipt at every step so retries cannot accidentally create
 a second task, then archives the task when its turn is terminal.
 
@@ -22,8 +22,16 @@ The first project mapping is Backend Stabilization to
 `thedoughmonster/momi-backend` on `dev`. Unknown projects are explained in
 Linear and never reach Codex. `execute-run` owns direct implementation;
 `validate-issue`, `investigate-issue`, `cleanup`, `decompose`, and
-`run-discovery` receive distinct non-execution instructions. This service never
-dispatches Symphony and does not implement parent/cancellation coordination.
+`run-discovery` receive distinct non-execution instructions. `cancel-run`
+withdraws queued work, requests interruption of an exact active host turn, or
+records an already-terminal, absent-target, or operator-intervention result.
+
+An `execute-run` on an issue with direct children creates one visible parent
+task. That task preflights children and uses their one-shot `execute-run` labels;
+the ingress links each child dispatch to the active parent. The unique parent/
+child edge prevents duplicate child work, while dispatch and run records retain
+an aggregate ledger after every Codex task is archived. Neither service invokes
+Symphony.
 
 Runtime secrets are `SUPABASE_DB_URL`, `LINEAR_WEBHOOK_SECRET`,
 `LINEAER_ACCESS` (with `LINEAR_API_KEY` accepted as a compatibility fallback),

@@ -1,16 +1,15 @@
 import { getDatabase } from "../../../src/database.ts"
-import type { DispatchInput } from "./types.ts"
+import type { DispatchInput, HostCancellation } from "./types.ts"
 
-export async function recordLinearWriteback(
+export async function recordCancellation(
   input: DispatchInput,
-  commentId: string | null,
-  hasRun: boolean,
+  result: HostCancellation,
 ): Promise<boolean> {
   const sql = getDatabase()
   const rows = await sql<{ recorded: boolean }[]>`
-    select momi_agent_ops.record_linear_writeback_v3(
+    select momi_agent_ops.record_cancellation_v1(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
-      ${commentId}::uuid, true, ${hasRun}
+      ${result.cancellation_state}
     ) as recorded
   `
   return rows[0]?.recorded === true
