@@ -1,10 +1,8 @@
 import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
 import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
-import { finishInteractiveArchive } from "./finish_interactive_archive.ts"
+import { handleHostNotification } from "./handle_host_notification.ts"
 import { HostLedger } from "./host_ledger.ts"
-import { parseTerminalNotification } from "./parse_terminal_notification.ts"
-import { parseThreadArchived } from "./parse_thread_archived.ts"
 import { sendTerminalCallback } from "./send_terminal_callback.ts"
 import { startHostTask } from "./start_host_task.ts"
 import type { AppServerClient, HostAcceptance, HostConfiguration,
@@ -17,7 +15,6 @@ export class HostController {
   private readonly ledger: HostLedger
   private readonly config: HostConfiguration
   private readonly callback: (record: HostRecord) => Promise<void>
-
   constructor(client: AppServerClient, ledger: HostLedger, config: HostConfiguration,
     callback: (record: HostRecord) => Promise<void> = sendTerminalCallback) {
     this.client = client; this.ledger = ledger; this.config = config; this.callback = callback
@@ -41,7 +38,6 @@ export class HostController {
       }
     }
   }
-
   async dispatch(input: HostDispatch): Promise<HostAcceptance> {
     if (input.repository !== this.config.repository ||
       input.base_branch !== this.config.baseBranch) throw new Error("host_mapping_refused")
@@ -80,23 +76,10 @@ export class HostController {
     }
     return result
   }
-
-  private async handleNotification(notification: Record<string, unknown>): Promise<void> {
-    const archivedThread = parseThreadArchived(notification)
-    if (archivedThread) {
-      const record = this.ledger.findByThread(archivedThread)
-      if (record?.state === "interactive" && !record.cancellationRequestedAt) {
-        await finishInteractiveArchive(this.ledger, record, this.callback)
-      }
-      return
-    }
-    const terminal = parseTerminalNotification(notification)
-    if (!terminal) return
-    const record = this.ledger.recoverable().find((candidate) =>
-      candidate.threadId === terminal.threadId && candidate.turnId === terminal.turn.id)
-    if (record) await this.finalize(record, terminal.turn)
+  private handleNotification(notification: Record<string, unknown>): Promise<void> {
+    return handleHostNotification(notification, this.ledger, this.callback,
+      (record, turn) => this.finalize(record, turn))
   }
-
   private async recover(record: HostRecord): Promise<void> {
     if (!record.threadId || !record.turnId) return
     const response = await this.client.request<{ thread: { turns: TurnShape[] } }>(
@@ -105,7 +88,6 @@ export class HostController {
     const turn = response.thread.turns.find((candidate) => candidate.id === record.turnId)
     if (turn && turn.status !== "inProgress") await this.finalize(record, turn)
   }
-
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
     if (!record.threadId || this.finalizing.has(record.workId)) return
     this.finalizing.add(record.workId)
@@ -123,11 +105,9 @@ export class HostController {
       this.finalizing.delete(record.workId)
     }
   }
-
   private async deliverCallback(record: HostRecord): Promise<void> {
     await this.callback(record); await this.ledger.callbackSent(record.workId)
   }
-
   private scheduleCallback(record: HostRecord): void {
     if (this.callbackTimers.has(record.workId)) return
     this.callbackTimers.add(record.workId)

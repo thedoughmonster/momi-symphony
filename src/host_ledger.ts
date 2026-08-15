@@ -7,17 +7,12 @@ export class HostLedger {
   private cancellations = new Map<string, HostCancellationRecord>()
   private queue: Promise<void> = Promise.resolve()
   private readonly path: string
-
-  constructor(path: string) {
-    this.path = path
-  }
-
+  constructor(path: string) { this.path = path }
   async load(): Promise<void> {
     const parsed = await readHostLedger(this.path)
     for (const record of parsed.records ?? []) this.records.set(record.workId, record)
     for (const record of parsed.cancellations ?? []) this.cancellations.set(record.workId, record)
   }
-
   get(workId: string): HostRecord | null {
     return this.records.get(workId) ?? null
   }
@@ -27,7 +22,6 @@ export class HostLedger {
   findByThread(threadId: string): HostRecord | null {
     return [...this.records.values()].find((record) => record.threadId === threadId) ?? null
   }
-
   async reserveCancellation(
     workId: string, fingerprint: string, targetWorkId: string,
   ): Promise<HostCancellationRecord | null> {
@@ -42,7 +36,6 @@ export class HostLedger {
       state: "reserved", updatedAt: new Date().toISOString() })
     await this.persist(); return null
   }
-
   async completeCancellation(
     workId: string, state: "requested" | "already_terminal",
   ): Promise<void> {
@@ -57,7 +50,6 @@ export class HostLedger {
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
       (record.state === "terminal" && !record.callbackSent))
   }
-
   async reserve(
     workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
@@ -79,7 +71,6 @@ export class HostLedger {
     await this.persist()
     return record
   }
-
   async accept(workId: string, threadId: string, turnId: string): Promise<HostRecord> {
     const record = this.require(workId)
     if ((record.threadId && record.threadId !== threadId) ||
@@ -87,13 +78,11 @@ export class HostLedger {
     record.state = "accepted"; record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
-
   async ambiguous(workId: string): Promise<void> {
     const record = this.require(workId)
     record.state = "ambiguous"; record.updatedAt = new Date().toISOString()
     await this.persist()
   }
-
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
     if (record.interactionMode !== "interactive") {
@@ -102,14 +91,12 @@ export class HostLedger {
     record.state = "interactive"; record.updatedAt = new Date().toISOString()
     await this.persist()
   }
-
   async terminal(workId: string, result: TerminalSummary, archivedAt: string): Promise<HostRecord> {
     const record = this.require(workId)
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
     record.callbackSent = false; record.updatedAt = new Date().toISOString()
     await this.persist(); return record
   }
-
   async callbackSent(workId: string): Promise<void> {
     const record = this.require(workId)
     record.callbackSent = true; record.updatedAt = new Date().toISOString()
@@ -120,13 +107,11 @@ export class HostLedger {
     record.cancellationRequestedAt ??= new Date().toISOString()
     record.updatedAt = new Date().toISOString(); await this.persist()
   }
-
   private require(workId: string): HostRecord {
     const record = this.records.get(workId)
     if (!record) throw new Error("host_record_missing")
     return record
   }
-
   private async persist(): Promise<void> {
     this.queue = this.queue.then(() => writeHostLedger(this.path,
       [...this.records.values()], [...this.cancellations.values()]))
