@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
-
 const foundationPath = "supabase/migrations/20260814125234_create_agent_control.sql"
 const adapterPath = "supabase/migrations/20260814125236_add_agent_control_dispatch_trigger_adapter.sql"
 const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_control_host_endpoint.sql"
@@ -9,7 +8,6 @@ const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_
 const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_parent_runs.sql"
 const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_recovery.sql"
 const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dead_letter_recovery.sql"
-
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -19,7 +17,6 @@ test("private agent ledger is owned, defended, and absent from the Data API", as
   assert.match(foundation, /revoke all on schema momi_agent_ops from public, anon, authenticated, service_role/)
   assert.doesNotMatch(config.match(/schemas = \[[^\n]+/)?.[0] ?? "", /momi_agent_ops/)
 })
-
 test("parent runs and cancellation keep reconstructable idempotent evidence", async () => {
   const migration = await readFile(parentRunsPath, "utf8")
   assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
@@ -34,7 +31,6 @@ test("parent runs and cancellation keep reconstructable idempotent evidence", as
   assert.match(migration, /archive_state = 'not_applicable'/)
   assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })
-
 test("receipt, dispatch, claim, retry, and archive evidence are durable and idempotent", async () => {
   const foundation = await readFile(foundationPath, "utf8")
   assert.match(foundation, /delivery_id uuid primary key/)

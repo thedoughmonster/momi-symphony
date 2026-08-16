@@ -10,17 +10,17 @@ const migrationUrl = new URL(
   import.meta.url,
 )
 
-function docker(args: string[]): string {
-  const result = spawnSync("docker", args, {
-    encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 180_000,
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) throw new Error(result.stderr.trim())
-  return result.stdout.trim()
-}
-
-async function prepare(sql: Sql): Promise<void> {
-  await sql.unsafe(`
+export const recoveryHarness = {
+  docker(args: string[]): string {
+    const result = spawnSync("docker", args, {
+      encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 180_000,
+    })
+    if (result.error) throw result.error
+    if (result.status !== 0) throw new Error(result.stderr.trim())
+    return result.stdout.trim()
+  },
+  async prepare(sql: Sql): Promise<void> {
+    await sql.unsafe(`
     do $$ begin
       if not exists (select from pg_roles where rolname = 'anon') then
         create role anon nologin;
@@ -60,19 +60,19 @@ async function prepare(sql: Sql): Promise<void> {
       terminal_disposition text, terminal_at timestamptz,
       archive_state text not null, archived_at timestamptz
     );
-  `)
-  await sql.unsafe(await readFile(migrationUrl, "utf8"))
-}
-
-export const recoveryHarness = {
+    `)
+    await sql.unsafe(await readFile(migrationUrl, "utf8"))
+  },
   async start(): Promise<RecoveryDatabase> {
     const container = `momi-agent-recovery-${process.pid}-${Date.now()}`
     let sql: Sql | null = null
     try {
-      docker(["run", "--detach", "--rm", "--name", container,
+      recoveryHarness.docker(["run", "--detach", "--rm", "--name", container,
         "--env", "POSTGRES_PASSWORD=momi-agent-test",
         "--publish", "127.0.0.1::5432", "postgres:17-alpine"])
-      const port = Number(docker(["port", container, "5432/tcp"]).match(/:(\d+)$/)?.[1])
+      const port = Number(recoveryHarness.docker(
+        ["port", container, "5432/tcp"],
+      ).match(/:(\d+)$/)?.[1])
       const deadline = Date.now() + 60_000
       while (Date.now() < deadline) {
         sql = postgres(`postgres://postgres:momi-agent-test@127.0.0.1:${port}/postgres`,
@@ -84,7 +84,7 @@ export const recoveryHarness = {
         }
       }
       if (!sql) throw new Error("Disposable PostgreSQL did not start")
-      await prepare(sql)
+      await recoveryHarness.prepare(sql)
       return { container, sql }
     } catch (error) {
       await sql?.end({ timeout: 1 }).catch(() => undefined)
