@@ -38,6 +38,9 @@ const actionInstructions: Record<AgentAction, string[]> = {
     "Continue across user turns and refine Linear only after the user confirms decisions.",
     "Do not dump raw findings, implement, change repository files, or create a branch or PR.",
   ],
+  "recover-discovery": [
+    "Do not create a task. Recover only the exact retained discovery identity.",
+  ],
 }
 
 export function buildCodexInstruction(work: ClaimedDispatch): string {

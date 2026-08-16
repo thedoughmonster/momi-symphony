@@ -24,7 +24,10 @@ The first project mapping is Backend Stabilization to
 Linear and never reach Codex. `execute-run` owns direct implementation;
 `validate-issue`, `investigate-issue`, `cleanup`, and `decompose` receive
 distinct one-shot non-execution instructions. `run-discovery` starts a named,
-unstructured, multi-turn task and asks one question at a time. `cancel-run`
+unstructured, multi-turn task and asks one question at a time. `recover-discovery`
+retries exact interruption and archive of that retained task without starting
+another Codex task. It releases ownership only after archive confirmation and
+keeps ownership on retryable failure. `cancel-run`
 withdraws queued work, requests interruption of an exact active host turn, or
 records an already-terminal, absent-target, or operator-intervention result.
 

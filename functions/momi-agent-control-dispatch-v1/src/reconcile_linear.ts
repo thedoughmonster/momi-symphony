@@ -9,7 +9,8 @@ export async function reconcileLinear(work: ClaimedDispatch): Promise<string> {
   if (issue.identifier !== work.issue_identifier) throw new Error("linear_issue_identity_conflict")
   const action = issue.teamLabels.find((label) => label.name === work.action)
   const hasRun = issue.teamLabels.find((label) => label.name === "has-run")
-  const needsRunMarker = work.action !== "cancel-run" && !work.rejection_code
+  const needsRunMarker = !["cancel-run", "recover-discovery"].includes(work.action) &&
+    !work.rejection_code
   if (!action || (needsRunMarker && !hasRun)) {
     throw new Error("linear_action_labels_unavailable")
   }

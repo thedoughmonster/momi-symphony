@@ -7,6 +7,7 @@ const adapterPath = "supabase/migrations/20260814125236_add_agent_control_dispat
 const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_control_host_endpoint.sql"
 const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_action_catalog.sql"
 const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_parent_runs.sql"
+const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_recovery.sql"
 
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
@@ -83,5 +84,21 @@ test("action catalog preserves one idempotent dispatch and private write-back", 
   assert.match(migration, /create function momi_agent_ops\.claim_dispatch_v3/)
   assert.match(migration, /create function momi_agent_ops\.record_terminal_v2/)
   assert.match(migration, /action_label_removed_at/)
+  assert.doesNotMatch(migration, /\bnet\.http_post\b/)
+})
+
+test("discovery recovery is exact, state-independent, and releases only after archive", async () => {
+  const migration = await readFile(recoveryPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /'recover-discovery'/)
+  assert.match(migration, /create function momi_agent_ops\.accept_linear_webhook_v4/)
+  assert.match(migration, /target\.action = 'run-discovery'/)
+  assert.match(migration, /run\.archive_state = 'pending'/)
+  assert.match(migration, /target_count > 1/)
+  assert.match(migration, /create function momi_agent_ops\.claim_dispatch_v5/)
+  assert.match(migration, /then 'recover_host'/)
+  assert.match(migration, /create function momi_agent_ops\.record_recovery_v1/)
+  assert.match(migration, /'mapping_mismatch'/)
+  assert.doesNotMatch(migration, /p_issue_state|workflow_state/)
   assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })

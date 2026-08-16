@@ -24,8 +24,18 @@ export async function processDispatch(
       work.cancellation_state = result.cancellation_state
       work.delivery_phase = "writeback"
     }
+    if (work.delivery_phase === "recover_host") {
+      await dependencies.reconcile(work)
+      const result = await dependencies.callRecovery(work, input.capability_token)
+      if (!await dependencies.recoveryRecorded(input, result)) {
+        throw new Error("recovery_record_failed")
+      }
+      work.recovery_state = result.recovery_state
+      work.delivery_phase = "writeback"
+    }
     const commentId = await dependencies.reconcile(work)
-    const hasRun = work.action !== "cancel-run" && work.rejection_code === null &&
+    const hasRun = !["cancel-run", "recover-discovery"].includes(work.action) &&
+      work.rejection_code === null &&
       work.thread_id !== null
     if (!await dependencies.writeback(input, commentId, hasRun)) {
       throw new Error("linear_writeback_record_failed")
@@ -34,6 +44,8 @@ export async function processDispatch(
       ? { ok: true, disposition: "rejected" }
       : work.action === "cancel-run"
       ? { ok: true, disposition: work.cancellation_state }
+      : work.action === "recover-discovery"
+      ? { ok: true, disposition: work.recovery_state }
       : { ok: true, disposition: "active", thread_id: work.thread_id! }
   } catch (error) {
     const code = (error instanceof Error ? error.message : "dispatch_failed")

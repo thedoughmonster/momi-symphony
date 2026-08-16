@@ -22,8 +22,10 @@ test("one claimed dispatch creates one host task and replay is duplicate", async
     callHost: () => { hostCount += 1; return Promise.resolve(
       { thread_id: "thread-1", turn_id: "turn-1" }) },
     callCancel: () => Promise.reject(new Error("must_not_cancel")),
+    callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), reconcile: () => Promise.resolve("comment-1"),
     cancellationRecorded: () => Promise.resolve(true),
+    recoveryRecorded: () => Promise.resolve(true),
     writeback: (_input: DispatchInput, _comment: string | null, marker: boolean) => {
       hasRun = marker; return Promise.resolve(true) }, retry: () => Promise.resolve(true) }
   assert.deepEqual(await processDispatch(input, dependencies),
@@ -44,8 +46,10 @@ test("unknown project writes an explanation without creating a task", async () =
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => { hostCount += 1; return Promise.reject(new Error("must_not_call")) },
     callCancel: () => Promise.reject(new Error("must_not_cancel")),
+    callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), reconcile: () => Promise.resolve("comment-2"),
     cancellationRecorded: () => Promise.resolve(true),
+    recoveryRecorded: () => Promise.resolve(true),
     writeback: (_input, _comment, hasRun) => {
       marker = hasRun; return Promise.resolve(true) },
     retry: () => Promise.resolve(true) })
@@ -60,8 +64,10 @@ test("delivery failure releases the durable claim for retry", async () => {
   await assert.rejects(processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("host_unavailable")),
     callCancel: () => Promise.reject(new Error("must_not_cancel")),
+    callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), reconcile: () => Promise.resolve(null),
     cancellationRecorded: () => Promise.resolve(true),
+    recoveryRecorded: () => Promise.resolve(true),
     writeback: () => Promise.resolve(true), retry: () => {
       retries += 1; return Promise.resolve(true) } }))
   assert.equal(retries, 1)
@@ -76,8 +82,10 @@ test("active cancellation records the host result without adding has-run", async
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("must_not_start")),
     callCancel: () => Promise.resolve({ cancellation_state: "requested" }),
+    callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), cancellationRecorded: () => {
       recorded = true; return Promise.resolve(true) },
+    recoveryRecorded: () => Promise.resolve(true),
     reconcile: () => Promise.resolve("comment-3"), writeback: (_input, _comment, hasRun) => {
       marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true) })
   assert.equal(result.disposition, "requested")

@@ -37,6 +37,8 @@ test("uses the claimed private HTTPS endpoint and runtime bearer secret", async 
     })
     assert.match(requestedBody, /"interaction_mode":"interactive"/)
     assert.match(requestedBody, /"thread_name":"MOX-154 · interactive discovery"/)
+    await assert.rejects(callCodexHost({ ...work,
+      action: "recover-discovery" }, "token"), /recovery_requires_recovery_endpoint/)
     await assert.rejects(callCodexHost({ ...work, host_dispatch_url: null }, "token"),
       /codex_host_url_unconfigured/)
     await assert.rejects(callCodexHost({ ...work,

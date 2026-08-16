@@ -25,3 +25,13 @@ test("interactive discovery uses one concise mutable status comment", () => {
   assert.match(buildLinearComment(work, terminal),
     /Discovery stopped · Interactive discovery task archived\./)
 })
+
+test("discovery recovery comments are concise and hide private identities", () => {
+  const recovery = { ...work, action: "recover-discovery", recovery_state: "requested",
+    target_dispatch_id: "private-target", thread_id: null, turn_id: null } as ClaimedDispatch
+  const pending = buildLinearComment(recovery)
+  assert.match(pending, /Recovery pending/i)
+  assert.doesNotMatch(pending, /private-target|thread|dispatch/i)
+  const done = buildLinearComment({ ...recovery, recovery_state: "recovered" })
+  assert.match(done, /Recovery complete/i)
+})

@@ -14,7 +14,8 @@ The untouched UTF-8 body, `Linear-Signature`, and `Linear-Delivery` headers.
 Only `update` events for `Issue` can request work, and only a changed `labels`
 field in `updatedFrom` is semantic evidence. The declared catalog is
 `execute-run`, `cancel-run`, `validate-issue`, `investigate-issue`, `cleanup`, `decompose`,
-and `run-discovery`; multi-action additions are ignored as ambiguous.
+`run-discovery`, and `recover-discovery`; multi-action additions are ignored as
+ambiguous. Recovery targets retained discovery identity and never creates a task.
 
 ## Output
 

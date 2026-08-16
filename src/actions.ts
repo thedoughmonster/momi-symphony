@@ -6,6 +6,7 @@ export const AGENT_ACTIONS = [
   "cleanup",
   "decompose",
   "run-discovery",
+  "recover-discovery",
 ] as const
 
 export type AgentAction = typeof AGENT_ACTIONS[number]

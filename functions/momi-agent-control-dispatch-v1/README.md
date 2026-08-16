@@ -2,7 +2,7 @@
 
 ## ELI5
 
-This worker picks up one sealed work ticket, starts or cancels exact Codex work,
+This worker picks up one sealed work ticket, starts, cancels, or recovers exact Codex work,
 and updates Linear. One-shot work later records terminal archive evidence;
 interactive discovery remains active until explicit archive. Repeated knocks
 reuse the same ticket and task.
@@ -32,10 +32,12 @@ and performs marker-bound Linear label/comment reconciliation. Parent/child
 links and queued cancellation are already sealed in the claimed work. Active
 cancellation calls the host's exact turn-interruption contract. Failures
 release work with bounded backoff. Host idempotency prevents duplicate tasks.
+Discovery recovery calls the exact retained-task recovery contract, writes a
+sanitized pending status before host delivery, and never starts a Codex task.
 
 ## Tests
 
-Tests cover claim/retry phases, parent linkage, all cancellation states, host
+Tests cover claim/retry phases, parent linkage, cancellation and recovery states, host
 idempotency, accepted labels/comments, callback replay, and archive bookkeeping.
 
 ## Failure Handling

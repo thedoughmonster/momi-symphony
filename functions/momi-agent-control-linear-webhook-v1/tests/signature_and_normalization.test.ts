@@ -16,7 +16,7 @@ test("verifies the exact raw Linear bytes", async () => {
 
 test("routes each newly added declared action from updatedFrom", () => {
   for (const action of ["execute-run", "cancel-run", "validate-issue", "investigate-issue",
-    "cleanup", "decompose", "run-discovery"]) {
+    "cleanup", "decompose", "run-discovery", "recover-discovery"]) {
     const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
       updatedFrom: { labels: [{ id: "old", name: "Feature" }] }, data: {
         labels: [{ name: action }, { name: "Feature" }] } }

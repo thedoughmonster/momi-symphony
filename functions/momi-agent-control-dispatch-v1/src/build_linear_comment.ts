@@ -30,6 +30,21 @@ export function buildLinearComment(work: ClaimedDispatch, terminal?: TerminalInp
       `- Final disposition: ${work.cancellation_state}\n` +
       `- Recorded at: ${new Date().toISOString()}\n` + summaries[work.cancellation_state]
   }
+  if (work.action === "recover-discovery") {
+    const summaries = {
+      not_requested: "Discovery recovery has not been evaluated.",
+      requested: "Discovery recovery pending · exact archive confirmation has not completed; ownership remains held.",
+      recovered: "Discovery recovery complete · the exact retained task was archived.",
+      already_archived: "Discovery recovery complete · the exact task was already archived.",
+      no_target: "Discovery recovery unavailable · no retained task exists for this issue.",
+      ambiguous_target: "Discovery recovery unavailable · the retained task identity is ambiguous.",
+      mapping_mismatch: "Discovery recovery unavailable · the retained task mapping no longer matches.",
+    }
+    if (work.rejection_code) {
+      return `${marker}\nDiscovery recovery unavailable · project mapping is unavailable.`
+    }
+    return `${marker}\n${summaries[work.recovery_state]}`
+  }
   const task = work.thread_id
     ? `- Codex task: \`${work.thread_id}\` / turn \`${work.turn_id}\``
     : "- Codex task: not created"

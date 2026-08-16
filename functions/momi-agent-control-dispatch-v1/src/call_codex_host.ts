@@ -6,6 +6,9 @@ export async function callCodexHost(
   capabilityToken: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<HostAcceptance> {
+  if (work.action === "recover-discovery") {
+    throw new Error("codex_host_recovery_requires_recovery_endpoint")
+  }
   const configured = work.host_dispatch_url?.trim() ?? ""
   const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
   let url: URL
