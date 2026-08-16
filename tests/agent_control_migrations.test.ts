@@ -8,6 +8,7 @@ const hostConfigPath = "supabase/migrations/20260814170037_configure_agent_contr
 const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_action_catalog.sql"
 const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_parent_runs.sql"
 const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_recovery.sql"
+const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dead_letter_recovery.sql"
 
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
@@ -100,5 +101,24 @@ test("discovery recovery is exact, state-independent, and releases only after ar
   assert.match(migration, /create function momi_agent_ops\.record_recovery_v1/)
   assert.match(migration, /'mapping_mismatch'/)
   assert.doesNotMatch(migration, /p_issue_state|workflow_state/)
+  assert.doesNotMatch(migration, /\bnet\.http_post\b/)
+})
+
+test("dead-letter recovery is private, exact, and rotates the existing dispatch", async () => {
+  const migration = await readFile(deadLetterPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /create function momi_agent_ops\.recover_dead_letter_dispatch_v1/)
+  assert.match(migration, /for update/)
+  assert.match(migration, /'already_recovered'/)
+  assert.match(migration, /selected\.work_status <> 'dead_letter'/)
+  assert.match(migration, /selected\.attempt_count <> p_expected_attempt_count/)
+  assert.match(migration, /selected\.host_accepted_at is not null/)
+  assert.match(migration, /selected_run\.terminal_at is not null/)
+  assert.match(migration, /selected_mapping\.host_dispatch_url is distinct from/)
+  assert.match(migration, /fresh_capability := gen_random_uuid\(\)/)
+  assert.match(migration, /work_status = 'pending', attempt_count = 0/)
+  assert.match(migration, /wake_capability_token = fresh_capability/)
+  assert.match(migration, /from public, anon, authenticated, service_role/)
+  assert.doesNotMatch(migration, /insert into momi_agent_ops\./)
   assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })

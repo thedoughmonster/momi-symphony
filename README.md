@@ -44,3 +44,29 @@ and `MOMI_CODEX_HOST_SECRET`. The HTTPS host endpoint is private project
 configuration in `momi_agent_ops.project_mappings`; host-specific paths are
 not committed. Hosted activation remains a post-review
 release step; no local command applies these migrations or deploys functions.
+
+## Exact dead-letter recovery
+
+`momi_agent_ops.recover_dead_letter_dispatch_v1` is a private database-owner
+operator control for one audited delivery failure. It reactivates the existing
+dispatch; it does not create a webhook, dispatch, run, or Linear action record.
+The operator must supply the exact dispatch ID, issue identifier, prior attempt
+count and error code, current stable HTTPS dispatch route, and the authorizing
+Linear issue identifier.
+
+The routine locks the dispatch and requires the audited dead-letter shape: eight
+failed host deliveries, no host acceptance or host identity, a pending and
+non-terminal run, no prior recovery, and an active mapping that still matches
+the dispatch repository, base branch, and supplied route. It records the prior
+failure evidence, generates a fresh capability internally, and makes the same
+dispatch immediately pending so the existing wake trigger performs delivery.
+The capability is never returned or logged.
+
+The first exact invocation returns `recovered`; an identical replay returns
+`already_recovered`. Any changed input, mapping, host identity, run state, or
+prior conflicting recovery fails closed. Execution is revoked from `PUBLIC`,
+`anon`, `authenticated`, and `service_role`, so hosted runtime code cannot use
+this operator control. Apply the migration only through the receipt-bound
+development release, recapture the baseline before invocation, invoke once as
+the development database owner, and then observe the existing dispatch rather
+than issuing another wake or dispatch.

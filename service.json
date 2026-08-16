@@ -73,6 +73,7 @@
       "momi_agent_ops.claim_dispatch_v3",
       "momi_agent_ops.claim_dispatch_v4",
       "momi_agent_ops.claim_dispatch_v5",
+      "momi_agent_ops.recover_dead_letter_dispatch_v1",
       "momi_agent_ops.record_cancellation_v1",
       "momi_agent_ops.record_host_acceptance_v1",
       "momi_agent_ops.record_linear_writeback_v1",
