@@ -1,10 +1,11 @@
-import type { HostCancellationRecord, HostRecord, TerminalSummary } from "./types.ts"
+import type { HostCancellationRecord, HostRecord, HostRecoveryRecord, TerminalSummary } from "./types.ts"
 import { readHostLedger } from "./read_host_ledger.ts"
 import { writeHostLedger } from "./write_host_ledger.ts"
 
 export class HostLedger {
   private records = new Map<string, HostRecord>()
   private cancellations = new Map<string, HostCancellationRecord>()
+  private recoveries = new Map<string, HostRecoveryRecord>()
   private queue: Promise<void> = Promise.resolve()
   private readonly path: string
   constructor(path: string) { this.path = path }
@@ -12,37 +13,47 @@ export class HostLedger {
     const parsed = await readHostLedger(this.path)
     for (const record of parsed.records ?? []) this.records.set(record.workId, record)
     for (const record of parsed.cancellations ?? []) this.cancellations.set(record.workId, record)
+    for (const record of parsed.recoveries ?? []) this.recoveries.set(record.workId, record)
   }
-  get(workId: string): HostRecord | null {
-    return this.records.get(workId) ?? null
-  }
+  get(workId: string): HostRecord | null { return this.records.get(workId) ?? null }
   getCancellation(workId: string): HostCancellationRecord | null {
-    return this.cancellations.get(workId) ?? null
-  }
+    return this.cancellations.get(workId) ?? null }
+  getRecovery(workId: string): HostRecoveryRecord | null { return this.recoveries.get(workId) ?? null }
   findByThread(threadId: string): HostRecord | null {
-    return [...this.records.values()].find((record) => record.threadId === threadId) ?? null
-  }
-  async reserveCancellation(
-    workId: string, fingerprint: string, targetWorkId: string,
-  ): Promise<HostCancellationRecord | null> {
+    return [...this.records.values()].find((record) => record.threadId === threadId) ?? null }
+  async reserveCancellation(workId: string, fingerprint: string,
+    targetWorkId: string): Promise<HostCancellationRecord | null> {
     const existing = this.cancellations.get(workId)
     if (existing) {
-      if (existing.fingerprint !== fingerprint || existing.targetWorkId !== targetWorkId) {
+      if (existing.fingerprint !== fingerprint || existing.targetWorkId !== targetWorkId)
         throw new Error("host_idempotency_conflict")
-      }
       return existing
     }
     this.cancellations.set(workId, { workId, fingerprint, targetWorkId,
       state: "reserved", updatedAt: new Date().toISOString() })
     await this.persist(); return null
   }
-  async completeCancellation(
-    workId: string, state: "requested" | "already_terminal",
-  ): Promise<void> {
+  async completeCancellation(workId: string, state: "requested" | "already_terminal"): Promise<void> {
     const record = this.cancellations.get(workId)
     if (!record) throw new Error("host_cancellation_missing")
-    record.state = state; record.updatedAt = new Date().toISOString()
-    await this.persist()
+    record.state = state; record.updatedAt = new Date().toISOString(); await this.persist()
+  }
+  async reserveRecovery(workId: string, fingerprint: string,
+    targetWorkId: string): Promise<HostRecoveryRecord | null> {
+    const existing = this.recoveries.get(workId)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint || existing.targetWorkId !== targetWorkId)
+        throw new Error("host_idempotency_conflict")
+      return existing
+    }
+    this.recoveries.set(workId, { workId, fingerprint, targetWorkId,
+      state: "reserved", updatedAt: new Date().toISOString() })
+    await this.persist(); return null
+  }
+  async completeRecovery(workId: string, state: "recovered" | "already_archived"): Promise<void> {
+    const record = this.recoveries.get(workId)
+    if (!record) throw new Error("host_recovery_missing")
+    record.state = state; record.updatedAt = new Date().toISOString(); await this.persist()
   }
   recoverable(): HostRecord[] {
     return [...this.records.values()].filter((record) =>
@@ -50,8 +61,7 @@ export class HostLedger {
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
       (record.state === "terminal" && !record.callbackSent))
   }
-  async reserve(
-    workId: string, fingerprint: string, token: string,
+  async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
   ): Promise<HostRecord> {
     const existing = this.records.get(workId)
@@ -65,11 +75,10 @@ export class HostLedger {
     }
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
-      callbackSent: false, cancellationRequestedAt: null,
+      callbackSent: false, cancellationRequestedAt: null, recoveryRequestedAt: null,
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
-    await this.persist()
-    return record
+    await this.persist(); return record
   }
   async accept(workId: string, threadId: string, turnId: string): Promise<HostRecord> {
     const record = this.require(workId)
@@ -79,42 +88,33 @@ export class HostLedger {
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
   async ambiguous(workId: string): Promise<void> {
-    const record = this.require(workId)
-    record.state = "ambiguous"; record.updatedAt = new Date().toISOString()
-    await this.persist()
-  }
+    const record = this.require(workId); record.state = "ambiguous"
+    record.updatedAt = new Date().toISOString(); await this.persist() }
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
-    if (record.interactionMode !== "interactive") {
-      throw new Error("host_interaction_mode_conflict")
-    }
-    record.state = "interactive"; record.updatedAt = new Date().toISOString()
-    await this.persist()
+    if (record.interactionMode !== "interactive") throw new Error("host_interaction_mode_conflict")
+    record.state = "interactive"; record.updatedAt = new Date().toISOString(); await this.persist()
   }
   async terminal(workId: string, result: TerminalSummary, archivedAt: string): Promise<HostRecord> {
     const record = this.require(workId)
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
-    record.callbackSent = false; record.updatedAt = new Date().toISOString()
-    await this.persist(); return record
+    record.callbackSent = false; record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
   async callbackSent(workId: string): Promise<void> {
-    const record = this.require(workId)
-    record.callbackSent = true; record.updatedAt = new Date().toISOString()
-    await this.persist()
-  }
+    const record = this.require(workId); record.callbackSent = true
+    record.updatedAt = new Date().toISOString(); await this.persist() }
   async cancellationRequested(workId: string): Promise<void> {
-    const record = this.require(workId)
-    record.cancellationRequestedAt ??= new Date().toISOString()
-    record.updatedAt = new Date().toISOString(); await this.persist()
-  }
+    const record = this.require(workId); record.cancellationRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async recoveryRequested(workId: string): Promise<void> {
+    const record = this.require(workId); record.recoveryRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
   private require(workId: string): HostRecord {
-    const record = this.records.get(workId)
-    if (!record) throw new Error("host_record_missing")
-    return record
-  }
+    const record = this.records.get(workId); if (!record) throw new Error("host_record_missing")
+    return record }
   private async persist(): Promise<void> {
-    this.queue = this.queue.then(() => writeHostLedger(this.path,
-      [...this.records.values()], [...this.cancellations.values()]))
+    this.queue = this.queue.then(() => writeHostLedger(this.path, [...this.records.values()],
+      [...this.cancellations.values()], [...this.recoveries.values()]))
     await this.queue
   }
 }

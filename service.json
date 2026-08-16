@@ -2,7 +2,7 @@
   "$schema": "../../schemas/service-manifest-v1.schema.json",
   "schema_version": 1,
   "service_key": "agent-control-host",
-  "purpose": "Translate authenticated canonical agent commands into idempotent local Codex App Server tasks and cancellation.",
+  "purpose": "Translate authenticated canonical agent commands into idempotent local Codex App Server tasks, cancellation, and discovery recovery.",
   "kind": "destination_adapter",
   "service_type": "destination_adapter",
   "lifecycle_status": "active",
@@ -11,7 +11,8 @@
     "provides": [
       "momi.agent_control.host_dispatch.v1",
       "momi.agent_control.host_dispatch.v2",
-      "momi.agent_control.host_cancel.v1"
+      "momi.agent_control.host_cancel.v1",
+      "momi.agent_control.host_recover.v1"
     ],
     "consumes": []
   },

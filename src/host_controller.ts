@@ -4,10 +4,11 @@ import { extractTerminalSummary } from "./extract_terminal_summary.ts"
 import { handleHostNotification } from "./handle_host_notification.ts"
 import { HostLedger } from "./host_ledger.ts"
 import { recoverHostTurn } from "./recover_host_turn.ts"
+import { recoverDiscoveryWork } from "./recover_discovery_work.ts"
 import { sendTerminalCallback } from "./send_terminal_callback.ts"
 import { startHostTask } from "./start_host_task.ts"
-import type { AppServerClient, HostAcceptance, HostConfiguration,
-  HostCancellation, HostCancellationResult, HostDispatch, HostRecord, TurnShape } from "./types.ts"
+import type { AppServerClient, HostAcceptance, HostCancellation, HostCancellationResult,
+  HostConfiguration, HostDispatch, HostRecord, HostRecovery, HostRecoveryResult, TurnShape } from "./types.ts"
 export class HostController {
   private finalizing = new Set<string>()
   private callbackTimers = new Set<string>()
@@ -74,11 +75,11 @@ export class HostController {
   async cancel(input: HostCancellation): Promise<HostCancellationResult> {
     const result = await cancelHostWork(this.client, this.ledger, this.config, input)
     const target = this.ledger.get(input.target_work_id)
-    if (target?.state === "terminal" && !target.callbackSent) {
-      await this.deliverCallback(target)
-    }
+    if (target?.state === "terminal" && !target.callbackSent) await this.deliverCallback(target)
     return result
   }
+  recoverDiscovery(input: HostRecovery): Promise<HostRecoveryResult> {
+    return recoverDiscoveryWork(this.client, this.ledger, input, this.callback) }
   private handleNotification(notification: Record<string, unknown>): Promise<void> {
     return handleHostNotification(notification, this.ledger, this.callback,
       (record, turn) => this.finalize(record, turn))
@@ -89,6 +90,7 @@ export class HostController {
   }
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
     if (!record.threadId || this.finalizing.has(record.workId)) return
+    if (record.recoveryRequestedAt) return
     this.finalizing.add(record.workId)
     try {
       if (record.interactionMode === "interactive" && !record.cancellationRequestedAt) {

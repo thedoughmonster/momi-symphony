@@ -13,7 +13,8 @@ export async function handleHostNotification(
   const archivedThread = parseThreadArchived(notification)
   if (archivedThread) {
     const record = ledger.findByThread(archivedThread)
-    if (record?.state === "interactive" && !record.cancellationRequestedAt) {
+    if (record?.state === "interactive" && !record.cancellationRequestedAt &&
+      !record.recoveryRequestedAt) {
       await finishInteractiveArchive(ledger, record, callback)
     }
     return

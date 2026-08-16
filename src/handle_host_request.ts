@@ -4,6 +4,7 @@ import { isBearerAuthorized } from "./is_bearer_authorized.ts"
 import type { HostController } from "./host_controller.ts"
 import { parseHostDispatch } from "./parse_host_dispatch.ts"
 import { parseHostCancellation } from "./parse_host_cancellation.ts"
+import { parseHostRecovery } from "./parse_host_recovery.ts"
 import { readNodeBody } from "./read_node_body.ts"
 import { writeNodeJson } from "./write_node_json.ts"
 
@@ -16,7 +17,8 @@ export async function handleHostRequest(
   if (request.method === "GET" && path === "/health") {
     writeNodeJson(response, 200, { ok: true, service: "momi-agent-control-host" }); return
   }
-  if (request.method !== "POST" || !["/v1/dispatch", "/v1/cancel"].includes(path)) {
+  if (request.method !== "POST" ||
+    !["/v1/dispatch", "/v1/cancel", "/v1/recover"].includes(path)) {
     writeNodeJson(response, 404, { ok: false }); return
   }
   const secret = process.env.MOMI_CODEX_HOST_SECRET?.trim() ?? ""
@@ -29,6 +31,12 @@ export async function handleHostRequest(
       const input = parseHostCancellation(body)
       if (!input) { writeNodeJson(response, 400, { ok: false }); return }
       const result = await controller.cancel(input)
+      writeNodeJson(response, 200, { ok: true, ...result }); return
+    }
+    if (path === "/v1/recover") {
+      const input = parseHostRecovery(body)
+      if (!input) { writeNodeJson(response, 400, { ok: false }); return }
+      const result = await controller.recoverDiscovery(input)
       writeNodeJson(response, 200, { ok: true, ...result }); return
     }
     const input = parseHostDispatch(body)

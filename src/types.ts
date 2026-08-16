@@ -34,11 +34,31 @@ export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
 }
 
+export type HostRecovery = {
+  schema_version: 1
+  work_id: string
+  capability_token: string
+  target_work_id: string
+}
+
+export type HostRecoveryResult = {
+  recovery_state: "recovered" | "already_archived" | "no_target" |
+    "ambiguous_target" | "mapping_mismatch"
+}
+
 export type HostCancellationRecord = {
   workId: string
   fingerprint: string
   targetWorkId: string
   state: "reserved" | "requested" | "already_terminal"
+  updatedAt: string
+}
+
+export type HostRecoveryRecord = {
+  workId: string
+  fingerprint: string
+  targetWorkId: string
+  state: "reserved" | "recovered" | "already_archived"
   updatedAt: string
 }
 
@@ -53,6 +73,7 @@ export type HostRecord = {
   terminal: (TerminalSummary & { archivedAt: string }) | null
   callbackSent: boolean
   cancellationRequestedAt: string | null
+  recoveryRequestedAt?: string | null
   updatedAt: string
 }
 

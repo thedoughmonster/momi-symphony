@@ -19,6 +19,10 @@ record and calls `turn/interrupt` after a successful durable lookup. A retained
 interactive task is archived directly and emits its terminal receipt. Queued
 cancellation remains in the database owner, while a terminal target is an
 idempotent host success.
+The recovery contract resolves only one exact retained discovery record. It
+reads the retained thread, interrupts its sole active turn when present,
+confirms no turn remains active, and archives the thread. Archive failure leaves
+the original record retained and replayable; recovery never starts a task.
 Task acceptance returns before the post-start recovery read; a retry with the
 same work identity promotes known thread/turn IDs and resumes terminal recovery
 without starting a second task. Startup recovery also resumes subscriptions for
