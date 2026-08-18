@@ -1,0 +1,94 @@
+{
+  "$schema": "../../schemas/service-manifest-v1.schema.json",
+  "schema_version": 1,
+  "service_key": "agent-control",
+  "purpose": "Own durable Linear action dispatch, Codex task delivery, write-back, and archival state.",
+  "kind": "core_capability",
+  "service_type": "dataset_owner",
+  "lifecycle_status": "active",
+  "functions": [
+    "momi-agent-control-dispatch-v1",
+    "momi-agent-control-linear-webhook-v1"
+  ],
+  "contracts": {
+    "provides": [
+      "momi.agent_control.dispatch.v1",
+      "momi.agent_control.linear_webhook.v1"
+    ],
+    "consumes": [
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v2"},
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_cancel.v1"},
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_recover.v1"}
+    ]
+  },
+  "database": {
+    "read": ["momi_agent_ops"],
+    "write": ["momi_agent_ops"]
+  },
+  "network": {
+    "outbound_hosts": ["api.linear.app", "configured:codex_host_adapter_url"]
+  },
+  "secrets": [
+    "SUPABASE_DB_URL",
+    "LINEAR_WEBHOOK_SECRET",
+    "LINEAER_ACCESS",
+    "LINEAR_API_KEY",
+    "MOMI_CODEX_HOST_SECRET"
+  ],
+  "configuration": [],
+  "deployment": {
+    "owns": [
+      {"kind": "cron_job", "key": "momi-agent-control-dispatch-recovery-v1"}
+    ],
+    "depends_on": [
+      {"kind": "postgres_extension", "key": "pg_cron"},
+      {"kind": "postgres_extension", "key": "pg_net"},
+      {"kind": "vault_secret", "key": "momi_project_url"},
+      {"kind": "vault_secret", "key": "momi_publishable_key"}
+    ]
+  },
+  "runtime_dependencies": [
+    "jsr:@supabase/functions-js@2.110.2/edge-runtime.d.ts",
+    "npm:postgres@3.4.3"
+  ],
+  "approved_packages": [],
+  "owned_dataset": {
+    "dataset_key": "momi.agent_control",
+    "dataset_class": "operational",
+    "db_role": "svc_agent_control",
+    "private_schema": "momi_agent_ops",
+    "private_relations": [
+      "momi_agent_ops.dispatches",
+      "momi_agent_ops.project_mappings",
+      "momi_agent_ops.raw_webhook_envelopes",
+      "momi_agent_ops.run_records"
+    ],
+    "private_routines": [
+      "momi_agent_ops.accept_linear_webhook_v1",
+      "momi_agent_ops.accept_linear_webhook_v2",
+      "momi_agent_ops.accept_linear_webhook_v3",
+      "momi_agent_ops.accept_linear_webhook_v4",
+      "momi_agent_ops.claim_dispatch_v1",
+      "momi_agent_ops.claim_dispatch_v2",
+      "momi_agent_ops.claim_dispatch_v3",
+      "momi_agent_ops.claim_dispatch_v4",
+      "momi_agent_ops.claim_dispatch_v5",
+      "momi_agent_ops.recover_dead_letter_dispatch_v1",
+      "momi_agent_ops.record_cancellation_v1",
+      "momi_agent_ops.record_host_acceptance_v1",
+      "momi_agent_ops.record_linear_writeback_v1",
+      "momi_agent_ops.record_linear_writeback_v2",
+      "momi_agent_ops.record_linear_writeback_v3",
+      "momi_agent_ops.record_linear_writeback_v4",
+      "momi_agent_ops.record_recovery_v1",
+      "momi_agent_ops.record_terminal_v1",
+      "momi_agent_ops.record_terminal_v2",
+      "momi_agent_ops.retry_dispatch_v1",
+      "momi_agent_ops.run_dispatch_recovery_v1",
+      "momi_agent_ops.wake_agent_control_dispatch"
+    ],
+    "public_reads": [],
+    "public_commands": [],
+    "emitted_events": []
+  }
+}

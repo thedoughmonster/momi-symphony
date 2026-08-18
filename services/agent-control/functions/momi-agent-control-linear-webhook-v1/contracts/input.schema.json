@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["action", "type", "data", "webhookTimestamp", "webhookId"],
+  "properties": {
+    "action": {"type": "string"},
+    "type": {"type": "string"},
+    "data": {"type": "object"},
+    "updatedFrom": {"type": ["object", "null"]},
+    "webhookTimestamp": {"type": "integer"},
+    "webhookId": {"type": "string", "format": "uuid"}
+  },
+  "additionalProperties": true
+}

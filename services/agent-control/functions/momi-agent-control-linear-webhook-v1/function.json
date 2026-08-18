@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../../schemas/function-manifest-v1.schema.json",
+  "function_key": "momi.agent_control.linear_webhook.v1",
+  "contract_version": 1,
+  "purpose": "Authenticate Linear issue webhooks and durably accept one newly added declared action.",
+  "owner_service": "agent-control",
+  "function_type": "ingest",
+  "capability": "ingest",
+  "boundary": "linear_inbound",
+  "runtime": "supabase_edge",
+  "route_path": "/functions/v1/momi-agent-control-linear-webhook-v1",
+  "authentication_policy_key": "linear.raw_hmac_sha256.v1",
+  "entrypoint": "index.ts",
+  "input_schema": "contracts/input.schema.json",
+  "output_schema": "contracts/output.schema.json",
+  "probe": {"method": "GET", "acceptable_statuses": [200]},
+  "timeout_policy_key": "linear.webhook.five_second_ack.v1",
+  "retry_policy_key": "linear.delivery_retry.v1",
+  "idempotency_policy_key": "linear.delivery_agent_action.v1",
+  "required_capabilities": ["database_read", "database_write"],
+  "declared_side_effects": [
+    "records_complete_linear_envelope",
+    "creates_agent_dispatch",
+    "creates_agent_run"
+  ]
+}
