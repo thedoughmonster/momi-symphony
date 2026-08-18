@@ -20,7 +20,7 @@ async function connect(container: string): Promise<Sql> {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     const sql = postgres(`postgres://postgres:momi-agent-test@127.0.0.1:${port}/postgres`, {
-      connect_timeout: 2, max: 2, prepare: false,
+      connect_timeout: 2, max: 1, prepare: false,
     })
     try {
       await sql`select 1`
