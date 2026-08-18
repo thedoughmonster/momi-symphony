@@ -6,6 +6,14 @@ on:
       commit:
         description: Exact validated commit SHA
         required: true
+      phase:
+        description: Guarded development operation
+        required: true
+        type: choice
+        options:
+          - preflight
+          - runtime
+          - mapping
 
 permissions:
   contents: read
@@ -36,20 +44,34 @@ jobs:
         run: test "$SUPABASE_DEV_PROJECT_REF" = "xtbraqnlskmqxinjxxdn"
         env:
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
-      - run: pnpm exec supabase link --project-ref "$SUPABASE_DEV_PROJECT_REF"
+      - name: Link the pinned project for migration phases
+        if: inputs.phase != 'runtime'
+        run: pnpm exec supabase link --project-ref "$SUPABASE_DEV_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
-      - run: pnpm exec supabase db push --linked
+      - name: Prove the migration plan without applying it
+        if: inputs.phase != 'runtime'
+        run: pnpm exec supabase db push --linked --dry-run
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      - run: pnpm exec supabase functions deploy momi-agent-control-linear-webhook-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
+      - name: Apply the mapping only after the host cutover
+        if: inputs.phase == 'mapping'
+        run: pnpm exec supabase db push --linked
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - name: Deploy the Linear webhook runtime
+        if: inputs.phase == 'runtime'
+        run: pnpm exec supabase functions deploy momi-agent-control-linear-webhook-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
-      - run: pnpm exec supabase functions deploy momi-agent-control-dispatch-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
+      - name: Deploy the dispatch runtime
+        if: inputs.phase == 'runtime'
+        run: pnpm exec supabase functions deploy momi-agent-control-dispatch-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}

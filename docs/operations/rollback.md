@@ -9,4 +9,10 @@ Rollback is bounded to development and preserves every durable record.
 5. Verify the four table counts did not decrease and no work ID gained a second host identity.
 6. Leave the seven migration versions in both git histories and in the development migration ledger.
 
+Use `ops/sql/disable_symphony_control_plane_mapping.sql` to disable the exact
+HTTPS mapping. After a successful drill, restore the repository-owned host and
+use `ops/sql/enable_symphony_control_plane_mapping.sql` to return the same exact
+mapping to its final active state. Both operations abort unless exactly one row
+matches; neither deletes or reconstructs durable state.
+
 Rollback never drops `momi_agent_ops`, rewrites a migration, deletes a ledger, or activates production. A failed or ambiguous host start remains blocked for operator reconciliation.
