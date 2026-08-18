@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "work_id", "capability_token", "target_work_id", "repository", "base_branch"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "work_id": {"type": "string", "format": "uuid"},
+    "capability_token": {"type": "string", "format": "uuid"},
+    "target_work_id": {"type": "string", "format": "uuid"},
+    "repository": {"type": "string"},
+    "base_branch": {"type": "string"}
+  },
+  "additionalProperties": false
+}
