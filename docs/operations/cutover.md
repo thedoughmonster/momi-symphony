@@ -12,8 +12,8 @@
 ## Ordered cutover
 
 1. Run the `preflight` phase of `Deploy development` at the exact validated
-   `main` commit. It must report only the expected pending mapping migration and
-   must not apply it.
+   `main` commit. It must adopt no remote state, tolerate the backend's unrelated
+   global history, and report only the expected pending mapping migration.
 2. Run the `runtime` phase at the same commit to deploy both Edge Functions
    without applying migrations.
 3. Back up the current ledger, user unit, and environment file without exposing
@@ -23,8 +23,9 @@
    `main`.
 5. Reload and restart the host service; verify `/health` locally and through the
    private route.
-6. Run the `mapping` phase at the same commit. It repeats the dry run before
-   applying the mapping migration, after the new repository and host are ready.
+6. Run the `mapping` phase at the same commit. It repeats the no-write private
+   ledger plan before applying the mapping migration and its ledger row in one
+   locked transaction, after the new repository and host are ready.
 7. Reconcile the four durable table counts and active host callback identity.
 8. Exercise the bounded rollback with
    `ops/sql/disable_symphony_control_plane_mapping.sql`, restore the previous
