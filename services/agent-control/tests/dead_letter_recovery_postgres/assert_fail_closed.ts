@@ -39,7 +39,7 @@ export async function assertChangedStatesFailClosed(sql: Sql): Promise<void> {
 
   await failClosed.expect(sql, { mappingActive: false })
   await failClosed.expect(sql, { mappingRepository: "thedoughmonster/other" })
-  await failClosed.expect(sql, { mappingBaseBranch: "main" })
+  await failClosed.expect(sql, { mappingBaseBranch: "dev" })
   await failClosed.expect(sql, {
     mappingRoute: "https://changed-agent-control.doh.monster/v1/dispatch",
   })
