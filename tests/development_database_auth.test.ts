@@ -7,6 +7,9 @@ test("development migrations use the CLI-owned short-lived login role", async ()
   const operations = await readFile("docs/operations/development.md", "utf8")
 
   assert.doesNotMatch(workflow, /secrets\.SUPABASE_DB_PASSWORD/)
+  assert.doesNotMatch(workflow, /supabase db push|migration repair/)
+  assert.match(workflow, /pnpm migration:plan/)
+  assert.match(workflow, /pnpm migration:apply/)
   assert.equal(
     workflow.match(/unset SUPABASE_DB_PASSWORD PGPASSWORD/g)?.length,
     3,

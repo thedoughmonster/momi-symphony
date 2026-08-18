@@ -56,16 +56,18 @@ jobs:
         if: inputs.phase != 'runtime'
         run: |
           unset SUPABASE_DB_PASSWORD PGPASSWORD
-          pnpm exec supabase db push --linked --dry-run
+          pnpm migration:plan
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
       - name: Apply the mapping only after the host cutover
         if: inputs.phase == 'mapping'
         run: |
           unset SUPABASE_DB_PASSWORD PGPASSWORD
-          pnpm exec supabase db push --linked
+          pnpm migration:apply
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
       - name: Deploy the Linear webhook runtime
         if: inputs.phase == 'runtime'
         run: pnpm exec supabase functions deploy momi-agent-control-linear-webhook-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
