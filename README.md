@@ -1,6 +1,6 @@
 # MoMi Symphony control plane
 
-This private repository is the durable owner of the MoMi `agent-control` and
+This repository is the durable owner of the MoMi `agent-control` and
 `agent-control-host` services. It receives signed Linear actions, records one
 idempotent dispatch, and hands an authenticated canonical request to the local
 Codex App Server host adapter.

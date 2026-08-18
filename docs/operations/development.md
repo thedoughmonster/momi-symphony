@@ -17,9 +17,14 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
 ## Release
 
 1. Merge a green pull request to protected `main`.
-2. Run `Deploy development` with the exact validated SHA.
-3. Verify both Edge Functions are active and their deployed hashes are recorded.
-4. Verify `curl --fail http://127.0.0.1:47931/health` returns the stable service identity.
-5. Compare durable counts for mappings, envelopes, dispatches, and run records to the pre-cutover record.
+2. Run the `preflight` phase of `Deploy development` with the exact validated
+   SHA and inspect the no-write migration plan.
+3. Run the `runtime` phase at the same SHA and verify both Edge Functions are
+   active with recorded deployed hashes.
+4. Verify `curl --fail http://127.0.0.1:47931/health` returns the stable service
+   identity from the repository-owned host.
+5. Run the `mapping` phase at the same SHA only after host health passes.
+6. Compare durable counts for mappings, envelopes, dispatches, and run records
+   to the pre-cutover record.
 
 The workflow contains no production target or automatic production trigger.
