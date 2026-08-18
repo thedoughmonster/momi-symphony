@@ -9,8 +9,10 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
 
 ## Required configuration
 
-- GitHub environment secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`.
+- GitHub environment secret: `SUPABASE_ACCESS_TOKEN`.
 - GitHub environment variable: `SUPABASE_DEV_PROJECT_REF`.
+- Migration steps remove `SUPABASE_DB_PASSWORD` and `PGPASSWORD` so the pinned
+  Supabase CLI obtains its own short-lived login role.
 - Existing Supabase function secrets remain managed in Supabase and are never printed.
 - Host secrets remain in `/home/codex-dev/.config/momi-agent-control/host.env`.
 
