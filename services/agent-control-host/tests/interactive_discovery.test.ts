@@ -33,8 +33,8 @@ test("discovery is named, conversational, retained, replayed, and manually archi
   const client = new FakeAppServer(); const ledger = new HostLedger(join(directory, "ledger.json"))
   let callbackRecord: HostRecord | null = null
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, async (record) => { callbackRecord = record })
   const dispatch: HostDispatch = { schema_version: 2,
     interaction_mode: "interactive", thread_name: "MOX-159 · interactive discovery",
@@ -43,8 +43,8 @@ test("discovery is named, conversational, retained, replayed, and manually archi
     issue_id: "00000000-0000-4000-8000-000000000003", issue_identifier: "MOX-159",
     issue_url: "https://linear.app/x/issue/MOX-159/x",
     project_id: "00000000-0000-4000-8000-000000000004",
-    project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-    base_branch: "dev", active_states: ["In Progress"],
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["In Progress"],
     instruction: "Ask one concise discovery question and remain available for follow-up." }
   try {
     await controller.start()
@@ -79,8 +79,8 @@ test("an interrupted discovery turn remains available for user recovery", async 
   const directory = await mkdtemp(join(tmpdir(), "momi-interrupted-discovery-"))
   const client = new FakeAppServer(); const ledger = new HostLedger(join(directory, "ledger.json"))
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, () => Promise.resolve())
   const workId = "00000000-0000-4000-8000-000000000021"
   try {
@@ -105,8 +105,8 @@ test("host restart resumes a retained discovery subscription", async () => {
     await ledger.retainInteractive(workId)
     const client = new FakeAppServer(); const restartedLedger = new HostLedger(ledgerPath)
     const restarted = new HostController(client, restartedLedger, {
-      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-      baseBranch: "dev",
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
     }, () => Promise.resolve())
     await restarted.start()
     assert.equal(restartedLedger.get(workId)?.state, "interactive")

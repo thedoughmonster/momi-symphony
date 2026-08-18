@@ -45,8 +45,8 @@ test("one canonical dispatch creates one App Server task and archives it once", 
   const callbackDone = new Promise<void>((resolve) => { callbackResolve = resolve })
   const ledger = new HostLedger(join(directory, "ledger.json"))
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, async (record) => { callbackRecord = record; callbackResolve?.() })
   const dispatch: HostDispatch = { schema_version: 1,
     interaction_mode: "one_shot", thread_name: "MOX-151 · execute-run",
@@ -55,8 +55,8 @@ test("one canonical dispatch creates one App Server task and archives it once", 
     issue_id: "00000000-0000-4000-8000-000000000003", issue_identifier: "MOX-151",
     issue_url: "https://linear.app/x/issue/MOX-151/x",
     project_id: "00000000-0000-4000-8000-000000000004",
-    project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-    base_branch: "dev", active_states: ["Todo"],
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["Todo"],
     instruction: "Execute MOX-151 directly after a fresh bounded readiness preflight." }
   try {
     await controller.start()
@@ -99,8 +99,8 @@ test("replay recovers a raced terminal notification after resume failure", async
   let callbackResolve: (() => void) | null = null
   const callbackDone = new Promise<void>((resolve) => { callbackResolve = resolve })
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, async (record) => { callbackRecord = record; callbackResolve?.() })
   const dispatch: HostDispatch = { schema_version: 1,
     interaction_mode: "one_shot", thread_name: "MOX-154 · execute-run",
@@ -109,8 +109,8 @@ test("replay recovers a raced terminal notification after resume failure", async
     issue_id: "00000000-0000-4000-8000-000000000013", issue_identifier: "MOX-154",
     issue_url: "https://linear.app/x/issue/MOX-154/x",
     project_id: "00000000-0000-4000-8000-000000000014",
-    project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-    base_branch: "dev", active_states: ["Todo"],
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["Todo"],
     instruction: "Execute MOX-154 directly after a fresh bounded readiness preflight." }
   try {
     await controller.start(); await controller.dispatch(dispatch)
@@ -122,8 +122,8 @@ test("replay recovers a raced terminal notification after resume failure", async
     restartedClient.resumeTurns = client.resumeTurns
     const restartedLedger = new HostLedger(join(directory, "ledger.json"))
     const restarted = new HostController(restartedClient, restartedLedger, {
-      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-      baseBranch: "dev",
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
     }, async (record) => { callbackRecord = record; callbackResolve?.() })
     await restarted.start()
     await callbackDone

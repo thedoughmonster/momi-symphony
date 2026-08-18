@@ -33,8 +33,8 @@ test("consumes the accepted action, adds has-run, and writes its marker", async 
       issue_id: "00000000-0000-4000-8000-000000000010", issue_identifier: "MOX-151",
       issue_url: "https://linear.app/issue/MOX-151", project_id: "project",
       action: "decompose",
-      project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-      base_branch: "dev", active_states: ["Todo"], rejection_code: null,
+      project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+      base_branch: "main", active_states: ["Todo"], rejection_code: null,
       delivery_phase: "writeback", thread_id: "thread-1", turn_id: "turn-1",
       linear_comment_id: null } as ClaimedDispatch
     assert.equal(await reconcileLinear(work), "00000000-0000-4000-8000-000000000011")

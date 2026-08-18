@@ -7,8 +7,8 @@ import type { ClaimedDispatch, TerminalInput } from "../src/types.ts"
 const work = { work_id: "00000000-0000-4000-8000-000000000001",
   issue_id: "issue", issue_identifier: "MOX-159", action: "run-discovery",
   issue_url: "https://linear.app/issue", project_id: "project",
-  project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-  base_branch: "dev", active_states: ["In Progress"], host_dispatch_url: "https://host",
+  project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+  base_branch: "main", active_states: ["In Progress"], host_dispatch_url: "https://host",
   rejection_code: null, delivery_phase: "writeback", thread_id: "thread-1",
   turn_id: "turn-1", linear_comment_id: null, parent_dispatch_id: null,
   target_dispatch_id: null, cancellation_state: "not_requested" } as ClaimedDispatch

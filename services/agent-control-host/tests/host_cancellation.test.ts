@@ -22,15 +22,15 @@ test("active, replayed, and terminal cancellation are idempotent", async () => {
   const ledger = new HostLedger(join(directory, "ledger.json"))
   const client = new FakeAppServer()
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, () => Promise.resolve())
   const target = "00000000-0000-4000-8000-000000000001"
   const input: HostCancellation = { schema_version: 1,
     work_id: "00000000-0000-4000-8000-000000000002",
     capability_token: "00000000-0000-4000-8000-000000000003",
-    target_work_id: target, repository: "thedoughmonster/momi-backend",
-    base_branch: "dev" }
+    target_work_id: target, repository: "thedoughmonster/momi-symphony",
+    base_branch: "main" }
   try {
     await controller.start()
     await ledger.reserve(target, "fingerprint", "token")
@@ -56,14 +56,14 @@ test("retained discovery cancellation archives the task and delivers its termina
   const ledger = new HostLedger(join(directory, "ledger.json")); const client = new FakeAppServer()
   let callbacks = 0
   const controller = new HostController(client, ledger, {
-    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-backend",
-    baseBranch: "dev",
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
   }, () => { callbacks += 1; return Promise.resolve() })
   const target = "00000000-0000-4000-8000-000000000011"
   const input: HostCancellation = { schema_version: 1,
     work_id: "00000000-0000-4000-8000-000000000012",
     capability_token: "00000000-0000-4000-8000-000000000013",
-    target_work_id: target, repository: "thedoughmonster/momi-backend", base_branch: "dev" }
+    target_work_id: target, repository: "thedoughmonster/momi-symphony", base_branch: "main" }
   try {
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
     await ledger.accept(target, "thread-discovery", "turn-discovery")

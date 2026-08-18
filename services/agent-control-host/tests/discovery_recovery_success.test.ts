@@ -37,7 +37,7 @@ test("completed discovery recovery archives once and replays safely", async () =
   client.turns = [{ id: "initial", status: "completed", items: [] }]
   let callbacks = 0
   const controller = new HostController(client, ledger, { workspaceRoot: "/workspace",
-    repository: "thedoughmonster/momi-backend", baseBranch: "dev" },
+    repository: "thedoughmonster/momi-symphony", baseBranch: "main" },
   () => { callbacks += 1; return Promise.resolve() })
   try {
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
@@ -56,7 +56,7 @@ test("running follow-up is interrupted and confirmed before archive", async () =
   client.turns = [{ id: "initial", status: "completed", items: [] },
     { id: "follow-up", status: "inProgress", items: [] }]
   const controller = new HostController(client, ledger, { workspaceRoot: "/workspace",
-    repository: "thedoughmonster/momi-backend", baseBranch: "dev" }, () => Promise.resolve())
+    repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, () => Promise.resolve())
   try {
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
     await ledger.accept(target, "thread", "initial"); await ledger.retainInteractive(target)
@@ -74,7 +74,7 @@ test("an already archived retained task is replay-safe success", async () => {
   const directory = await mkdtemp(join(tmpdir(), "momi-discovery-archived-"))
   const client = new FakeAppServer(); const ledger = new HostLedger(join(directory, "ledger"))
   const controller = new HostController(client, ledger, { workspaceRoot: "/workspace",
-    repository: "thedoughmonster/momi-backend", baseBranch: "dev" }, () => Promise.resolve())
+    repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, () => Promise.resolve())
   try {
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
     await ledger.accept(target, "thread", "initial")

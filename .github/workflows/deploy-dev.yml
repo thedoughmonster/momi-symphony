@@ -1,0 +1,53 @@
+name: Deploy development
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact validated commit SHA
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: momi-symphony-development
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: inputs.commit == github.sha
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Fail closed unless the pinned development project is selected
+        run: test "$SUPABASE_DEV_PROJECT_REF" = "xtbraqnlskmqxinjxxdn"
+        env:
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
+      - run: pnpm exec supabase link --project-ref "$SUPABASE_DEV_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
+      - run: pnpm exec supabase db push --linked
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - run: pnpm exec supabase functions deploy momi-agent-control-linear-webhook-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
+      - run: pnpm exec supabase functions deploy momi-agent-control-dispatch-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}

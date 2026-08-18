@@ -12,8 +12,8 @@ test("one claimed dispatch creates one host task and replay is duplicate", async
   const work = { work_id: input.work_id, issue_id: "issue", issue_identifier: "MOX-151",
     action: "execute-run",
     issue_url: "https://linear.app/issue", project_id: "project",
-    project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-    base_branch: "dev", active_states: ["Todo"],
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["Todo"],
     host_dispatch_url: "https://codex-host.example/v1/dispatch", rejection_code: null,
     delivery_phase: "host", thread_id: null, turn_id: null,
     linear_comment_id: null } as ClaimedDispatch

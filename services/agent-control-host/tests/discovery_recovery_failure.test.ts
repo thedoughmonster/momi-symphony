@@ -34,7 +34,7 @@ test("archive failure retains ownership and the same recovery retries", async ()
   const directory = await mkdtemp(join(tmpdir(), "momi-discovery-retry-"))
   const client = new FailingAppServer(); const ledger = new HostLedger(join(directory, "ledger"))
   const controller = new HostController(client, ledger, { workspaceRoot: "/workspace",
-    repository: "thedoughmonster/momi-backend", baseBranch: "dev" }, () => Promise.resolve())
+    repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, () => Promise.resolve())
   try {
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
     await ledger.accept(target, "thread", "initial"); await ledger.retainInteractive(target)
@@ -50,7 +50,7 @@ test("invalid recovery targets are actionable and do not reserve host work", asy
   const directory = await mkdtemp(join(tmpdir(), "momi-discovery-invalid-"))
   const client = new FailingAppServer(); const ledger = new HostLedger(join(directory, "ledger"))
   const controller = new HostController(client, ledger, { workspaceRoot: "/workspace",
-    repository: "thedoughmonster/momi-backend", baseBranch: "dev" }, () => Promise.resolve())
+    repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, () => Promise.resolve())
   try {
     await controller.start()
     assert.deepEqual(await controller.recoverDiscovery(input), { recovery_state: "no_target" })

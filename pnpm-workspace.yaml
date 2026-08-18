@@ -1,0 +1,4 @@
+allowBuilds:
+  deno: true
+onlyBuiltDependencies:
+  - deno

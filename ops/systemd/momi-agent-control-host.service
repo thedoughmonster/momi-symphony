@@ -1,0 +1,18 @@
+[Unit]
+Description=Symphony agent-control Codex host adapter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/codex-dev/momi-symphony
+EnvironmentFile=/home/codex-dev/.config/momi-agent-control/host.env
+Environment=PATH=/home/codex-dev/.local/bin:/home/codex-dev/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/codex-dev/.local/share/pnpm/bin/pnpm agent-control:host
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

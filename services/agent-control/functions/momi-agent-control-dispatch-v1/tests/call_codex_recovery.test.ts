@@ -10,8 +10,8 @@ test("recovers only an exact retained target through the private host", async ()
     value: { env: { get: () => "host-secret" } } })
   let requestedUrl = ""; let requestedBody = ""
   const work = { work_id: "00000000-0000-4000-8000-000000000001",
-    action: "recover-discovery", repository: "thedoughmonster/momi-backend",
-    base_branch: "dev", host_dispatch_url: "https://codex-host.example/v1/dispatch",
+    action: "recover-discovery", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", host_dispatch_url: "https://codex-host.example/v1/dispatch",
     target_dispatch_id: "00000000-0000-4000-8000-000000000002" } as ClaimedDispatch
   try {
     const result = await callCodexRecovery(work,

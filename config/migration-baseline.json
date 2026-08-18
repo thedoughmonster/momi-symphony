@@ -1,0 +1,15 @@
+{
+  "source_repository": "thedoughmonster/momi-backend",
+  "source_ref": "d339a67d28dd8960aa370c9b26b0a6fd108a27ba",
+  "development_project_ref": "xtbraqnlskmqxinjxxdn",
+  "production_project_ref": "viodfldzuoypnpqaagag",
+  "files": {
+    "20260814125234_create_agent_control.sql": "d0782be914562715f7a8209dc84f2c11b05654662a9293ced8db45e7889f6206",
+    "20260814125236_add_agent_control_dispatch_trigger_adapter.sql": "c9059ea0171d09fd01a9e693e32bf3e0e6c0a3a44e58fa8cc68c5bce2f661f32",
+    "20260814170037_configure_agent_control_host_endpoint.sql": "1c045e66df6ca9814fa7748eabeb251948259e7db7ea6275a0403bfffd6d0cf5",
+    "20260814192000_add_agent_control_action_catalog.sql": "d3ac78be3fba06f3bb49d131ddee543acc6b3dd8ab951b3c691c73fd52471b6a",
+    "20260815061500_add_agent_control_parent_runs.sql": "db405fb1b9a4ff8e2af5335ed8747bfcc691b5fc0fd24ced8c1be47f0940dfaf",
+    "20260816083201_add_simple_discovery_recovery.sql": "5dda07785827f129ddfb7a3ee2959b3e24a85201f7894048d0950ae853a6c7b0",
+    "20260816183827_add_agent_control_dead_letter_recovery.sql": "eb9b90127ab3ba9c23197c21405f5ffae6f6421582b636887a33ff546e58e0f0"
+  }
+}

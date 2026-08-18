@@ -19,8 +19,8 @@ the label after task creation does not invalidate the task's readiness check.
 The host adapter talks to the installed Codex App Server, persists its
 idempotency reservation outside the repository, and archives terminal threads.
 
-The first project mapping is Backend Stabilization to
-`thedoughmonster/momi-backend` on `dev`. Unknown projects are explained in
+The dedicated project mapping is Symphony Control Plane to
+`thedoughmonster/momi-symphony` on `main`. Unknown projects are explained in
 Linear and never reach Codex. `execute-run` owns direct implementation;
 `validate-issue`, `investigate-issue`, `cleanup`, and `decompose` receive
 distinct one-shot non-execution instructions. `run-discovery` starts a named,

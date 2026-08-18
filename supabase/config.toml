@@ -1,0 +1,11 @@
+project_id = "momi-symphony"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+
+[functions.momi-agent-control-linear-webhook-v1]
+verify_jwt = false
+
+[functions.momi-agent-control-dispatch-v1]
+verify_jwt = false

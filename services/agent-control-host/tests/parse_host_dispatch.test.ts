@@ -8,8 +8,8 @@ const base = { work_id: "00000000-0000-4000-8000-000000000001",
   issue_id: "00000000-0000-4000-8000-000000000003", issue_identifier: "MOX-159",
   issue_url: "https://linear.app/x/issue/MOX-159/x",
   project_id: "00000000-0000-4000-8000-000000000004",
-  project_name: "Backend Stabilization", repository: "thedoughmonster/momi-backend",
-  base_branch: "dev", active_states: ["In Progress"],
+  project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+  base_branch: "main", active_states: ["In Progress"],
   instruction: "Ask one concise discovery question and remain available for follow-up." }
 
 test("normalizes legacy one-shot dispatches and accepts strict interactive v2", () => {

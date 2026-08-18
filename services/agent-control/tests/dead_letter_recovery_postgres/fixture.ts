@@ -29,8 +29,8 @@ export async function resetFixture(
     linear_project_id, repository, base_branch, active, host_dispatch_url
   ) values (
     ${projectId}::uuid,
-    ${overrides.mappingRepository ?? "thedoughmonster/momi-backend"},
-    ${overrides.mappingBaseBranch ?? "dev"},
+    ${overrides.mappingRepository ?? "thedoughmonster/momi-symphony"},
+    ${overrides.mappingBaseBranch ?? "main"},
     ${overrides.mappingActive ?? true},
     ${overrides.mappingRoute ?? stableRoute}
   )`
@@ -42,7 +42,7 @@ export async function resetFixture(
     codex_turn_id, completed_at, cancellation_state, recovery_state
   ) values (
     ${dispatchId}::uuid, 'MOX-140', ${projectId}::uuid, 'execute-run',
-    'thedoughmonster/momi-backend', 'dev',
+    'thedoughmonster/momi-symphony', 'main',
     ${overrides.workStatus ?? "dead_letter"}, ${overrides.attemptCount ?? 8},
     now(), ${priorCapabilityHash}, ${overrides.errorCode ?? "codex_host_delivery_failed"},
     ${overrides.hostAccepted ? new Date() : null},

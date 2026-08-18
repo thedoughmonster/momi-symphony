@@ -7,7 +7,7 @@ import type { ClaimedDispatch } from "../src/types.ts"
 test("cancels only an exact claimed target through the private host", async () => {
   const priorDeno = Object.getOwnPropertyDescriptor(globalThis, "Deno")
   const work = { work_id: "00000000-0000-4000-8000-000000000001",
-    action: "cancel-run", repository: "thedoughmonster/momi-backend", base_branch: "dev",
+    action: "cancel-run", repository: "thedoughmonster/momi-symphony", base_branch: "main",
     host_dispatch_url: "https://codex-host.example/v1/dispatch",
     target_dispatch_id: "00000000-0000-4000-8000-000000000002" } as ClaimedDispatch
   let requestedUrl = ""; let requestedBody: Record<string, unknown> = {}

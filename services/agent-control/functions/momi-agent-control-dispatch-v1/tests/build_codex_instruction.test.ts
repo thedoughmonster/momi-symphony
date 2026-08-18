@@ -6,8 +6,8 @@ import { buildCodexInstruction } from "../src/build_codex_instruction.ts"
 import type { ClaimedDispatch } from "../src/types.ts"
 
 const baseWork = { issue_identifier: "MOX-152", issue_url: "https://linear/MOX-152",
-  project_id: "project", project_name: "Backend Stabilization",
-  repository: "thedoughmonster/momi-backend", base_branch: "dev",
+  project_id: "project", project_name: "Symphony Control Plane",
+  repository: "thedoughmonster/momi-symphony", base_branch: "main",
   active_states: ["Todo", "In Progress", "Rework"], work_id: "work", issue_id: "issue",
   host_dispatch_url: "https://codex-host.example/v1/dispatch", rejection_code: null,
   delivery_phase: "host", thread_id: null, turn_id: null,
