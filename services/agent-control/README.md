@@ -45,6 +45,11 @@ configuration in `momi_agent_ops.project_mappings`; host-specific paths are
 not committed. Hosted activation remains a post-review
 release step; no local command applies these migrations or deploys functions.
 
+The provider-specific normalized issue/readiness contract is documented in
+[`docs/operations/linear-adapter.md`](../../docs/operations/linear-adapter.md).
+Candidate and ID-refresh readers return normalized fields only; downstream
+scheduler code must not reconstruct Linear hierarchy or blocker policy.
+
 ## Exact dead-letter recovery
 
 `momi_agent_ops.recover_dead_letter_dispatch_v1` is a private database-owner

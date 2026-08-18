@@ -1,4 +1,5 @@
 import type { AgentAction } from "../../../src/actions.ts"
+import type { NormalizedLinearIssue } from "./linear_issue_adapter.ts"
 
 export type DispatchInput = { work_id: string; capability_token: string }
 
@@ -57,11 +58,8 @@ export type TerminalContext = {
 
 export type LinearLabel = { id: string; name: string }
 
-export type LinearIssueState = {
-  id: string
-  identifier: string
-  state: string
-  labels: LinearLabel[]
+export type LinearIssueState = NormalizedLinearIssue & {
+  labelRefs: LinearLabel[]
   teamLabels: LinearLabel[]
   comments: Array<{ id: string; body: string }>
 }

@@ -15,7 +15,7 @@ export async function reconcileTerminal(
   const action = issue.teamLabels.find((label) => label.name === context.action)
   const hasRun = issue.teamLabels.find((label) => label.name === "has-run")
   if (!action || !hasRun) throw new Error("linear_action_labels_unavailable")
-  const labels = issue.labels.filter((label) => label.id !== action.id)
+  const labels = issue.labelRefs.filter((label) => label.id !== action.id)
   if (!labels.some((label) => label.id === hasRun.id)) labels.push(hasRun)
   await writeLinearLabels(issue.id, labels.map((label) => label.id).sort())
   const work = { work_id: terminal.work_id, issue_id: context.issue_id,
