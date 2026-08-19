@@ -16,6 +16,11 @@ The dispatch function claims durable work, calls the authenticated Codex host
 adapter, and reconciles the consumed action, `has-run`, and one marker-bound
 Linear comment. The durable dispatch proves that the action was added, so consuming
 the label after task creation does not invalidate the task's readiness check.
+An authenticated terminal receipt advances an `execute-run` to Linear's unique
+completed workflow state only when readiness is `ready`, the disposition is
+`completed`, and the current issue state is active. The single issue mutation
+preserves all labels; every other action, result, source state, or ambiguous
+completed-state mapping fails closed without a status transition.
 The host adapter talks to the installed Codex App Server, persists its
 idempotency reservation outside the repository, and archives terminal threads.
 
