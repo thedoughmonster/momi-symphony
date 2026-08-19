@@ -2,8 +2,16 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
 
+import {
+  createLinearAdapterProfile,
+  normalizeLinearIssue,
+} from "../src/linear_issue_adapter.ts"
+import { schedulerEligibility } from "../../../src/scheduler_policy.ts"
+
 const skillPath = ".agents/skills/linear-finalize-discovery/SKILL.md"
 const metadataPath = ".agents/skills/linear-finalize-discovery/agents/openai.yaml"
+const projectMappingPath = "config/project-mappings.json"
+const schedulerMigrationPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
 
 async function skill(): Promise<string> {
   return await readFile(skillPath, "utf8")
@@ -60,13 +68,119 @@ test("golden native graph requires preservation, relations, and exact readback",
 test("MOX-230 readiness and report categories are complete", async () => {
   const source = await skill()
   for (const requirement of ["Implementation", "ready-package", "## Acceptance criteria",
-    "needs-discovery", "blocked-external-decision", "status type `completed`"]) {
+    "needs-discovery", "blocked-external-decision", "blocker status type is not `completed`"]) {
     assert.match(source, new RegExp(requirement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   }
-  assert.match(source, /Parents\nwith sub-issues are never executable leaves and never receive `ready-package`/)
-  assert.match(source, /Keep dependency-blocked, freeze-blocked,[\s\S]*in `Backlog` with readiness false/)
+  assert.match(source, /Complete leaf, no freeze, any blocker non-completed \| `Todo` \| `Implementation` \+ `ready-package` \| `dependency-blocked`/)
+  for (const nonReady of ["Structurally incomplete leaf",
+    "Leaf with an unresolved material decision",
+    "Leaf under a current freeze/baseline gate",
+    "Parent or any node with a direct sub-issue"]) {
+    assert.ok(source.includes(`| ${nonReady} | \`Backlog\` |`), nonReady)
+  }
   for (const category of ["created", "updated", "reused", "ready", "dependency-blocked",
     "freeze-blocked", "unresolved"]) assert.ok(source.includes(`- \`${category}\``))
+})
+
+test("mixed finalized graph keeps ready, blocked, and excluded nodes distinct", async () => {
+  const source = await skill()
+  const fixtures = [
+    ["Complete leaf, no freeze, every blocker completed", "`Todo`",
+      "`Implementation` + `ready-package`", "`ready`"],
+    ["Complete leaf, no freeze, any blocker non-completed", "`Todo`",
+      "`Implementation` + `ready-package`", "`dependency-blocked`"],
+    ["Structurally incomplete leaf", "`Backlog`",
+      "never `ready-package`; use `needs-discovery` when material is missing", "`unresolved`"],
+    ["Leaf with an unresolved material decision", "`Backlog`",
+      "never `ready-package`; use `blocked-external-decision`", "`unresolved`"],
+    ["Leaf under a current freeze/baseline gate", "`Backlog`",
+      "never `ready-package`", "`freeze-blocked`"],
+    ["Parent or any node with a direct sub-issue", "`Backlog`",
+      "never `ready-package`", "not a ready leaf"],
+  ]
+  for (const fixture of fixtures) {
+    assert.ok(source.includes(`| ${fixture.join(" | ")} |`), fixture[0])
+  }
+  const categories = [...source.matchAll(/^- `([a-z-]+)`: /gm)]
+    .map((match) => match[1])
+  assert.deepEqual(categories, ["created", "updated", "reused", "ready",
+    "dependency-blocked", "freeze-blocked", "unresolved"])
+})
+
+test("finalizer state and labels converge with scheduler blocker handling", async () => {
+  const source = await skill()
+  const declared = source.match(
+    /exact finalization-ready package is state\n`([^`]+)` with labels `([^`]+)` and `([^`]+)`/,
+  )
+  assert.ok(declared, "skill must declare one exact finalizer/scheduler package")
+  const [, readyState, implementationLabel, readinessLabel] = declared
+  const mappings = JSON.parse(await readFile(projectMappingPath, "utf8")) as Array<{
+    linear_project_id: string
+    repository: string
+    base_branch: string
+    active_states: string[]
+  }>
+  const mapping = mappings.find((candidate) =>
+    candidate.linear_project_id === "de0dbcdb-9025-4ccc-8b3c-56f23d7367d5")
+  assert.ok(mapping)
+  assert.equal(mapping.active_states[0], readyState)
+  const schedulerMigration = await readFile(schedulerMigrationPath, "utf8")
+  const required = schedulerMigration.match(
+    /required_labels text\[\] not null default array\['([^']+)', '([^']+)'\]::text\[\]/,
+  )
+  assert.ok(required)
+  const requiredLabels = required.slice(1)
+  assert.deepEqual(requiredLabels,
+    [implementationLabel.toLowerCase(), readinessLabel.toLowerCase()])
+
+  const payload = {
+    id: "leaf-b",
+    identifier: "MOX-252",
+    title: "Dependent leaf",
+    description: "## Acceptance criteria\n\n- The dependent completes.",
+    priority: 2,
+    url: "https://linear.app/mox/issue/MOX-252/dependent-leaf",
+    createdAt: "2026-08-19T00:00:00.000Z",
+    updatedAt: "2026-08-19T01:00:00.000Z",
+    state: { id: "todo", name: readyState, type: "unstarted" },
+    project: { id: mapping.linear_project_id },
+    team: { id: "team-1" },
+    labels: { nodes: [
+      { id: "implementation", name: implementationLabel },
+      { id: "ready", name: readinessLabel },
+    ], pageInfo: { hasNextPage: false, endCursor: null } },
+    parent: { id: "parent", identifier: "MOX-250",
+      state: { id: "backlog", name: "Backlog", type: "backlog" } },
+    children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+    inverseRelations: { nodes: [{ type: "blocks", issue: {
+      id: "leaf-a", identifier: "MOX-251",
+      state: { id: "started", name: "In Progress", type: "started" },
+    } }], pageInfo: { hasNextPage: false, endCursor: null } },
+  }
+  const profile = createLinearAdapterProfile({ projectId: mapping.linear_project_id,
+    teamId: "team-1", repository: mapping.repository, baseBranch: mapping.base_branch })
+  assert.deepEqual([...profile.implementationLabels, ...profile.readinessLabels],
+    requiredLabels)
+  const policy = { activeStates: mapping.active_states, requiredLabels }
+  const blocked = normalizeLinearIssue(payload, profile)
+  assert.equal(blocked.state, readyState)
+  assert.deepEqual(blocked.labels, [implementationLabel.toLowerCase(), readinessLabel])
+  assert.deepEqual(blocked.dispatchability_reasons, ["blocker_not_accepted"])
+  assert.deepEqual(schedulerEligibility(blocked, policy), {
+    eligible: false, reason: "adapter_unroutable",
+  })
+
+  const completedPayload = structuredClone(payload)
+  completedPayload.inverseRelations.nodes[0].issue.state = {
+    id: "done", name: "Done", type: "completed",
+  }
+  const unblocked = normalizeLinearIssue(completedPayload, profile)
+  assert.equal(unblocked.state, blocked.state)
+  assert.deepEqual(unblocked.labels, blocked.labels)
+  assert.equal(unblocked.dispatchable, true)
+  assert.deepEqual(schedulerEligibility(unblocked, policy), {
+    eligible: true, reason: "eligible",
+  })
 })
 
 test("finalization has a Linear-only capability boundary and valid metadata", async () => {
