@@ -1,8 +1,9 @@
 import { buildLinearComment } from "./build_linear_comment.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
 import type { ClaimedDispatch, TerminalContext, TerminalInput } from "./types.ts"
+import { selectTerminalCompletionState } from "./terminal_state_transition.ts"
 import { writeLinearComment } from "./write_linear_comment.ts"
-import { writeLinearLabels } from "./write_linear_labels.ts"
+import { writeLinearCompletion, writeLinearLabels } from "./write_linear_labels.ts"
 
 export async function reconcileTerminal(
   context: TerminalContext,
@@ -17,7 +18,13 @@ export async function reconcileTerminal(
   if (!action || !hasRun) throw new Error("linear_action_labels_unavailable")
   const labels = issue.labelRefs.filter((label) => label.id !== action.id)
   if (!labels.some((label) => label.id === hasRun.id)) labels.push(hasRun)
-  await writeLinearLabels(issue.id, labels.map((label) => label.id).sort())
+  const labelIds = labels.map((label) => label.id).sort()
+  const completionStateId = selectTerminalCompletionState(context, terminal, issue)
+  if (completionStateId) {
+    await writeLinearCompletion(issue.id, labelIds, completionStateId)
+  } else {
+    await writeLinearLabels(issue.id, labelIds)
+  }
   const work = { work_id: terminal.work_id, issue_id: context.issue_id,
     issue_identifier: context.issue_identifier, action: context.action,
     issue_url: "", project_id: null,
