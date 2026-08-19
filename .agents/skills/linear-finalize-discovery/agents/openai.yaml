@@ -1,0 +1,4 @@
+interface:
+  display_name: "Finalize Linear Discovery"
+  short_description: "Finalize discovery into native Linear plans"
+  default_prompt: "Use $linear-finalize-discovery to finalize this retained discovery into native Linear planning."
