@@ -25,8 +25,9 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
    SHA and inspect the no-write private-ledger plan. It must find all seven
    immutable baselines in the global ledger while tolerating unrelated backend
    versions and must report exactly the expected pending Symphony version.
-3. Run the `runtime` phase at the same SHA and verify both Edge Functions are
-   active with recorded deployed hashes.
+3. Run the `runtime` phase at the same SHA for only the required Edge Function
+   selector(s), then verify each selected runtime is active with its recorded
+   deployed hash.
 4. Verify `curl --fail http://127.0.0.1:47931/health` returns the stable service
    identity from the repository-owned host.
 5. Run the legacy-named `mapping` phase at the same SHA only after host health
@@ -52,3 +53,12 @@ set the route to `enabled`. Never add a new Linear issue merely to exercise the
 scheduler.
 
 The workflow contains no production target or automatic production trigger.
+
+## Material decision-alert gate
+
+MOX-232 adds a separately selectable `decision-alert` runtime and a private
+route that is created disabled. Deploying the migration or either runtime
+cannot send Slack by itself. Follow [`decision-alerts.md`](decision-alerts.md)
+for exact-release no-send preflight, destination fresh-read, one-issue
+acceptance, resolution, and immediate disablement. Never reuse or modify an
+order-alert route to activate decision alerts.

@@ -53,3 +53,22 @@ test("verified delivery exposes the durable duplicate disposition", async () => 
     Promise.resolve({ disposition: "duplicate", dispatch_id: null }) })
   assert.deepEqual(await response.json(), { ok: true, disposition: "duplicate" })
 })
+
+test("verified decision events reconcile after durable webhook persistence", async () => {
+  const issueId = "00000000-0000-4000-8000-000000000008"
+  const payload = JSON.stringify({ action: "update", type: "Comment",
+    webhookTimestamp: 4_000, webhookId: "00000000-0000-4000-8000-000000000009",
+    data: { issue: { id: issueId } } })
+  const signature = createHmac("sha256", "secret").update(payload).digest("hex")
+  const events: string[] = []
+  const response = await handleRequest(new Request("https://example.test", {
+    method: "POST", headers: { "linear-delivery":
+      "00000000-0000-4000-8000-000000000010", "linear-signature": signature },
+    body: payload,
+  }), { secret: "secret", now: () => 4_000,
+    persist: () => { events.push("persist"); return Promise.resolve({
+      disposition: "ignored", dispatch_id: null,
+    }) }, reconcileDecision: (id) => { events.push(`reconcile:${id}`); return Promise.resolve() } })
+  assert.equal(response.status, 200)
+  assert.deepEqual(events, ["persist", `reconcile:${issueId}`])
+})

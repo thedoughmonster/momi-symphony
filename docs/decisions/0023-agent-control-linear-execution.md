@@ -122,6 +122,51 @@ retry, and intervention evidence in Linear. It does not invoke Symphony.
 an exact active host turn receives idempotent `turn/interrupt`; terminal replay
 is successful; missing and ambiguous targets produce explicit Linear evidence.
 
+## Material decision alerts (MOX-232 amendment)
+
+Linear remains authoritative for human decisions. An eligible decision is one
+whole top-level comment with the exact `momi-decision:v1` marker and one bounded
+JSON object, paired with the existing `blocked-external-decision` label. The
+object carries a stable decision key, one of the eight accepted material
+categories, `unresolved` or `resolved` status, the concise question and policy
+gap, recommendation, alternatives, consequences, affected issue identifiers,
+and a resolution summary only when resolved. The durable identity is
+`linear:<issue UUID>:<comment UUID>:<decision key>`. Unknown categories,
+multiple records, malformed content, record/label disagreement, sensitive
+patterns, and technical exclusions fail closed without delivery.
+
+The explicit material categories are architecture/service ownership, public
+contract, security/privacy, meaningful cost/external exposure, destructive
+migration, production infrastructure/authority, genuinely ambiguous product
+behavior, and irreconcilable requirements/repository law. Native dependencies,
+tests/validation, retryable infrastructure, stale branches, missing generated
+files, agent-correctable defects, and an already-active identity are never
+decision alerts.
+
+`agent-control` owns private policy, normalized decision state, delivery work,
+attempts, and receipts in `momi_agent_ops`. Reconciliation stores only bounded
+sanitized fields, then rotates a one-time capability. The separate
+`decision-alert-delivery` destination adapter claims that capability and is the
+only new Slack HTTP boundary. It does not read, write, join, or extend the
+`momi_alerting` order-alert destination, route, prepared-message, work, attempt,
+or receipt relations. The project-scoped `SLACK_BOT_TOKEN` is authorized for
+this function only through its explicit service/function manifests and the
+private decision destination allowlist.
+
+An attempt row is committed by the claim before Slack I/O. A provider `429` is
+known-no-delivery and may become retryable using bounded `Retry-After`; network,
+server, malformed-body, or receipt uncertainty becomes `ambiguous` and can
+never be retried blindly. Initial success records only channel/message receipt
+identity. A resolved update is one reply to that receipt after the same Linear
+comment becomes `resolved` and the blocking label is removed. The normalized
+adapter then restores later scheduler eligibility when every other condition
+passes.
+
+The route is created `disabled`. Development acceptance additionally requires
+an allowlisted issue UUID, exact protected-release SHA, acceptance timestamp,
+an independently fresh-read Slack channel, and a successful no-send probe that
+reports only secret/database presence. Production activation is not authorized.
+
 ## Security and authority
 
 - `momi_agent_ops` is absent from the Supabase Data API schema list; RLS and
@@ -136,6 +181,9 @@ is successful; missing and ambiguous targets produce explicit Linear evidence.
   `api.linear.app` and that configured boundary as outbound authority.
 - Trigger networking is restricted to the exact dispatch route and the standard
   project URL/publishable-key Vault records accepted by ADR 0004.
+- Decision-alert messages disable markdown parsing, mentions, and unfurls. No
+  raw prompt, provider response body, bearer credential, or protected context
+  enters the decision-alert lifecycle or logs.
 
 ## Failure and rollback
 
@@ -148,3 +196,7 @@ Rollback removes the functions and trigger only through the normal manifest
 retirement and additive-migration process. Existing ledger history and retained
 interactive task identities are preserved;
 no rollback repeats an ambiguous task creation.
+
+Decision-alert rollback calls the dedicated disable routine first. It clears
+only the acceptance allowlist and returns the route to `disabled`; Linear
+decisions, bounded attempts, Slack receipts, and ambiguous evidence remain.

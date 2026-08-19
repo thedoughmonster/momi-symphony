@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../../schemas/function-manifest-v1.schema.json",
+  "function_key": "momi.slack.decision_alert.deliver.v1",
+  "contract_version": 1,
+  "purpose": "Claim one durable material-decision delivery and post it to its allowlisted Slack destination.",
+  "owner_service": "decision-alert-delivery",
+  "function_type": "action",
+  "capability": "deliver",
+  "boundary": "slack_outbound",
+  "runtime": "supabase_edge",
+  "route_path": "/functions/v1/momi-decision-alert-delivery-v1",
+  "authentication_policy_key": "momi.agent_control.decision_delivery_capability.v1",
+  "entrypoint": "index.ts",
+  "input_schema": "contracts/input.schema.json",
+  "output_schema": "contracts/output.schema.json",
+  "probe": {"method": "GET", "acceptable_statuses": [200, 503]},
+  "timeout_policy_key": "momi.slack.decision_alert.short_delivery.v1",
+  "retry_policy_key": "momi.slack.decision_alert.fail_closed.v1",
+  "idempotency_policy_key": "momi.agent_control.decision_identity.v1",
+  "required_capabilities": ["database_read", "database_write", "external_delivery"],
+  "declared_side_effects": ["claims_decision_alert", "posts_slack_message", "records_slack_receipt"]
+}

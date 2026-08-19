@@ -35,6 +35,21 @@ test("captures the direct parent identity for durable child linkage", () => {
   assert.equal(event?.parentIssueId, "00000000-0000-4000-8000-000000000099")
 })
 
+test("normalizes exact decision reconciliation identities for issue and comment events", () => {
+  const issue = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify({
+    type: "Issue", data: { id: "00000000-0000-4000-8000-000000000010" },
+  })))
+  assert.equal(issue?.decisionIssueId, "00000000-0000-4000-8000-000000000010")
+  const comment = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify({
+    type: "Comment", data: { issue: { id: "00000000-0000-4000-8000-000000000011" } },
+  })))
+  assert.equal(comment?.decisionIssueId, "00000000-0000-4000-8000-000000000011")
+  const unrelated = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify({
+    type: "Project", data: { id: "00000000-0000-4000-8000-000000000012" },
+  })))
+  assert.equal(unrelated?.decisionIssueId, null)
+})
+
 test("normalizes Linear labelIds changes from the hosted webhook shape", () => {
   const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
     updatedFrom: { labelIds: ["feature-id"] }, data: {

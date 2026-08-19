@@ -13,6 +13,7 @@
   "contracts": {
     "provides": [
       "momi.agent_control.dispatch.v1",
+      "momi.agent_control.decision_alert_work.v1",
       "momi.agent_control.linear_webhook.v1",
       "momi.agent_control.scheduler_pump.v1"
     ],
@@ -27,7 +28,11 @@
     "write": ["momi_agent_ops"]
   },
   "network": {
-    "outbound_hosts": ["api.linear.app", "configured:codex_host_adapter_url"]
+    "outbound_hosts": [
+      "api.linear.app",
+      "configured:codex_host_adapter_url",
+      "configured:supabase_project_url"
+    ]
   },
   "secrets": [
     "SUPABASE_DB_URL",
@@ -60,6 +65,10 @@
     "private_schema": "momi_agent_ops",
     "private_relations": [
       "momi_agent_ops.dispatches",
+      "momi_agent_ops.decision_alert_policies",
+      "momi_agent_ops.decision_alerts",
+      "momi_agent_ops.decision_delivery_work",
+      "momi_agent_ops.decision_delivery_attempts",
       "momi_agent_ops.project_mappings",
       "momi_agent_ops.raw_webhook_envelopes",
       "momi_agent_ops.run_records",
@@ -78,6 +87,12 @@
       "momi_agent_ops.claim_dispatch_v3",
       "momi_agent_ops.claim_dispatch_v4",
       "momi_agent_ops.claim_dispatch_v5",
+      "momi_agent_ops.reconcile_decision_alert_v1",
+      "momi_agent_ops.claim_decision_delivery_v1",
+      "momi_agent_ops.finalize_decision_delivery_v1",
+      "momi_agent_ops.decision_alert_preflight_v1",
+      "momi_agent_ops.configure_decision_alert_acceptance_v1",
+      "momi_agent_ops.disable_decision_alert_delivery_v1",
       "momi_agent_ops.recover_dead_letter_dispatch_v1",
       "momi_agent_ops.record_cancellation_v1",
       "momi_agent_ops.record_host_acceptance_v1",

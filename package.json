@@ -12,10 +12,10 @@
     "mapping:check": "node scripts/check_project_mapping.ts",
     "migration:plan": "node scripts/symphony_migrations.ts plan",
     "migration:apply": "node scripts/symphony_migrations.ts apply",
-    "test:unit": "node --test services/agent-control/functions/momi-agent-control-dispatch-v1/tests/*.test.ts services/agent-control/functions/momi-agent-control-linear-webhook-v1/tests/*.test.ts services/agent-control/tests/agent_control_migrations.test.ts services/agent-control-host/tests/*.test.ts tests/*.test.ts",
-    "test:postgres": "node --test services/agent-control/tests/agent_control_dead_letter_recovery_postgres.test.ts services/agent-control/tests/ready_leaf_scheduler_postgres.test.ts tests/postgres/symphony_migrations.test.ts",
+    "test:unit": "node --test services/agent-control/functions/momi-agent-control-dispatch-v1/tests/*.test.ts services/agent-control/functions/momi-agent-control-linear-webhook-v1/tests/*.test.ts services/agent-control/tests/agent_control_migrations.test.ts services/agent-control/tests/decision_record.test.ts services/decision-alert-delivery/functions/momi-decision-alert-delivery-v1/tests/*.test.ts services/agent-control-host/tests/*.test.ts tests/*.test.ts",
+    "test:postgres": "node --test services/agent-control/tests/agent_control_dead_letter_recovery_postgres.test.ts services/agent-control/tests/decision_alert_lifecycle_postgres.test.ts services/agent-control/tests/ready_leaf_scheduler_postgres.test.ts tests/postgres/symphony_migrations.test.ts",
     "test": "pnpm test:unit",
-    "edge:check": "deno check --config supabase/functions/momi-agent-control-dispatch-v1/deno.json supabase/functions/momi-agent-control-dispatch-v1/index.ts && deno check --config supabase/functions/momi-agent-control-linear-webhook-v1/deno.json supabase/functions/momi-agent-control-linear-webhook-v1/index.ts",
+    "edge:check": "deno check --config supabase/functions/momi-agent-control-dispatch-v1/deno.json supabase/functions/momi-agent-control-dispatch-v1/index.ts && deno check --config supabase/functions/momi-agent-control-linear-webhook-v1/deno.json supabase/functions/momi-agent-control-linear-webhook-v1/index.ts && deno check --config supabase/functions/momi-decision-alert-delivery-v1/deno.json supabase/functions/momi-decision-alert-delivery-v1/index.ts",
     "check": "pnpm mapping:check && pnpm test && pnpm edge:check"
   },
   "dependencies": {
