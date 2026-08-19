@@ -31,6 +31,14 @@ keeps ownership on retryable failure. `cancel-run`
 withdraws queued work, requests interruption of an exact active host turn, or
 records an already-terminal, absent-target, or operator-intervention result.
 
+Inside a retained discovery, only a current explicit user request to finalize
+into Linear activates the repository-scoped `linear-finalize-discovery` skill.
+That skill searches and re-reads before writing the minimum native Linear graph,
+applies the `mox-linear-v1` readiness contract, verifies every write, and keeps
+the discovery task open. It has no repository, execution-action, dispatch,
+merge, release, or deployment authority; quiet turns, retention, and archive
+never imply finalization.
+
 An `execute-run` on an issue with direct children creates one visible parent
 task. That task preflights children and uses their one-shot `execute-run` labels;
 the ingress links each child dispatch to the active parent. The unique parent/

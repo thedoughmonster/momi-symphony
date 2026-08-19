@@ -55,6 +55,11 @@ test("discovery asks one question and does not request structured terminal outpu
   const instruction = buildCodexInstruction({ ...baseWork,
     action: "run-discovery" } as ClaimedDispatch)
   assert.match(instruction, /ask one concise high-value question/)
+  assert.match(instruction, /current user explicitly asks to finalize/)
+  assert.match(instruction, /use \$linear-finalize-discovery/)
+  assert.match(instruction, /Never infer finalization/)
+  assert.match(instruction, /keeps this task open/)
+  assert.match(instruction, /cannot create or start implementation work/)
   assert.match(instruction, /task remains open/)
   assert.doesNotMatch(instruction, /Return only the requested structured/)
 })

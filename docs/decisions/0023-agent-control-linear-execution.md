@@ -99,6 +99,16 @@ unready evidence. Archive failure retains ownership and retries the same
 recovery identity; it cannot start a task. Force release and generalized
 recovery controls are not part of this contract.
 
+Discovery finalization is not another catalog action or host lifecycle. A
+current explicit user request inside the retained task activates the
+repository-scoped `linear-finalize-discovery` skill. It may search, read, and
+write only native Linear planning; it reuses identities, preserves unrelated
+human content, verifies the native parent/blocker graph, applies the normalized
+readiness contract, and reads back every affected issue. It neither archives
+the retained task nor creates repository or delivery artifacts, execution
+labels, tasks, dispatches, merges, releases, or deployments. Silence, turn
+completion, retention, and archive never activate it.
+
 For parent runs, the visible parent task reads and preflights the direct Linear
 child graph. It applies each eligible child's one-shot `execute-run` label; the
 ingress links that child dispatch to the active parent dispatch and enforces one

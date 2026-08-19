@@ -36,6 +36,10 @@ const actionInstructions: Record<AgentAction, string[]> = {
     "This is a persistent interactive discovery task, not a one-shot report.",
     "Orient from the issue and bounded evidence, then ask one concise high-value question.",
     "Continue across user turns and refine Linear only after the user confirms decisions.",
+    "Only when the current user explicitly asks to finalize this discovery into Linear,",
+    "use $linear-finalize-discovery for that planning-only operation. Never infer finalization",
+    "from silence, elapsed time, turn completion, task retention, or task archive.",
+    "Finalization keeps this task open and cannot create or start implementation work.",
     "Do not dump raw findings, implement, change repository files, or create a branch or PR.",
   ],
   "recover-discovery": [
