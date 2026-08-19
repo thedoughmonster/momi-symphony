@@ -16,6 +16,7 @@ export type NormalizedLinearEvent = {
   projectId: string | null
   projectName: string | null
   parentIssueId: string | null
+  decisionIssueId: string | null
   action: AgentAction | null
   changedFields: { labels: LabelChange } | Record<string, never>
 }
@@ -35,4 +36,5 @@ export type IngressDependencies = {
   secret: string
   now: () => number
   persist: (record: WebhookRecord) => Promise<WebhookDisposition>
+  reconcileDecision?: (issueId: string) => Promise<unknown>
 }

@@ -28,3 +28,9 @@ clears only its acceptance allowlist, and retains candidates, generations,
 slots, dispatches, and evidence. Running or quarantined work remains governed
 by its existing exact cancellation/terminal path; rollback never releases an
 ambiguous slot merely to regain capacity.
+
+For MOX-232, stop new Slack sends first with
+`ops/sql/disable_decision_alert_delivery.sql`. The guarded operation changes
+exactly the decision-alert route to `disabled` and clears only its acceptance
+issue allowlist. It retains Linear decision identity, lifecycle, attempts,
+receipts, and ambiguous-delivery evidence and does not touch order-alert data.

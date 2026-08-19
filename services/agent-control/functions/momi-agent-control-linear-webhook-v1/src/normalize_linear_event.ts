@@ -24,6 +24,9 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
   const parentValue = data.parent
   const parent = parentValue && typeof parentValue === "object" && !Array.isArray(parentValue)
     ? parentValue as Record<string, unknown> : {}
+  const issueValue = data.issue
+  const issue = issueValue && typeof issueValue === "object" && !Array.isArray(issueValue)
+    ? issueValue as Record<string, unknown> : {}
   const labelsChanged = Object.prototype.hasOwnProperty.call(updated, "labels") ||
     Object.prototype.hasOwnProperty.call(updated, "labelIds")
   const names = (candidate: unknown): string[] => {
@@ -56,11 +59,14 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
   }) : []
   const text = (candidate: unknown) => typeof candidate === "string" ? candidate : null
   const number = (candidate: unknown) => typeof candidate === "number" ? candidate : null
+  const eventType = text(payload.type)
+  const decisionIssueId = eventType === "Issue" ? text(data.id)
+    : eventType === "Comment" ? text(data.issueId) ?? text(issue.id) : null
   return {
     payload: payload as Record<string, JSONValue>,
     webhookId: text(payload.webhookId),
     webhookTimestamp: number(payload.webhookTimestamp),
-    eventType: text(payload.type),
+    eventType,
     eventAction: text(payload.action),
     issueId: text(data.id),
     issueIdentifier: text(data.identifier),
@@ -68,6 +74,7 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     projectId: text(data.projectId) ?? text(project.id),
     projectName: text(data.projectName) ?? text(project.name),
     parentIssueId: text(data.parentId) ?? text(parent.id),
+    decisionIssueId,
     action: addedActions.length === 1 ? addedActions[0] : null,
     changedFields: labelsChanged ? { labels: { before, after } } : {},
   }

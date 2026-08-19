@@ -23,6 +23,7 @@ on:
           - all
           - dispatch
           - webhook
+          - decision-alert
 
 permissions:
   contents: read
@@ -91,6 +92,12 @@ jobs:
       - name: Deploy the dispatch runtime
         if: inputs.phase == 'runtime' && (inputs.runtime_function == 'all' || inputs.runtime_function == 'dispatch')
         run: pnpm exec supabase functions deploy momi-agent-control-dispatch-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
+      - name: Deploy the decision-alert runtime
+        if: inputs.phase == 'runtime' && (inputs.runtime_function == 'all' || inputs.runtime_function == 'decision-alert')
+        run: pnpm exec supabase functions deploy momi-decision-alert-delivery-v1 --project-ref "$SUPABASE_DEV_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}

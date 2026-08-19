@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.momi-agent-control-dispatch-v1]
 verify_jwt = false
+
+[functions.momi-decision-alert-delivery-v1]
+verify_jwt = false

@@ -9,6 +9,7 @@ const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_par
 const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_recovery.sql"
 const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dead_letter_recovery.sql"
 const schedulerPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
+const decisionAlertPath = "supabase/migrations/20260819082707_add_decision_alert_lifecycle.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -139,4 +140,25 @@ test("ready-leaf scheduling stays private, exact-release gated, and default disa
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\bexecute\b(?!\s+function\b)/i)
   assert.doesNotMatch(migration, /\bnet\.http_post\b/)
+})
+
+test("decision alerts are private, attempt-first, exact-release gated, and separate from order alerts", async () => {
+  const migration = await readFile(decisionAlertPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  for (const table of ["decision_alert_policies", "decision_alerts",
+    "decision_delivery_work", "decision_delivery_attempts"]) {
+    assert.match(migration, new RegExp(
+      `alter table momi_agent_ops\\.${table} enable row level security`,
+    ))
+  }
+  assert.match(migration, /mode text not null default 'disabled'/)
+  assert.match(migration, /mode = 'acceptance'[\s\S]+accepted_release_sha is not null/)
+  assert.match(migration, /insert into momi_agent_ops\.decision_delivery_attempts[\s\S]+outcome[\s\S]+'started'/)
+  assert.match(migration, /work\.work_status = 'claimed' and work\.lease_expires_at <= now\(\)[\s\S]+then[\s\S]+ambiguous/)
+  assert.match(migration, /decision_identity text not null unique/)
+  assert.equal(migration.match(/security invoker set search_path = ''/g)?.length, 6)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\bmomi_alerting\b|slack_order|order_alert/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
+  assert.match(migration, /from public, anon, authenticated, service_role/)
 })

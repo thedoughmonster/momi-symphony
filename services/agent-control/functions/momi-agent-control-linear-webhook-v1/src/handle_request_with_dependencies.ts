@@ -1,4 +1,5 @@
 import { normalizeLinearEvent } from "./normalize_linear_event.ts"
+import { reconcileDecisionAlert } from "./reconcile_decision_alert.ts"
 import { rawBodyHex } from "./raw_body_hex.ts"
 import { recordWebhook } from "./record_webhook.ts"
 import type { IngressDependencies } from "./types.ts"
@@ -37,11 +38,15 @@ export async function handleRequestWithDependencies(
     eventType: null, eventAction: null, issueId: null, issueIdentifier: null,
     issueUrl: null, projectId: null, projectName: null,
     parentIssueId: null, action: null, changedFields: {} } as const
+  const fallback = { ...empty, decisionIssueId: null } as const
   try {
     const result = await (injected?.persist ?? recordWebhook)({
-      ...(normalized ?? empty), deliveryId: deliveryId!, rawBodyHex: rawBodyHex(rawBody),
+      ...(normalized ?? fallback), deliveryId: deliveryId!, rawBodyHex: rawBodyHex(rawBody),
       authResult,
     })
+    if (authResult === "verified" && normalized?.decisionIssueId) {
+      await (injected?.reconcileDecision ?? reconcileDecisionAlert)(normalized.decisionIssueId)
+    }
     const status = authResult === "verified" ? 200
       : authResult === "invalid_payload" ? 400 : 401
     return Response.json({ ok: status === 200, disposition: result.disposition }, { status })

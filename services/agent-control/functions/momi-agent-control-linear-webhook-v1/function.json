@@ -2,7 +2,7 @@
   "$schema": "../../../../schemas/function-manifest-v1.schema.json",
   "function_key": "momi.agent_control.linear_webhook.v1",
   "contract_version": 1,
-  "purpose": "Authenticate Linear issue webhooks and durably accept one newly added declared action.",
+  "purpose": "Authenticate Linear webhooks, accept declared actions, and reconcile bounded decision records.",
   "owner_service": "agent-control",
   "function_type": "ingest",
   "capability": "ingest",
@@ -17,10 +17,12 @@
   "timeout_policy_key": "linear.webhook.five_second_ack.v1",
   "retry_policy_key": "linear.delivery_retry.v1",
   "idempotency_policy_key": "linear.delivery_agent_action.v1",
-  "required_capabilities": ["database_read", "database_write"],
+  "required_capabilities": ["database_read", "database_write", "external_delivery"],
   "declared_side_effects": [
     "records_complete_linear_envelope",
     "creates_agent_dispatch",
-    "creates_agent_run"
+    "creates_agent_run",
+    "reconciles_linear_decision",
+    "invokes_decision_alert_adapter"
   ]
 }
