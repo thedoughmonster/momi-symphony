@@ -16,3 +16,15 @@ test("development migrations use the CLI-owned short-lived login role", async ()
   )
   assert.match(operations, /Supabase CLI obtains its own short-lived login role/)
 })
+
+test("development runtime deploys can select one exact Edge Function", async () => {
+  const workflow = await readFile(".github/workflows/deploy-dev.yml", "utf8")
+
+  assert.match(workflow, /runtime_function:[\s\S]*default: all[\s\S]*- dispatch[\s\S]*- webhook/)
+  assert.match(workflow,
+    /if: inputs\.phase == 'runtime' && \(inputs\.runtime_function == 'all' \|\| inputs\.runtime_function == 'webhook'\)/)
+  assert.match(workflow,
+    /if: inputs\.phase == 'runtime' && \(inputs\.runtime_function == 'all' \|\| inputs\.runtime_function == 'dispatch'\)/)
+  assert.match(workflow,
+    /if: inputs\.phase != 'runtime'[\s\S]*test "\$RUNTIME_FUNCTION" = "all"/)
+})
