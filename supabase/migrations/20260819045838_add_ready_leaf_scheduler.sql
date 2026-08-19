@@ -203,7 +203,7 @@ begin
     route_key, owner_id, fencing_generation, lease_expires_at, heartbeat_at
   ) values (
     p_route_key, p_owner_id, next_generation, now() + interval '30 seconds', now()
-  ) on conflict (route_key) do update set
+  ) on conflict on constraint scheduler_leaders_pkey do update set
     owner_id = excluded.owner_id,
     fencing_generation = excluded.fencing_generation,
     lease_expires_at = excluded.lease_expires_at,
