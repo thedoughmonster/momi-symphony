@@ -121,6 +121,7 @@ test("blocked leaf consumes no task or slot and later unblocks without a state c
       { id: leafA.id, identifier: leafA.identifier, state: "In Progress" },
     ] })
   const issues = new Map([[leafA.id, leafA], [leafB.id, leafB]])
+  const dependentPackage = { state: leafB.state, labels: [...leafB.labels] }
   const fixture = dependencies({ issues, capacity: 2 })
   const first = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
@@ -135,7 +136,8 @@ test("blocked leaf consumes no task or slot and later unblocks without a state c
   const second = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
   assert.equal(second.claimed, 1)
-  assert.equal(issues.get(leafB.id)?.state, "Todo")
+  assert.deepEqual({ state: issues.get(leafB.id)?.state,
+    labels: issues.get(leafB.id)?.labels }, dependentPackage)
   assert.equal(fixture.dispatched.has(leafB.id), true)
 })
 
