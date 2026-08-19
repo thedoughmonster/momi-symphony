@@ -18,10 +18,17 @@ test("consumes the accepted action, adds has-run, and writes its marker", async 
     if (request.query.includes("AgentControlIssue")) return Promise.resolve(
       Response.json({ data: { issue: {
       id: "00000000-0000-4000-8000-000000000010", identifier: "MOX-151",
-      state: { name: "Todo" }, labels: { nodes: [
-        { id: "action-id", name: "decompose" }, { id: "feature-id", name: "Feature" }] },
-      team: { labels: { nodes: [{ id: "action-id", name: "decompose" },
-        { id: "has-id", name: "has-run" }] } }, comments: { nodes: [] } } } }))
+      title: "Agent control work", description: null, priority: 1, branchName: null,
+      url: "https://linear.app/issue/MOX-151", createdAt: null, updatedAt: null,
+      state: { id: "todo-id", name: "Todo", type: "unstarted" }, assignee: null,
+      project: { id: "project" }, labels: { nodes: [
+        { id: "action-id", name: "decompose" }, { id: "feature-id", name: "Feature" }],
+        pageInfo: { hasNextPage: false, endCursor: null } },
+      team: { id: "team", labels: { nodes: [{ id: "action-id", name: "decompose" },
+        { id: "has-id", name: "has-run" }] } }, parent: null,
+      children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+      inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+      comments: { nodes: [] } } } }))
     if (request.query.includes("AgentControlLabels")) {
       return Promise.resolve(Response.json({ data: { issueUpdate: { success: true } } }))
     }
