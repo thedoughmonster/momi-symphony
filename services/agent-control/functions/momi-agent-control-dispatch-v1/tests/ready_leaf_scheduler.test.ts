@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { LinearAdapterError, type NormalizedLinearIssue } from "../src/linear_issue_adapter.ts"
+import { LinearGraphqlError } from "../src/linear_graphql.ts"
 import { processReadyLeafSchedulerPump,
   type ReadyLeafSchedulerDependencies } from "../src/ready_leaf_scheduler.ts"
 import type { SchedulerCandidate, SchedulerRoute } from "../src/scheduler_database.ts"
@@ -56,6 +57,7 @@ function dependencies(options: {
   acceptanceIssueIds?: string[]
   capacity?: number
   fetchFailure?: boolean
+  refreshFailure?: LinearGraphqlError
 }) {
   const dispatched = new Set<string>()
   const active = new Set<string>()
@@ -72,9 +74,11 @@ function dependencies(options: {
     fetchCandidates: () => options.fetchFailure
       ? Promise.reject(new LinearAdapterError("tracker_response", "provider_down"))
       : Promise.resolve([...options.issues.values()]),
-    refresh: (_route, ids) => Promise.resolve(ids.flatMap((id) => {
+    refresh: (_route, ids) => options.refreshFailure
+      ? Promise.reject(options.refreshFailure)
+      : Promise.resolve(ids.flatMap((id) => {
       const issue = options.issues.get(id); return issue ? [issue] : []
-    })),
+      })),
     candidateIds: () => Promise.resolve([...options.issues.keys()]),
     reconcile: (_route, issue) => {
       const previous = lastEligible.get(issue.id) ?? false
@@ -155,6 +159,18 @@ test("provider outage fails closed as technical retry without a claim", async ()
   assert.equal(receipt.technical_retries, 1)
   assert.equal(receipt.claimed, 0)
   assert.deepEqual(fixture.retryCodes, ["tracker_response"])
+})
+
+test("observe mode preserves a bounded typed tracker failure in its count-only receipt", async () => {
+  const candidate = normalized(5)
+  const fixture = dependencies({ issues: new Map([[candidate.id, candidate]]),
+    mode: "observe", acceptanceIssueIds: [candidate.id],
+    refreshFailure: new LinearGraphqlError("tracker_timeout") })
+  const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
+    scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
+  assert.deepEqual(receipt, { ok: true, routes: 1, observed: 0, claimed: 0,
+    technical_retries: 1 })
+  assert.deepEqual(fixture.retryCodes, ["tracker_timeout"])
 })
 
 test("twenty candidates drain within capacity across terminal refills", async () => {

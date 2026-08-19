@@ -1,5 +1,6 @@
 import { schedulerEligibility, sortSchedulableIssues } from "../../../src/scheduler_policy.ts"
 import { createLinearAdapterProfile, LinearAdapterError } from "./linear_issue_adapter.ts"
+import { LinearGraphqlError } from "./linear_graphql.ts"
 import { fetchLinearCandidateIssues, refreshLinearIssues } from "./linear_issue_reader.ts"
 import {
   acquireSchedulerLeader,
@@ -72,6 +73,7 @@ function defaultDependencies(): ReadyLeafSchedulerDependencies {
 }
 
 function technicalCode(error: unknown): string {
+  if (error instanceof LinearGraphqlError) return error.code
   return error instanceof LinearAdapterError ? error.category : "tracker_request"
 }
 
