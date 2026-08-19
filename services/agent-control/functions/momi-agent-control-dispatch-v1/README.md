@@ -11,6 +11,9 @@ reuse the same ticket and task.
 
 An ADR-0004 database trigger sends `work_id` and `capability_token` after commit.
 The authenticated host adapter uses the same route for a terminal callback.
+The same bearer-authenticated route accepts the host-owned scheduler pump; its
+input contains only a scheduler UUID, exact release SHA, and bounded active
+work IDs.
 `GET` is a configuration-only probe.
 
 Dispatch input contains only the work identity and per-work token. Terminal
@@ -34,6 +37,10 @@ cancellation calls the host's exact turn-interruption contract. Failures
 release work with bounded backoff. Host idempotency prevents duplicate tasks.
 Discovery recovery calls the exact retained-task recovery contract, writes a
 sanitized pending status before host delivery, and never starts a Codex task.
+The scheduler pump reads normalized candidates, reconciles their current
+generation, refreshes an issue immediately before an atomic claim, and creates
+the existing dispatch shape only after both route and action-class capacity are
+reserved. `observe` mode cannot claim.
 
 ## Tests
 

@@ -10,7 +10,7 @@
 - Status: accepted
 - Date: 2026-08-14
 - Owning issues: #504 / MOX-151; #517 / MOX-152; #519 / MOX-153;
-  #523 / MOX-159
+  #523 / MOX-159; MOX-157
 
 ## Context
 
@@ -55,6 +55,27 @@ mapping identities, plus a bounded action-specific instruction. `execute-run`
 owns repository implementation; the other actions are limited to validation,
 investigation, metadata cleanup, decomposition, or discovery. Symphony is not
 in this boundary.
+
+MOX-157 extends the same boundary with one fixed host-owned scheduler pump.
+The host sends only its scheduler identity, exact release identity, and bounded
+active work IDs to the existing authenticated agent-control endpoint.
+Agent-control fetches provider data through the normalized issue adapter,
+persists candidate generations, and atomically reserves route/action-class
+capacity before creating a normal `execute-run` dispatch. The host never sees
+or interprets Linear payloads.
+
+Candidate ordering is priority `1..4` ascending, other/null priority last,
+creation time oldest/null last, then identifier. Issue-level priority aging is
+not part of this comparator. A blocked or otherwise unroutable leaf may have a
+waiting projection, but it creates no dispatch and consumes no slot. A false to
+true eligibility transition creates a new fenced generation; stale generations
+cannot be resumed. Provider failure becomes bounded technical retry state and
+never a human decision alert.
+
+Automatic claims are doubly fail closed: the database route policy is created
+in `disabled` mode and the host pump defaults off. `observe` mode requires an
+explicit issue allowlist and cannot claim. `enabled` mode requires a recorded
+exact protected-release SHA and completed development acceptance receipt.
 
 `run-discovery` is the catalog's interactive exception. Host dispatch v2 names
 its non-ephemeral thread before the first turn and omits structured terminal

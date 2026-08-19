@@ -61,6 +61,15 @@ export class HostLedger {
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
       (record.state === "terminal" && !record.callbackSent))
   }
+  activeWorkIds(): string[] {
+    return [...this.records.values()]
+      .filter((record) => record.state === "reserved" || record.state === "accepted" ||
+        record.state === "interactive" || record.state === "ambiguous" ||
+        (record.state === "terminal" && !record.callbackSent))
+      .map((record) => record.workId)
+      .sort()
+      .slice(0, 128)
+  }
   async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
   ): Promise<HostRecord> {

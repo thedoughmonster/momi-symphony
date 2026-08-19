@@ -60,7 +60,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DEV_PROJECT_REF: ${{ vars.SUPABASE_DEV_PROJECT_REF }}
-      - name: Apply the mapping only after the host cutover
+      - name: Apply one owned migration only after host health
         if: inputs.phase == 'mapping'
         run: |
           unset SUPABASE_DB_PASSWORD PGPASSWORD

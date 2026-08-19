@@ -19,3 +19,12 @@ matches; neither deletes or reconstructs durable state.
 Rollback never drops `momi_agent_ops`, rewrites a migration, deletes either
 ledger, or activates production. A failed or ambiguous host start remains
 blocked for operator reconciliation.
+
+For MOX-157, stop new automatic claims first with
+`ops/sql/disable_ready_leaf_scheduler.sql`, then set
+`MOMI_AGENT_CONTROL_SCHEDULER_ENABLED=false` and restart the one host unit.
+The guarded SQL changes exactly the dedicated route policy to `disabled`,
+clears only its acceptance allowlist, and retains candidates, generations,
+slots, dispatches, and evidence. Running or quarantined work remains governed
+by its existing exact cancellation/terminal path; rollback never releases an
+ambiguous slot merely to regain capacity.

@@ -1,10 +1,24 @@
-import type { DispatchInput, TerminalInput } from "./types.ts"
+import type { DispatchInput, SchedulerPumpInput, TerminalInput } from "./types.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-export function parseDispatchInput(value: unknown): DispatchInput | TerminalInput | null {
+export function parseDispatchInput(
+  value: unknown,
+): DispatchInput | SchedulerPumpInput | TerminalInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const body = value as Record<string, unknown>
+  if (body.event === "scheduler_pump") {
+    const active = body.active_work_ids
+    const keys = Object.keys(body).sort().join(",")
+    if (!uuid.test(String(body.scheduler_id ?? "")) || !Array.isArray(active) ||
+      !/^[0-9a-f]{40}$/.test(String(body.release_sha ?? "")) ||
+      active.length > 128 || active.some((workId) => !uuid.test(String(workId))) ||
+      new Set(active).size !== active.length ||
+      keys !== "active_work_ids,event,release_sha,scheduler_id") return null
+    return { event: "scheduler_pump", scheduler_id: body.scheduler_id as string,
+      release_sha: body.release_sha as string,
+      active_work_ids: active as string[] }
+  }
   if (!uuid.test(String(body.work_id ?? "")) ||
     !uuid.test(String(body.capability_token ?? ""))) return null
   if (body.event === undefined) {

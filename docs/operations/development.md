@@ -29,10 +29,26 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
    active with recorded deployed hashes.
 4. Verify `curl --fail http://127.0.0.1:47931/health` returns the stable service
    identity from the repository-owned host.
-5. Run the `mapping` phase at the same SHA only after host health passes. The
-   runner applies one owned migration and its checksum row atomically without
-   inserting, deleting, or repairing any global migration-history row.
+5. Run the legacy-named `mapping` phase at the same SHA only after host health
+   passes. The runner applies one pending owned migration and its checksum row
+   atomically without inserting, deleting, or repairing any global
+   migration-history row.
 6. Compare durable counts for mappings, envelopes, dispatches, and run records
    to the pre-cutover record.
+
+## Ready-leaf scheduler gate
+
+The MOX-157 migration creates the Symphony route in `disabled` mode, and
+`MOMI_AGENT_CONTROL_SCHEDULER_ENABLED` defaults to `false`. Applying the
+migration or deploying the runtime therefore cannot automatically select
+MOX-157 or a downstream real issue.
+
+After a protected exact release, use the bounded procedure in
+[`scheduler.md`](scheduler.md). Acceptance first uses `observe` mode with an
+explicit existing issue UUID and creates no dispatch or slot. Atomic
+claim/capacity behavior is proven with the disposable/transaction-rolled-back
+fixture. Only a separate authorized change may record that exact release and
+set the route to `enabled`. Never add a new Linear issue merely to exercise the
+scheduler.
 
 The workflow contains no production target or automatic production trigger.

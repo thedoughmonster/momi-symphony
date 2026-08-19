@@ -8,6 +8,7 @@ const actionCatalogPath = "supabase/migrations/20260814192000_add_agent_control_
 const parentRunsPath = "supabase/migrations/20260815061500_add_agent_control_parent_runs.sql"
 const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_recovery.sql"
 const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dead_letter_recovery.sql"
+const schedulerPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -116,5 +117,26 @@ test("dead-letter recovery is private, exact, and rotates the existing dispatch"
   assert.match(migration, /wake_capability_token = fresh_capability/)
   assert.match(migration, /from public, anon, authenticated, service_role/)
   assert.doesNotMatch(migration, /insert into momi_agent_ops\./)
+  assert.doesNotMatch(migration, /\bnet\.http_post\b/)
+})
+
+test("ready-leaf scheduling stays private, exact-release gated, and default disabled", async () => {
+  const migration = await readFile(schedulerPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  for (const table of ["scheduler_route_policies", "scheduler_leaders",
+    "scheduler_candidates", "scheduler_slots"]) {
+    assert.match(migration, new RegExp(
+      `alter table momi_agent_ops\\.${table} enable row level security`,
+    ))
+  }
+  assert.match(migration, /mode text not null default 'disabled'/)
+  assert.match(migration, /mode = 'enabled'[\s\S]+accepted_release_sha is not null[\s\S]+acceptance_completed_at is not null/)
+  assert.equal(migration.match(/accepted_release_sha is distinct from p_release_sha/g)?.length, 2)
+  assert.match(migration, /mode = 'observe' and cardinality\(acceptance_issue_ids\) between 1 and 20/)
+  assert.match(migration, /revoke all on table momi_agent_ops\.scheduler_route_policies,[\s\S]+from public, anon, authenticated, service_role/)
+  assert.match(migration, /revoke all on function momi_agent_ops\.acquire_scheduler_leader_v1[\s\S]+momi_agent_ops\.claim_scheduler_candidate_v1[\s\S]+from public, anon, authenticated, service_role/)
+  assert.equal(migration.match(/security invoker set search_path = ''/g)?.length, 8)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\bexecute\b(?!\s+function\b)/i)
   assert.doesNotMatch(migration, /\bnet\.http_post\b/)
 })

@@ -2,7 +2,7 @@
   "$schema": "../../../../schemas/function-manifest-v1.schema.json",
   "function_key": "momi.agent_control.dispatch.v1",
   "contract_version": 1,
-  "purpose": "Deliver or cancel one claimed Linear action and reconcile durable state back to Linear.",
+  "purpose": "Pump ready leaves, deliver or cancel one claimed Linear action, and reconcile durable state back to Linear.",
   "owner_service": "agent-control",
   "function_type": "coordinator",
   "capability": "deliver",
@@ -20,6 +20,8 @@
   "required_capabilities": ["database_read", "database_write", "external_delivery"],
   "declared_side_effects": [
     "claims_agent_dispatch",
+    "reconciles_ready_leaf_candidates",
+    "reserves_capacity_slot",
     "creates_codex_task",
     "requests_codex_turn_interruption",
     "reconciles_linear_action",

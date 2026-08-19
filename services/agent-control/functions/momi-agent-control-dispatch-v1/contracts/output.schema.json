@@ -1,13 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "required": ["ok", "disposition"],
-  "properties": {
-    "ok": {"type": "boolean"},
-    "disposition": {
-      "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["ok", "disposition"],
+      "properties": {
+        "ok": {"type": "boolean"},
+        "disposition": {
+          "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
+        },
+        "thread_id": {"type": "string"}
+      },
+      "additionalProperties": false
     },
-    "thread_id": {"type": "string"}
-  },
-  "additionalProperties": false
+    {
+      "type": "object",
+      "required": ["ok", "routes", "observed", "claimed", "technical_retries"],
+      "properties": {
+        "ok": {"const": true},
+        "routes": {"type": "integer", "minimum": 0},
+        "observed": {"type": "integer", "minimum": 0},
+        "claimed": {"type": "integer", "minimum": 0},
+        "technical_retries": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  ]
 }

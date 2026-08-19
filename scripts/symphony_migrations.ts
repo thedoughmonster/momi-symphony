@@ -73,14 +73,14 @@ export function validateOwnedMigrationSql(filename: string, sql: string): void {
     ["storage schema", /\bstorage\s*\./],
     ["realtime schema", /\brealtime\s*\./],
     ["external scheduled operation", /\b(?:cron|net|vault)\s*\./],
-    ["dynamic SQL", /\bexecute\b/],
+    ["dynamic SQL", /\bexecute\b(?!\s+function\b)/],
     ["procedure call", /\bcall\b/],
   ] as const
   for (const [label, pattern] of forbidden) {
     if (pattern.test(code)) fail(`${filename}: forbidden ${label}`)
   }
 
-  const mutationTarget = /\b(?:insert\s+into|update(?!\s+set\b)|delete\s+from|merge\s+into|truncate(?:\s+table)?|alter\s+(?:table|function|procedure|view|type|sequence)|drop\s+(?:table|function|procedure|view|type|sequence)|create\s+(?:table(?:\s+if\s+not\s+exists)?|(?:or\s+replace\s+)?(?:function|procedure|view)|type|sequence))\s+([a-z_][a-z0-9_$]*(?:\s*\.\s*[a-z_][a-z0-9_$]*)?)/g
+  const mutationTarget = /\b(?:insert\s+into|update(?!\s+(?:set|of|on)\b)|delete\s+from|merge\s+into|truncate(?:\s+table)?|alter\s+(?:table|function|procedure|view|type|sequence)|drop\s+(?:table|function|procedure|view|type|sequence)|create\s+(?:table(?:\s+if\s+not\s+exists)?|(?:or\s+replace\s+)?(?:function|procedure|view)|type|sequence))\s+([a-z_][a-z0-9_$]*(?:\s*\.\s*[a-z_][a-z0-9_$]*)?)/g
   for (const match of code.matchAll(mutationTarget)) {
     const target = match[1].replaceAll(/\s/g, "")
     if (!target.startsWith("momi_agent_ops.")) {

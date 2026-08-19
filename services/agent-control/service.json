@@ -13,7 +13,8 @@
   "contracts": {
     "provides": [
       "momi.agent_control.dispatch.v1",
-      "momi.agent_control.linear_webhook.v1"
+      "momi.agent_control.linear_webhook.v1",
+      "momi.agent_control.scheduler_pump.v1"
     ],
     "consumes": [
       {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v2"},
@@ -61,7 +62,11 @@
       "momi_agent_ops.dispatches",
       "momi_agent_ops.project_mappings",
       "momi_agent_ops.raw_webhook_envelopes",
-      "momi_agent_ops.run_records"
+      "momi_agent_ops.run_records",
+      "momi_agent_ops.scheduler_route_policies",
+      "momi_agent_ops.scheduler_leaders",
+      "momi_agent_ops.scheduler_candidates",
+      "momi_agent_ops.scheduler_slots"
     ],
     "private_routines": [
       "momi_agent_ops.accept_linear_webhook_v1",
@@ -85,6 +90,14 @@
       "momi_agent_ops.record_terminal_v2",
       "momi_agent_ops.retry_dispatch_v1",
       "momi_agent_ops.run_dispatch_recovery_v1",
+      "momi_agent_ops.acquire_scheduler_leader_v1",
+      "momi_agent_ops.reconcile_scheduler_candidate_v1",
+      "momi_agent_ops.mark_scheduler_candidate_stale_v1",
+      "momi_agent_ops.claim_scheduler_candidate_v1",
+      "momi_agent_ops.reconcile_scheduler_dispatch_state_v1",
+      "momi_agent_ops.heartbeat_scheduler_slots_v1",
+      "momi_agent_ops.record_scheduler_provider_retry_v1",
+      "momi_agent_ops.record_scheduler_provider_success_v1",
       "momi_agent_ops.wake_agent_control_dispatch"
     ],
     "public_reads": [],

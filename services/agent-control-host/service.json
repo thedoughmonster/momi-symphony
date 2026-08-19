@@ -14,7 +14,9 @@
       "momi.agent_control.host_cancel.v1",
       "momi.agent_control.host_recover.v1"
     ],
-    "consumes": []
+    "consumes": [
+      {"service": "agent-control", "contract": "momi.agent_control.scheduler_pump.v1"}
+    ]
   },
   "database": {"read": [], "write": []},
   "network": {"outbound_hosts": ["configured:agent_control_callback_url"]},
@@ -27,6 +29,9 @@
     "MOMI_CODEX_BASE_BRANCH",
     "MOMI_AGENT_CONTROL_HOST",
     "MOMI_AGENT_CONTROL_PORT",
+    "MOMI_AGENT_CONTROL_SCHEDULER_ENABLED",
+    "MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS",
+    "MOMI_AGENT_CONTROL_RELEASE_SHA",
     "CODEX_HOME"
   ],
   "deployment": {"owns": [], "depends_on": []},

@@ -9,6 +9,7 @@ import { processTerminal } from "./process_terminal.ts"
 import { reconcileLinear } from "./reconcile_linear.ts"
 import { reconcileTerminal } from "./reconcile_terminal.ts"
 import { readLinearAccessToken } from "./read_linear_access_token.ts"
+import { processReadyLeafSchedulerPump } from "./ready_leaf_scheduler.ts"
 import { recordHostAcceptance } from "./record_host_acceptance.ts"
 import { recordCancellation } from "./record_cancellation.ts"
 import { recordRecovery } from "./record_recovery.ts"
@@ -22,6 +23,7 @@ export async function handleRequestWithDependencies(
   injected?: { dispatch: DispatchDependencies; recordTerminal: typeof recordTerminal;
     reconcileTerminal: typeof reconcileTerminal;
     terminalWriteback: (terminal: TerminalInput, commentId: string) => Promise<boolean>;
+    schedulerPump: typeof processReadyLeafSchedulerPump;
     hostSecret: string },
 ): Promise<Response> {
   if (request.method === "GET") {
@@ -37,6 +39,10 @@ export async function handleRequestWithDependencies(
       const secret = injected?.hostSecret ?? Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
       if (!await isHostAuthorized(request.headers.get("authorization"), secret)) {
         return new Response("unauthorized", { status: 401 })
+      }
+      if (input.event === "scheduler_pump") {
+        const result = await (injected?.schedulerPump ?? processReadyLeafSchedulerPump)(input)
+        return Response.json(result)
       }
       const result = await processTerminal(input as TerminalInput,
         injected?.recordTerminal ?? recordTerminal,
@@ -54,7 +60,8 @@ export async function handleRequestWithDependencies(
       retry: retryDispatch }
     return Response.json(await processDispatch(input, dependencies))
   } catch (error) {
-    console.error("Agent control delivery failed", input.work_id,
+    const requestId = "work_id" in input ? input.work_id : input.scheduler_id
+    console.error("Agent control delivery failed", requestId,
       error instanceof Error ? error.message : "unknown")
     return Response.json({ ok: false, disposition: "retrying" }, { status: 503 })
   }

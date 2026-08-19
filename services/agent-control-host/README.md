@@ -40,6 +40,15 @@ secret, workspace root, repository/base, ledger path, and an installed Codex
 App Server daemon. Put any public TLS/reverse-proxy boundary outside this
 process. The adapter never logs request bodies, prompts, or capability tokens.
 
+When explicitly enabled after the protected development acceptance, this same
+process owns the sole scheduler timer. `MOMI_AGENT_CONTROL_RELEASE_SHA` must be
+the exact protected 40-character commit under acceptance. The pump posts only
+that release identity, a random scheduler owner UUID, and at most 128 active
+durable work IDs to the existing authenticated agent-control callback. It never
+receives or interprets Linear/provider data, never decides readiness, and never
+creates a second App Server path. The database policy remains the final
+enabled/observe/disabled authority.
+
 The deterministic smoke test substitutes an in-memory App Server transport.
 PR handoff also requires one no-side-effect acceptance event against the
 installed local App Server; hosted activation remains post-review.
