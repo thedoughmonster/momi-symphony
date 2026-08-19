@@ -3,6 +3,13 @@ import type { NormalizedLinearIssue } from "./linear_issue_adapter.ts"
 
 export type DispatchInput = { work_id: string; capability_token: string }
 
+export type SchedulerPumpInput = {
+  event: "scheduler_pump"
+  scheduler_id: string
+  release_sha: string
+  active_work_ids: string[]
+}
+
 export type CancellationState = "not_requested" | "queued_cancelled" | "requested" |
   "already_terminal" | "no_target" | "operator_intervention"
 

@@ -25,6 +25,22 @@
         "summary": {"type": "string", "maxLength": 1000}
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "scheduler_id", "release_sha", "active_work_ids"],
+      "properties": {
+        "event": {"const": "scheduler_pump"},
+        "scheduler_id": {"type": "string", "format": "uuid"},
+        "release_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "active_work_ids": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uuid"}
+        }
+      },
+      "additionalProperties": false
     }
   ]
 }

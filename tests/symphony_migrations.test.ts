@@ -35,14 +35,16 @@ function state(
   }
 }
 
-test("the private ledger adopts seven baselines and plans only the mapping", async () => {
+test("the private ledger adopts seven baselines and plans all owned futures", async () => {
   const { migrations } = await loadManagedMigrations()
   const plan = analyzeRemoteState(migrations, state(migrations))
 
-  assert.equal(migrations.length, 8)
+  assert.equal(migrations.length, 9)
   assert.equal(plan.adoptions.length, 7)
   assert.equal(plan.applied.length, 0)
-  assert.deepEqual(plan.pending.map((migration) => migration.version), ["20260818152105"])
+  assert.deepEqual(plan.pending.map((migration) => migration.version), [
+    "20260818152105", "20260819045838",
+  ])
 })
 
 test("the private ledger accepts an exact ordered prefix", async () => {
@@ -51,7 +53,7 @@ test("the private ledger accepts an exact ordered prefix", async () => {
   const plan = analyzeRemoteState(migrations, state(migrations, rows))
 
   assert.equal(plan.adoptions.length, 0)
-  assert.equal(plan.pending.length, 1)
+  assert.equal(plan.pending.length, 2)
 })
 
 test("the private ledger rejects drift, unknown rows, and partial adoption", async () => {
@@ -80,7 +82,7 @@ test("the private ledger rejects drift, unknown rows, and partial adoption", asy
 test("the private ledger rejects global ownership of a future migration", async () => {
   const { migrations } = await loadManagedMigrations()
   const remote = state(migrations)
-  remote.globalVersions.push(migrations[7].version)
+  remote.globalVersions.push(migrations.at(-1)!.version)
   assert.throws(() => analyzeRemoteState(migrations, remote), /global history unexpectedly owns/)
 })
 
@@ -113,12 +115,20 @@ test("new migrations are restricted to momi_agent_ops", () => {
     "20260818152105_transaction.sql",
     "-- service-owner: agent-control\nbegin; insert into momi_agent_ops.project_mappings values ('unsafe'); commit;\n",
   ), /transaction control/)
+  assert.doesNotThrow(() => validateOwnedMigrationSql(
+    "20260818152105_trigger.sql",
+    "-- service-owner: agent-control\ncreate trigger safe after update on momi_agent_ops.project_mappings for each row execute function momi_agent_ops.safe();\n",
+  ))
+  assert.throws(() => validateOwnedMigrationSql(
+    "20260818152105_dynamic.sql",
+    "-- service-owner: agent-control\ncreate function momi_agent_ops.f() returns void language plpgsql as $$ begin execute command; end $$;\n",
+  ), /dynamic SQL/)
 })
 
-test("one owned migration and its ledger row share the locked transaction", async () => {
+test("each owned migration and its ledger row share the locked transaction", async () => {
   const { migrations } = await loadManagedMigrations()
-  const mapping = migrations[7]
-  const sql = buildApplySql(migrations, mapping)
+  const next = migrations.at(-1)!
+  const sql = buildApplySql(migrations, next)
 
   assert.match(sql, new RegExp(`pg_advisory_xact_lock\\(${migrationLedgerContract.advisoryLockId}\\)`))
   assert.match(sql, /create table if not exists momi_agent_ops\.schema_migrations/)
@@ -126,7 +136,7 @@ test("one owned migration and its ledger row share the locked transaction", asyn
   assert.match(sql, /revoke all on table momi_agent_ops\.schema_migrations from public, anon, authenticated, service_role/)
   assert.doesNotMatch(sql, /(?:insert\s+into|update|delete\s+from)\s+supabase_migrations/i)
   assert.doesNotMatch(sql, /security definer/i)
-  const ledgerInsert = sql.indexOf(`values ('${mapping.version}', '${mapping.name}'`)
-  assert.ok(sql.indexOf(mapping.sql.trim()) < ledgerInsert)
+  const ledgerInsert = sql.indexOf(`values ('${next.version}', '${next.name}'`)
+  assert.ok(sql.indexOf(next.sql.trim()) < ledgerInsert)
   assert.ok(ledgerInsert < sql.indexOf("commit;"))
 })

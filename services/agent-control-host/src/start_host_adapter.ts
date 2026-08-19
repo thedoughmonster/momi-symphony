@@ -5,6 +5,7 @@ import { CodexAppServerClient } from "./codex_app_server_client.ts"
 import { handleHostRequest } from "./handle_host_request.ts"
 import { HostController } from "./host_controller.ts"
 import { HostLedger } from "./host_ledger.ts"
+import { readSchedulerPumpConfiguration, SchedulerPump } from "./scheduler_pump.ts"
 
 export async function startHostAdapter(): Promise<Server> {
   const workspaceRoot = process.env.MOMI_CODEX_WORKSPACE_ROOT?.trim() ?? ""
@@ -15,6 +16,7 @@ export async function startHostAdapter(): Promise<Server> {
   const secret = process.env.MOMI_CODEX_HOST_SECRET?.trim() ?? ""
   const host = process.env.MOMI_AGENT_CONTROL_HOST?.trim() || "127.0.0.1"
   const port = Number(process.env.MOMI_AGENT_CONTROL_PORT ?? "47931")
+  const scheduler = readSchedulerPumpConfiguration(process.env)
   let callbackUrl: URL | null = null
   try { callbackUrl = new URL(callback) } catch { /* validated below */ }
   const loopback = callbackUrl
@@ -24,8 +26,9 @@ export async function startHostAdapter(): Promise<Server> {
     !Number.isInteger(port) || port < 1024 || port > 65535) {
     throw new Error("agent_control_host_configuration_invalid")
   }
+  const ledger = new HostLedger(ledgerPath)
   const controller = new HostController(new CodexAppServerClient(),
-    new HostLedger(ledgerPath), { workspaceRoot, repository, baseBranch })
+    ledger, { workspaceRoot, repository, baseBranch })
   await controller.start()
   const server = createServer((request, response) => {
     void handleHostRequest(request, response, controller)
@@ -33,5 +36,12 @@ export async function startHostAdapter(): Promise<Server> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject); server.listen(port, host, resolve)
   })
+  if (scheduler.enabled) {
+    const pump = new SchedulerPump({ callbackUrl: callbackUrl!, secret,
+      intervalMs: scheduler.intervalMs, releaseSha: scheduler.releaseSha!,
+      activeWorkIds: () => ledger.activeWorkIds() })
+    server.once("close", () => pump.stop())
+    pump.start()
+  }
   return server
 }

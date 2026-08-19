@@ -50,6 +50,14 @@ The provider-specific normalized issue/readiness contract is documented in
 Candidate and ID-refresh readers return normalized fields only; downstream
 scheduler code must not reconstruct Linear hierarchy or blocker policy.
 
+The single MOX-157 scheduler is a host-owned 10–60 second pump through the
+existing authenticated dispatch function. Agent-control applies normalized
+`dispatchable`, active-state, required-label, claim, and capacity checks,
+refreshes a candidate immediately before the atomic database claim, and uses
+one route-scoped leader plus fenced candidate/slot generations. The migration
+and host pump are both disabled by default; see
+[`docs/operations/scheduler.md`](../../docs/operations/scheduler.md).
+
 ## Exact dead-letter recovery
 
 `momi_agent_ops.recover_dead_letter_dispatch_v1` is a private database-owner
