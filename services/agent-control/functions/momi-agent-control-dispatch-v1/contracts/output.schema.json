@@ -4,23 +4,88 @@
     "uuid": {"type": "string", "format": "uuid"},
     "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "profile": {"enum": ["low", "standard", "high"]},
-    "model": {"enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]},
-    "reasoning_effort": {"enum": ["low", "medium", "high"]},
-    "budget_fingerprint": {
-      "type": "string",
-      "pattern": "^fnv1a64:[0-9a-f]{16}$"
+    "execution_tuple": {
+      "anyOf": [
+        {
+          "required": ["profile", "model", "reasoning_effort", "budget_fingerprint"],
+          "properties": {
+            "profile": {"const": "low"},
+            "model": {"const": "gpt-5.6-luna"},
+            "reasoning_effort": {"const": "low"},
+            "budget_fingerprint": {"const": "fnv1a64:9ede9fa30f041ad1"}
+          }
+        },
+        {
+          "required": ["profile", "model", "reasoning_effort", "budget_fingerprint"],
+          "properties": {
+            "profile": {"const": "standard"},
+            "model": {"const": "gpt-5.6-terra"},
+            "reasoning_effort": {"const": "medium"},
+            "budget_fingerprint": {"const": "fnv1a64:9631b8b9d5daf636"}
+          }
+        },
+        {
+          "required": ["profile", "model", "reasoning_effort", "budget_fingerprint"],
+          "properties": {
+            "profile": {"const": "high"},
+            "model": {"const": "gpt-5.6-sol"},
+            "reasoning_effort": {"const": "high"},
+            "budget_fingerprint": {"const": "fnv1a64:0b9ef0157af3f30a"}
+          }
+        }
+      ]
     },
-    "review_request_deferred": {
+    "review_finding": {
+      "type": "object",
+      "required": ["id", "severity", "category", "path", "line", "contract", "required_outcome", "evidence"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$"},
+        "severity": {"enum": ["blocking", "nonblocking"]},
+        "category": {"type": "string", "maxLength": 120},
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).{1,500}$"
+        },
+        "line": {
+          "anyOf": [
+            {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+            {"type": "null"}
+          ]
+        },
+        "contract": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "required_outcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "additionalProperties": false
+    },
+    "review_findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/review_finding"}
+    },
+    "review_request_without_identity": {
       "type": "object",
       "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation"],
       "properties": {
         "ok": {"const": true},
         "disposition": {
-          "enum": ["implementation_identity_refused", "focused_validation_required", "already_accepted", "already_running", "changes_requested", "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]
+          "enum": ["implementation_identity_refused", "focused_validation_required", "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]
         },
-        "review_attempt_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
-        "reviewer_dispatch_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
-        "generation": {"type": ["integer", "null"], "minimum": 1}
+        "review_attempt_id": {"type": "null"},
+        "reviewer_dispatch_id": {"type": "null"},
+        "generation": {"type": "null"}
+      },
+      "additionalProperties": false
+    },
+    "review_request_existing": {
+      "type": "object",
+      "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"enum": ["already_accepted", "already_running", "changes_requested"]},
+        "review_attempt_id": {"$ref": "#/$defs/uuid"},
+        "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
+        "generation": {"type": "integer", "minimum": 1}
       },
       "additionalProperties": false
     },
@@ -48,18 +113,31 @@
       },
       "additionalProperties": false
     },
+    "review_escalation_identity_refused": {
+      "type": "object",
+      "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation", "profile"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"const": "escalation_identity_refused"},
+        "review_attempt_id": {"type": "null"},
+        "reviewer_dispatch_id": {"type": "null"},
+        "generation": {"type": "null"},
+        "profile": {"type": "null"}
+      },
+      "additionalProperties": false
+    },
     "review_escalation_existing": {
       "type": "object",
       "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation", "profile"],
       "properties": {
         "ok": {"const": true},
         "disposition": {
-          "enum": ["escalation_identity_refused", "already_running", "already_accepted", "already_changes_requested", "already_inconclusive", "already_escalated", "already_failed", "already_stale", "already_superseded", "already_canceled", "already_ambiguous"]
+          "enum": ["already_running", "already_accepted", "already_changes_requested", "already_inconclusive", "already_escalated", "already_failed", "already_stale", "already_superseded", "already_canceled", "already_ambiguous"]
         },
-        "review_attempt_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
-        "reviewer_dispatch_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
-        "generation": {"type": ["integer", "null"], "minimum": 1},
-        "profile": {"anyOf": [{"$ref": "#/$defs/profile"}, {"type": "null"}]}
+        "review_attempt_id": {"$ref": "#/$defs/uuid"},
+        "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
+        "generation": {"type": "integer", "minimum": 1},
+        "profile": {"$ref": "#/$defs/profile"}
       },
       "additionalProperties": false
     },
@@ -75,29 +153,57 @@
       "additionalProperties": false
     },
     "review_status": {
-      "type": "object",
-      "required": ["ok", "state", "result", "findings", "reviewer_dispatch_id", "head_sha", "base_sha", "generation", "profile", "model", "reasoning_effort", "budget_fingerprint", "policy_version"],
-      "properties": {
-        "ok": {"const": true},
-        "state": {
-          "enum": ["reserved", "running", "accepted", "changes_requested", "inconclusive", "escalated", "failed", "stale", "superseded", "canceled", "ambiguous"]
+      "allOf": [
+        {
+          "type": "object",
+          "required": ["ok", "state", "result", "findings", "reviewer_dispatch_id", "head_sha", "base_sha", "generation", "profile", "model", "reasoning_effort", "budget_fingerprint", "policy_version"],
+          "properties": {
+            "ok": {"const": true},
+            "state": {
+              "enum": ["reserved", "running", "accepted", "changes_requested", "inconclusive", "escalated", "failed", "stale", "superseded", "canceled", "ambiguous"]
+            },
+            "result": {
+              "type": ["string", "null"],
+              "enum": ["accepted", "changes_requested", "inconclusive", "escalate", null]
+            },
+            "findings": {"$ref": "#/$defs/review_findings"},
+            "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
+            "head_sha": {"$ref": "#/$defs/sha"},
+            "base_sha": {"$ref": "#/$defs/sha"},
+            "generation": {"type": "integer", "minimum": 1},
+            "profile": {"$ref": "#/$defs/profile"},
+            "model": {"type": "string"},
+            "reasoning_effort": {"type": "string"},
+            "budget_fingerprint": {"type": "string"},
+            "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
+          },
+          "additionalProperties": false
         },
-        "result": {
-          "type": ["string", "null"],
-          "enum": ["accepted", "changes_requested", "inconclusive", "escalate", null]
-        },
-        "findings": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
-        "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
-        "head_sha": {"$ref": "#/$defs/sha"},
-        "base_sha": {"$ref": "#/$defs/sha"},
-        "generation": {"type": "integer", "minimum": 1},
-        "profile": {"$ref": "#/$defs/profile"},
-        "model": {"$ref": "#/$defs/model"},
-        "reasoning_effort": {"$ref": "#/$defs/reasoning_effort"},
-        "budget_fingerprint": {"$ref": "#/$defs/budget_fingerprint"},
-        "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
-      },
-      "additionalProperties": false
+        {"$ref": "#/$defs/execution_tuple"},
+        {
+          "anyOf": [
+            {
+              "required": ["state", "result", "findings"],
+              "properties": {
+                "state": {"enum": ["reserved", "running"]},
+                "result": {"type": "null"},
+                "findings": {"type": "array", "maxItems": 0}
+              }
+            },
+            {"required": ["state", "result"], "properties": {"state": {"const": "accepted"}, "result": {"const": "accepted"}}},
+            {"required": ["state", "result"], "properties": {"state": {"const": "changes_requested"}, "result": {"const": "changes_requested"}}},
+            {"required": ["state", "result"], "properties": {"state": {"const": "inconclusive"}, "result": {"const": "inconclusive"}}},
+            {"required": ["state", "result"], "properties": {"state": {"enum": ["escalated", "failed"]}, "result": {"const": "escalate"}}},
+            {
+              "required": ["state", "result"],
+              "properties": {
+                "state": {"enum": ["stale", "superseded", "canceled", "ambiguous"]},
+                "result": {"enum": ["accepted", "changes_requested", "inconclusive", "escalate", null]}
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "anyOf": [
@@ -130,16 +236,19 @@
         "disposition": {"const": "recorded"},
         "review": {
           "anyOf": [
-            {"$ref": "#/$defs/review_request_deferred"},
+            {"$ref": "#/$defs/review_request_without_identity"},
+            {"$ref": "#/$defs/review_request_existing"},
             {"$ref": "#/$defs/review_launch_accepted"}
           ]
         }
       },
       "additionalProperties": false
     },
-    {"$ref": "#/$defs/review_request_deferred"},
+    {"$ref": "#/$defs/review_request_without_identity"},
+    {"$ref": "#/$defs/review_request_existing"},
     {"$ref": "#/$defs/review_launch_accepted"},
     {"$ref": "#/$defs/review_terminal"},
+    {"$ref": "#/$defs/review_escalation_identity_refused"},
     {"$ref": "#/$defs/review_escalation_existing"},
     {"$ref": "#/$defs/review_escalation_exhausted"},
     {

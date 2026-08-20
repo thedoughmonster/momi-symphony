@@ -38,6 +38,9 @@ function matchesSchema(schema: unknown, value: unknown,
   if (Array.isArray(rule.anyOf) && !rule.anyOf.some((entry) => matchesSchema(entry, value, root))) {
     return false
   }
+  if (Array.isArray(rule.allOf) && !rule.allOf.every((entry) => matchesSchema(entry, value, root))) {
+    return false
+  }
   if ("const" in rule && !Object.is(rule.const, value)) return false
   if (Array.isArray(rule.enum) && !rule.enum.some((entry) => Object.is(entry, value))) return false
   if (rule.type !== undefined && !matchesType(rule.type, value)) return false
@@ -51,6 +54,8 @@ function matchesSchema(schema: unknown, value: unknown,
   }
   if (typeof value === "number" && typeof rule.minimum === "number" &&
     value < rule.minimum) return false
+  if (typeof value === "number" && typeof rule.maximum === "number" &&
+    value > rule.maximum) return false
   if (Array.isArray(value)) {
     if (typeof rule.maxItems === "number" && value.length > rule.maxItems) return false
     if (rule.items !== undefined && value.some((entry) =>
@@ -221,24 +226,32 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
 })
 
 test("strict output contract covers every current review response family", async () => {
-  const requestDispositions = ["implementation_identity_refused",
-    "focused_validation_required", "already_accepted", "already_running",
-    "changes_requested", "reviewer_interruption_pending", "capacity_wait",
-    "reverification_refused"]
-  const reviewRequest = (disposition: string) => ({ ok: true, disposition,
+  const requestWithoutIdentity = (disposition: string) => ({ ok: true, disposition,
+    review_attempt_id: null, reviewer_dispatch_id: null, generation: null })
+  for (const disposition of ["implementation_identity_refused", "focused_validation_required",
+    "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]) {
+    assertOutput(requestWithoutIdentity(disposition))
+  }
+  const existingRequest = (disposition: string) => ({ ok: true, disposition,
     review_attempt_id: reviewAttemptId, reviewer_dispatch_id: reviewerId, generation: 1 })
-  for (const disposition of requestDispositions) assertOutput(reviewRequest(disposition))
+  for (const disposition of ["already_accepted", "already_running", "changes_requested"]) {
+    assertOutput(existingRequest(disposition))
+  }
 
   const launched = { ok: true, disposition: "accepted", review_attempt_id: reviewAttemptId,
     reviewer_dispatch_id: reviewerId, generation: 2, profile: "standard" }
   assertOutput(launched)
   assertOutput({ ok: true, disposition: "recorded", review: launched })
+  assertOutput({ ok: true, disposition: "recorded",
+    review: requestWithoutIdentity("capacity_wait") })
 
   for (const disposition of ["accepted", "changes_requested", "inconclusive", "ambiguous",
     "canceled", "stale", "superseded"]) assertOutput({ ok: true, disposition })
 
-  for (const disposition of ["escalation_identity_refused", "already_running",
-    "already_accepted", "already_changes_requested", "already_inconclusive",
+  assertOutput({ ok: true, disposition: "escalation_identity_refused",
+    review_attempt_id: null, reviewer_dispatch_id: null, generation: null, profile: null })
+  for (const disposition of ["already_running", "already_accepted",
+    "already_changes_requested", "already_inconclusive",
     "already_escalated", "already_failed", "already_stale", "already_superseded",
     "already_canceled", "already_ambiguous"]) {
     assertOutput({ ok: true, disposition, review_attempt_id: reviewAttemptId,
@@ -249,28 +262,73 @@ test("strict output contract covers every current review response family", async
 
   const statusInput: ReviewStatusInput = { event: "review_status", work_id: implementationId,
     capability_token: token, thread_id: "implementation-thread", turn_id: "implementation-turn" }
-  for (const profile of ["low", "standard", "high"] as const) {
+  const finding = { id: "finding-1", severity: "blocking", category: "public_contract",
+    path: "services/agent-control/contracts/output.schema.json", line: 77,
+    contract: "Review responses are exact and closed.",
+    required_outcome: "Reject contradictory response evidence.",
+    evidence: "The response schema is the public function contract." }
+  const status = (profile: "low" | "standard" | "high",
+    state: string = "running", result: string | null = null,
+    findings: Array<Record<string, unknown>> = []) => {
     const execution = profile === "low"
       ? { model: "gpt-5.6-luna", reasoning_effort: "low" }
       : profile === "standard"
       ? { model: "gpt-5.6-terra", reasoning_effort: "medium" }
       : { model: "gpt-5.6-sol", reasoning_effort: "high" }
-    const sql = (async () => [{ state: "running", result: null, findings: [],
-      reviewer_dispatch_id: reviewerId, head_sha: head, base_sha: base, generation: 1,
-      profile, ...execution, budget_fingerprint: reviewBudgetFingerprint(profile),
-      policy_version: REVIEW_POLICY_VERSION }]) as unknown as Sql
+    return { ok: true, state, result, findings, reviewer_dispatch_id: reviewerId,
+      head_sha: head, base_sha: base, generation: 1, profile, ...execution,
+      budget_fingerprint: reviewBudgetFingerprint(profile), policy_version: REVIEW_POLICY_VERSION }
+  }
+  for (const profile of ["low", "standard", "high"] as const) {
+    const { ok: _ok, ...row } = status(profile)
+    const sql = (async () => [row]) as unknown as Sql
     assertOutput(await processReviewStatus(statusInput, sql))
+  }
+  for (const value of [status("high", "accepted", "accepted"),
+    status("high", "changes_requested", "changes_requested", [finding]),
+    status("high", "inconclusive", "inconclusive"),
+    status("high", "escalated", "escalate"), status("high", "failed", "escalate"),
+    status("high", "stale", null), status("high", "superseded", "accepted")]) {
+    assertOutput(value)
   }
 
   assert.equal(matchesSchema(outputSchema, { ...launched, unexpected: true }, outputSchema), false)
   assert.equal(matchesSchema(outputSchema, { ...launched, profile: "extreme" }, outputSchema), false)
-  assert.equal(matchesSchema(outputSchema, reviewRequest("already_reserved"), outputSchema), false)
+  assert.equal(matchesSchema(outputSchema,
+    existingRequest("already_reserved"), outputSchema), false)
   assert.equal(matchesSchema(outputSchema, { ok: true, disposition: "escalation_exhausted",
     generation: 3, profile: "standard" }, outputSchema), false)
-  assert.equal(matchesSchema(outputSchema, { ok: true, state: "running", result: null,
-    findings: [], reviewer_dispatch_id: reviewerId, head_sha: head, base_sha: base,
-    generation: 1, profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
-    policy_version: REVIEW_POLICY_VERSION }, outputSchema), false)
+
+  for (const impossible of [{ ...status("low"), model: "gpt-5.6-sol" },
+    { ...status("standard"), reasoning_effort: "high" },
+    { ...status("high"), budget_fingerprint: reviewBudgetFingerprint("low") }]) {
+    assert.equal(matchesSchema(outputSchema, impossible, outputSchema), false)
+  }
+  for (const contradictory of [status("high", "running", "accepted"),
+    status("high", "accepted", "escalate"), status("high", "failed", null),
+    status("high", "running", null, [finding])]) {
+    assert.equal(matchesSchema(outputSchema, contradictory, outputSchema), false)
+  }
+  const { evidence: _evidence, ...findingWithoutEvidence } = finding
+  for (const malformed of [status("high", "changes_requested", "changes_requested",
+    [findingWithoutEvidence]),
+  status("high", "changes_requested", "changes_requested", [{ ...finding, extra: true }]),
+  status("high", "changes_requested", "changes_requested", [{ ...finding, path: "../secret" }]),
+  status("high", "changes_requested", "changes_requested", [{ ...finding, line: 0 }])]) {
+    assert.equal(matchesSchema(outputSchema, malformed, outputSchema), false)
+  }
+  assert.equal(matchesSchema(outputSchema, {
+    ...requestWithoutIdentity("capacity_wait"), review_attempt_id: reviewAttemptId,
+  }, outputSchema), false)
+  assert.equal(matchesSchema(outputSchema, {
+    ...existingRequest("already_running"), reviewer_dispatch_id: null,
+  }, outputSchema), false)
+  assert.equal(matchesSchema(outputSchema, { ok: true,
+    disposition: "escalation_identity_refused", review_attempt_id: reviewAttemptId,
+    reviewer_dispatch_id: null, generation: null, profile: null }, outputSchema), false)
+  assert.equal(matchesSchema(outputSchema, { ok: true,
+    disposition: "already_failed", review_attempt_id: null,
+    reviewer_dispatch_id: null, generation: null, profile: null }, outputSchema), false)
 })
 
 test("merge preflight persists its exact receipt before projecting the required success check", async () => {
