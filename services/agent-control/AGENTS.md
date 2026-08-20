@@ -1,6 +1,6 @@
 # Agent Control Rules
 
-- Accept only the declared action catalog; `has-run` is output only.
+- Accept only the declared internal action catalog; `has-run` is retired.
 - Verify Linear signatures over untouched bytes before trusting parsed fields.
 - Normalize label changes only from `updatedFrom`, never the full issue object.
 - Keep `momi_agent_ops` private and expose no Data API relation or routine.
@@ -8,6 +8,7 @@
 - Project mappings come from the owned table and fail closed when absent.
 - A dispatch may create at most one Codex thread; ambiguous starts stay blocked.
 - Archive only after a terminal App Server turn notification is observed.
-- Parent coordination may create child work only through durable `execute-run` labels.
+- Parent coordination may create child work only through durable `execute-run` labels;
+  ordinary ready leaves use the existing scheduler without that operator label.
 - Never invoke Symphony from this service or its host adapter.
 - Cancellation must distinguish queued, active, terminal, and ambiguous host states.

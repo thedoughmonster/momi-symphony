@@ -39,12 +39,12 @@ test("the private ledger adopts seven baselines and plans all owned futures", as
   const { migrations } = await loadManagedMigrations()
   const plan = analyzeRemoteState(migrations, state(migrations))
 
-  assert.equal(migrations.length, 12)
+  assert.equal(migrations.length, 13)
   assert.equal(plan.adoptions.length, 7)
   assert.equal(plan.applied.length, 0)
   assert.deepEqual(plan.pending.map((migration) => migration.version), [
     "20260818152105", "20260819045838", "20260819082707", "20260820070000",
-    "20260820130000",
+    "20260820130000", "20260820143000",
   ])
 })
 
@@ -54,7 +54,7 @@ test("the private ledger accepts an exact ordered prefix", async () => {
   const plan = analyzeRemoteState(migrations, state(migrations, rows))
 
   assert.equal(plan.adoptions.length, 0)
-  assert.equal(plan.pending.length, 5)
+  assert.equal(plan.pending.length, 6)
 })
 
 test("the private ledger rejects drift, unknown rows, and partial adoption", async () => {

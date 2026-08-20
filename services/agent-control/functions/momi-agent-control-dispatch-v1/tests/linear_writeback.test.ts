@@ -4,7 +4,7 @@ import test from "node:test"
 import { reconcileLinear } from "../src/reconcile_linear.ts"
 import type { ClaimedDispatch } from "../src/types.ts"
 
-test("consumes the accepted action, adds has-run, and writes its marker", async () => {
+test("consumes the accepted action, removes stale has-run, and writes its marker", async () => {
   const priorDeno = Object.getOwnPropertyDescriptor(globalThis, "Deno")
   const priorFetch = globalThis.fetch
   const requests: Array<{ query: string; variables: Record<string, unknown> }> = []
@@ -46,7 +46,7 @@ test("consumes the accepted action, adds has-run, and writes its marker", async 
       linear_comment_id: null } as ClaimedDispatch
     assert.equal(await reconcileLinear(work), "00000000-0000-4000-8000-000000000011")
     const labels = requests.find((request) => request.query.includes("AgentControlLabels"))
-    assert.deepEqual(labels?.variables.labelIds, ["feature-id", "has-id"])
+    assert.deepEqual(labels?.variables.labelIds, ["feature-id"])
     const comment = requests.find((request) => request.query.includes("CommentCreate"))
     assert.match(String(comment?.variables.body), /momi-agent-control:00000000/)
     assert.match(String(comment?.variables.body), /Action: `decompose`/)

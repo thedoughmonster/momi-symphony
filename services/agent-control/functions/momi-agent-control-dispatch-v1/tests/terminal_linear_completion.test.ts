@@ -65,7 +65,7 @@ test("terminal reconciliation atomically preserves labels and completes a ready 
     const completion = requests.find((request) =>
       request.query.includes("AgentControlCompletion"))
     assert.deepEqual(completion?.variables, { id: context.issue_id,
-      labelIds: ["has-id", "implementation-id", "ready-id"], stateId: "done-id" })
+      labelIds: ["implementation-id", "ready-id"], stateId: "done-id" })
     assert.equal(requests.filter((request) =>
       request.query.includes("issueUpdate")).length, 1)
     const comment = requests.find((request) =>

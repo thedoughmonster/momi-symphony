@@ -14,37 +14,38 @@ export async function cancelHostWork(
     throw new Error("host_mapping_refused")
   }
   const prior = await ledger.reserveCancellation(
-    input.work_id, cancellationFingerprint(input), input.target_work_id)
+    input.work_id, cancellationFingerprint(input), input.target_work_ids)
   if (prior?.state !== undefined && prior.state !== "reserved") {
     return { cancellation_state: prior.state }
   }
-  const target = ledger.get(input.target_work_id)
-  if (!target) throw new Error("host_cancel_target_missing")
-  if (target.state === "terminal") {
-    await ledger.completeCancellation(input.work_id, "already_terminal")
-    return { cancellation_state: "already_terminal" }
-  }
-  if (target.state === "interactive") {
-    if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
+  let requested = false
+  for (const targetWorkId of input.target_work_ids) {
+    const target = ledger.get(targetWorkId)
+    if (!target) throw new Error("host_cancel_target_missing")
+    if (target.state === "terminal") continue
+    requested = true
+    if (target.state === "interactive") {
+      if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
+      if (!target.cancellationRequestedAt) {
+        await ledger.cancellationRequested(target.workId)
+        await client.request("thread/archive", { threadId: target.threadId })
+        await ledger.recordTelemetry(target.workId,
+          buildSyntheticTelemetry(target, "interrupted"))
+        await ledger.terminal(target.workId, { readiness_result: "ready",
+          terminal_disposition: "interrupted",
+          summary: "Interactive discovery task canceled and archived." },
+        new Date().toISOString())
+      }
+      continue
+    }
+    if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
+    if (target.cancellationRequestedAt) continue
+    await client.request("turn/interrupt", {
+      threadId: target.threadId, turnId: target.turnId,
+    })
     await ledger.cancellationRequested(target.workId)
-    await client.request("thread/archive", { threadId: target.threadId })
-    await ledger.recordTelemetry(target.workId, buildSyntheticTelemetry(target, "interrupted"))
-    await ledger.terminal(target.workId, { readiness_result: "ready",
-      terminal_disposition: "interrupted",
-      summary: "Interactive discovery task canceled and archived." },
-    new Date().toISOString())
-    await ledger.completeCancellation(input.work_id, "requested")
-    return { cancellation_state: "requested" }
   }
-  if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
-  if (target.cancellationRequestedAt) {
-    await ledger.completeCancellation(input.work_id, "requested")
-    return { cancellation_state: "requested" }
-  }
-  await client.request("turn/interrupt", {
-    threadId: target.threadId, turnId: target.turnId,
-  })
-  await ledger.cancellationRequested(target.workId)
-  await ledger.completeCancellation(input.work_id, "requested")
-  return { cancellation_state: "requested" }
+  const state = requested ? "requested" : "already_terminal"
+  await ledger.completeCancellation(input.work_id, state)
+  return { cancellation_state: state }
 }

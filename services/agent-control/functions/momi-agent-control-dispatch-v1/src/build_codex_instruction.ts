@@ -61,10 +61,14 @@ export function buildCodexPrompt(work: ClaimedDispatch): CodexPrompt {
     "Before acting, fetch the current Linear issue and relations.",
     "Proceed only when the volatile context's project still maps exactly to its",
     "repository/base and state remains in the declared active states.",
-    `This dispatch is durable proof that ${work.action} was added; the action label is`,
-    "consumed after task creation, so its absence must not make the issue unready.",
+    `This dispatch is durable proof that ${work.action} was selected. An operator-facing`,
+    "action label is not required and its absence must not make the issue unready.",
     "Otherwise report an actionable unready result.",
     ...actionInstructions[work.action],
+    ...(work.action === "execute-run" && work.validation_profile === "escalated" ? [
+      "Apply the repository's escalated validation profile to this execution lifecycle.",
+      "If that profile cannot be resolved exactly, report unready instead of downgrading it.",
+    ] : []),
     "Never invoke Symphony for this action.",
     "No action authorizes production deployment or promotion without separate explicit approval.",
     work.action === "run-discovery"
@@ -74,7 +78,7 @@ export function buildCodexPrompt(work: ClaimedDispatch): CodexPrompt {
   const envelope = buildActionContextEnvelope({ ...work,
     project_id: work.project_id!, project_name: work.project_name!,
     repository: work.repository!, base_branch: work.base_branch!,
-    active_states: work.active_states ?? [] })
+    active_states: work.active_states ?? [], validation_profile: work.validation_profile })
   const volatileContext = [
     "Volatile action context (authoritative for this attempt):",
     `Durable dispatch: ${work.work_id}.`,

@@ -2,20 +2,22 @@
 
 ## ELI5
 
-This service turns one declared Linear action label into durable Codex work.
+This service turns finalized ready Linear leaves and the remaining discretionary
+operator requests into durable Codex work.
 It keeps a private receipt at every step so retries cannot accidentally create
 a second task. One-shot actions archive after their terminal turn; discovery
 hands one named task to the user for an ongoing conversation.
 
 Linear sends a signed webhook to the ingress function. The service records the
-complete source envelope and creates work only when `updatedFrom` proves that
-exactly one declared action was newly added. A post-commit database adapter
+complete source envelope. It routes native `Canceled` as exact lifecycle
+cancellation, accepts only the remaining discretionary action labels, and
+reserves child `execute-run` labels for active parent coordination. A post-commit database adapter
 wakes the dispatch function with only a work ID and one-use capability token.
 
 The dispatch function claims durable work, calls the authenticated Codex host
-adapter, and reconciles the consumed action, `has-run`, and one marker-bound
-Linear comment. The durable dispatch proves that the action was added, so consuming
-the label after task creation does not invalidate the task's readiness check.
+adapter, removes any consumed action and stale historical `has-run`, and writes
+one marker-bound Linear comment. The durable dispatch is execution evidence;
+ordinary scheduler-origin implementation never requires an action label.
 An authenticated terminal receipt advances an `execute-run` to Linear's unique
 completed workflow state only when readiness is `ready`, the disposition is
 `completed`, and the current issue state is active. The single issue mutation
@@ -26,14 +28,16 @@ idempotency reservation outside the repository, and archives terminal threads.
 
 The dedicated project mapping is Symphony Control Plane to
 `thedoughmonster/momi-symphony` on `main`. Unknown projects are explained in
-Linear and never reach Codex. `execute-run` owns direct implementation;
-`validate-issue`, `investigate-issue`, `cleanup`, and `decompose` receive
-distinct one-shot non-execution instructions. `run-discovery` starts a named,
+Linear and never reach Codex. Internal `execute-run` still owns implementation,
+but the ready-leaf scheduler creates ordinary runs. `investigate-issue` remains
+an explicit one-shot request. `request escalated validation` is scheduler policy
+for that normal lifecycle, not a separate task. Routine validation, cleanup,
+and decomposition labels are inert. `run-discovery` starts a named,
 unstructured, multi-turn task and asks one question at a time. `recover-discovery`
 retries exact interruption and archive of that retained task without starting
 another Codex task. It releases ownership only after archive confirmation and
-keeps ownership on retryable failure. `cancel-run`
-withdraws queued work, requests interruption of an exact active host turn, or
+keeps ownership on retryable failure. Native Linear `Canceled` withdraws queued
+work, requests interruption of the exact active host turn and its owned child set, or
 records an already-terminal, absent-target, or operator-intervention result.
 
 Inside a retained discovery, only a current explicit user request to finalize

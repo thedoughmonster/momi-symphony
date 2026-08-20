@@ -185,7 +185,7 @@ export async function claimSchedulerCandidate(
   const sql = getDatabase()
   const rows = await sql<{ claimed: boolean; dispatch_id: string | null }[]>`
     select claimed, dispatch_id::text
-    from momi_agent_ops.claim_scheduler_candidate_v1(
+    from momi_agent_ops.claim_scheduler_candidate_v2(
       ${route.routeKey}, ${ownerId}::uuid, ${releaseSha}, ${leader.generation},
       ${candidate.candidateId}::uuid, ${candidate.generation},
       ${candidate.snapshotVersion}

@@ -55,10 +55,10 @@ export type TerminalSummary = {
 }
 
 export type HostCancellation = {
-  schema_version: 1
+  schema_version: 2
   work_id: string
   capability_token: string
-  target_work_id: string
+  target_work_ids: string[]
   repository: string
   base_branch: string
 }
@@ -82,7 +82,9 @@ export type HostRecoveryResult = {
 export type HostCancellationRecord = {
   workId: string
   fingerprint: string
-  targetWorkId: string
+  targetWorkIds: string[]
+  // Read compatibility for durable schema-v1 host ledgers.
+  targetWorkId?: string
   state: "reserved" | "requested" | "already_terminal"
   updatedAt: string
 }

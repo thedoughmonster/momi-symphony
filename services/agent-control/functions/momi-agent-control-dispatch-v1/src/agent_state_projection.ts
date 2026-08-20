@@ -32,7 +32,8 @@ export async function reconcileAgentState(dispatchId: string): Promise<AgentStat
   }
   const stateIds = new Set(catalogue.map((label) => label.id))
   const desiredLabel = byName.get(desired)!
-  const labelIds = issue.labelRefs.filter((label) => !stateIds.has(label.id))
+  const labelIds = issue.labelRefs.filter((label) =>
+    !stateIds.has(label.id) && label.name !== "has-run")
     .map((label) => label.id)
   labelIds.push(desiredLabel.id)
   const sorted = [...new Set(labelIds)].sort()

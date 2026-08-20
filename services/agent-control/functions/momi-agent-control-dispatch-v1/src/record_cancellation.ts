@@ -7,7 +7,7 @@ export async function recordCancellation(
 ): Promise<boolean> {
   const sql = getDatabase()
   const rows = await sql<{ recorded: boolean }[]>`
-    select momi_agent_ops.record_cancellation_v1(
+    select momi_agent_ops.record_cancellation_v2(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${result.cancellation_state}
     ) as recorded

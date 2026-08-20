@@ -19,12 +19,20 @@ test("execute-run owns validated merge and development release", () => {
   assert.match(instruction, /draft PR/)
   assert.match(instruction, /required checks and feedback resolution/)
   assert.match(instruction, /repository-authorized development release/)
-  assert.match(instruction, /durable proof that execute-run was added/)
+  assert.match(instruction, /durable proof that execute-run was selected/)
   assert.match(instruction, /When direct children exist/)
   assert.match(instruction, /Durable dispatch: work/)
   assert.match(instruction, /absence must not make the issue unready/)
   assert.match(instruction, /Never invoke Symphony/)
   assert.match(instruction, /separate explicit approval/)
+})
+
+test("scheduler escalated validation is durable execution policy", () => {
+  const instruction = buildCodexInstruction({ ...baseWork,
+    action: "execute-run", validation_profile: "escalated" } as ClaimedDispatch)
+  assert.match(instruction, /escalated validation profile/)
+  assert.match(instruction, /cannot be resolved exactly, report unready/)
+  assert.match(instruction, /"validation_profile":"escalated"/)
 })
 
 test("cancel-run never creates implementation work", () => {
@@ -45,7 +53,7 @@ test("each non-execution action has a distinct bounded route", () => {
   for (const [action, expected] of expectations) {
     const instruction = buildCodexInstruction({ ...baseWork, action } as ClaimedDispatch)
     assert.match(instruction, expected)
-    assert.match(instruction, new RegExp(`durable proof that ${action} was added`))
+    assert.match(instruction, new RegExp(`durable proof that ${action} was selected`))
     assert.match(instruction, /Never invoke Symphony/)
     assert.doesNotMatch(instruction, /draft PR/)
   }

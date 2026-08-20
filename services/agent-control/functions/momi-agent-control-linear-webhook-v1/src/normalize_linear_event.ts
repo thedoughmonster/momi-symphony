@@ -1,6 +1,6 @@
 import type { JSONValue } from "postgres"
 
-import { AGENT_ACTIONS } from "../../../src/actions.ts"
+import { LINEAR_ACTION_LABELS } from "../../../src/actions.ts"
 import type { NormalizedLinearEvent } from "./types.ts"
 
 export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent | null {
@@ -29,6 +29,8 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     ? issueValue as Record<string, unknown> : {}
   const labelsChanged = Object.prototype.hasOwnProperty.call(updated, "labels") ||
     Object.prototype.hasOwnProperty.call(updated, "labelIds")
+  const stateChanged = Object.prototype.hasOwnProperty.call(updated, "state") ||
+    Object.prototype.hasOwnProperty.call(updated, "stateId")
   const names = (candidate: unknown): string[] => {
     if (!Array.isArray(candidate)) return []
     return [...new Set(candidate.flatMap((label) => {
@@ -51,7 +53,7 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     : [...new Set(beforeIds.flatMap((id) => labelNamesById.get(id) ?? []))].sort()
   const after = labelsChanged ? names(data.labels) : []
   const usesIds = Object.prototype.hasOwnProperty.call(updated, "labelIds")
-  const addedActions = labelsChanged ? AGENT_ACTIONS.filter((action) => {
+  const addedActions = labelsChanged ? LINEAR_ACTION_LABELS.filter((action) => {
     const labelId = labelObjects.find((label) => label.name === action)?.id
     return after.includes(action) && (usesIds
       ? typeof labelId === "string" && !beforeIds.includes(labelId)
@@ -60,6 +62,24 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
   const text = (candidate: unknown) => typeof candidate === "string" ? candidate : null
   const number = (candidate: unknown) => typeof candidate === "number" ? candidate : null
   const eventType = text(payload.type)
+  const stateValue = data.state
+  const state = stateValue && typeof stateValue === "object" && !Array.isArray(stateValue)
+    ? stateValue as Record<string, unknown> : {}
+  const priorStateValue = updated.state
+  const priorState = priorStateValue && typeof priorStateValue === "object" &&
+      !Array.isArray(priorStateValue)
+    ? priorStateValue as Record<string, unknown> : {}
+  const nativeCanceled = eventType === "Issue" && text(payload.action) === "update" &&
+    stateChanged && (text(state.type)?.toLowerCase() === "canceled" ||
+      text(state.name)?.toLowerCase() === "canceled")
+  const changedFields: NormalizedLinearEvent["changedFields"] = {}
+  if (labelsChanged) changedFields.labels = { before, after }
+  if (stateChanged) changedFields.state = {
+    beforeId: text(updated.stateId) ?? text(priorState.id),
+    afterId: text(data.stateId) ?? text(state.id),
+    afterName: text(state.name),
+    afterType: text(state.type),
+  }
   const decisionIssueId = eventType === "Issue" ? text(data.id)
     : eventType === "Comment" ? text(data.issueId) ?? text(issue.id) : null
   return {
@@ -75,7 +95,7 @@ export function normalizeLinearEvent(rawBody: Uint8Array): NormalizedLinearEvent
     projectName: text(data.projectName) ?? text(project.name),
     parentIssueId: text(data.parentId) ?? text(parent.id),
     decisionIssueId,
-    action: addedActions.length === 1 ? addedActions[0] : null,
-    changedFields: labelsChanged ? { labels: { before, after } } : {},
+    action: nativeCanceled ? "cancel-run" : addedActions.length === 1 ? addedActions[0] : null,
+    changedFields,
   }
 }
