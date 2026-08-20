@@ -2,7 +2,8 @@ import type { Sql } from "postgres"
 
 import { getDatabase } from "../../../src/database.ts"
 import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSION,
-  requiresFreshReviewer, selectReviewProfile, type ReviewReceipt } from "../../../src/independent_review.ts"
+  requiresFreshReviewer, selectReviewProfile, type ReviewReceipt,
+  type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
@@ -17,7 +18,9 @@ type CreatedAttempt = { disposition: string; review_attempt_id: string | null;
 type ReviewRoute = { url: string; issueId: string; issueIdentifier: string;
   issueUrl: string; projectId: string; projectName: string; activeStates: string[] }
 type PriorReview = { review_attempt_id: string; head_sha: string; profile: "low" | "standard" | "high";
-  policy_version: string; reviewer_thread_id: string; findings: Array<Record<string, unknown>> }
+  policy_version: string; reviewer_dispatch_id: string; reviewer_thread_id: string;
+  repository: string; pull_request_number: number; base_sha: string; rules_fingerprint: string;
+  risk_dimensions: ReviewRiskDimension[]; findings: Array<Record<string, unknown>> }
 
 export async function processReviewRequest(input: ReviewRequestInput,
   sql: Sql = getDatabase(), github = new GitHubReviewGateway(),
@@ -37,22 +40,35 @@ export async function processReviewRequest(input: ReviewRequestInput,
     github.loadApplicableRules(input.repository, subject.headSha, subject.changedPaths),
     github.loadHeadChecks(input.repository, subject.headSha),
   ])
+  const rulesFingerprint = stableFingerprint(applicableRules)
   const prior = await priorChangesRequestedReview(sql, input.work_id)
   let reverificationOf: string | null = null
   let reviewChangedPaths = subject.changedPaths
   let reviewDiffArtifactRef = subject.diffArtifactRef
   let unresolvedFindings: Array<{ id: string; path: string; line: number | null;
     required_outcome: string }> = []
+  let correctionRiskDimensions = subject.riskDimensions
+  let reviewWorkspaceId: string | null = null
   if (prior) {
-    const changedPaths = await github.compareChangedPaths(input.repository,
+    const delta = await github.loadCorrectionDelta(input.repository,
       prior.head_sha, subject.headSha)
-    const findingPaths = prior.findings.map((finding) => String(finding.path ?? ""))
     if (!requiresFreshReviewer({ previousProfile: prior.profile, nextProfile: profile,
       priorReviewerAvailable: Boolean(prior.reviewer_thread_id),
       policyChanged: prior.policy_version !== REVIEW_POLICY_VERSION,
-      changedPaths, findingPaths })) {
+      subjectChanged: prior.repository !== subject.repository ||
+        Number(prior.pull_request_number) !== subject.pullRequestNumber ||
+        prior.base_sha !== subject.baseSha,
+      rulesChanged: prior.rules_fingerprint !== rulesFingerprint,
+      changedPaths: delta.changedPaths,
+      findings: prior.findings.map((finding) => ({ path: String(finding.path ?? ""),
+        line: Number.isSafeInteger(finding.line) ? Number(finding.line) : null })),
+      changedHunks: delta.changedHunks,
+      previousRiskDimensions: prior.risk_dimensions,
+      correctionRiskDimensions: delta.riskDimensions })) {
       reverificationOf = prior.review_attempt_id
-      reviewChangedPaths = changedPaths
+      reviewChangedPaths = delta.changedPaths
+      correctionRiskDimensions = delta.riskDimensions
+      reviewWorkspaceId = prior.reviewer_dispatch_id
       reviewDiffArtifactRef = `https://api.github.com/repos/${input.repository}/compare/${prior.head_sha}...${subject.headSha}`
       unresolvedFindings = prior.findings.map((finding) => ({ id: String(finding.id),
         path: String(finding.path), line: Number.isSafeInteger(finding.line)
@@ -66,7 +82,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
     profile, policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: issue.identifier, title: issue.title,
-    required_outcome: issue.description ?? "" },
+    required_outcome: boundedRequiredOutcome(issue.description) },
   applicable_rules: applicableRules,
   changed_paths: reviewChangedPaths, diff_artifact_ref: reviewDiffArtifactRef, ci: headCi,
   unresolved_findings: unresolvedFindings })
@@ -82,6 +98,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
       ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha}, ${profile},
       ${REVIEW_POLICY_VERSION}, ${packetFingerprint}, ${reviewDiffArtifactRef},
+      ${rulesFingerprint}, ${subject.riskDimensions}, ${correctionRiskDimensions},
       ${reverificationOf}::uuid, 4
     )
   `
@@ -122,6 +139,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
       context_fingerprint: stableFingerprint(exactPacket), policy_version: REVIEW_POLICY_VERSION,
       budget: reviewBudget(profile), runtime_role: "independent_reviewer",
       ...(attempt.reviewer_thread_id ? { review_thread_id: attempt.reviewer_thread_id } : {}),
+      review_workspace_id: reviewWorkspaceId ?? attempt.reviewer_dispatch_id,
       review_subject: { implementation_dispatch_id: input.work_id,
         pull_request_number: subject.pullRequestNumber, head_sha: subject.headSha,
         base_sha: subject.baseSha, generation: attempt.generation, profile,
@@ -157,6 +175,8 @@ export async function processMergePreflight(input: MergePreflightInput,
   const subject = await github.loadSubject(input.repository, input.pull_request_number)
   const facts = await github.loadMergeFacts(input.repository, input.base_branch,
     input.pull_request_number, subject.headSha)
+  if (facts.baseHeadSha !== subject.baseSha) return { ok: true, eligible: false,
+    reason: "base_branch_advanced", head_sha: subject.headSha, base_sha: subject.baseSha }
   const rows = await sql<Array<Record<string, unknown>>>`
     select work.work_status, work.cancellation_requested_at, work.cancelled_at,
       work.codex_thread_id as implementation_thread_id,
@@ -244,9 +264,9 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
   const terminal = await sql<{ state: string }[]>`
     select state from momi_agent_ops.review_attempts
     where reviewer_dispatch_id = ${input.reviewer_dispatch_id}::uuid`
-  if (terminal[0]?.state === "canceled") {
+  if (["canceled", "stale", "superseded"].includes(terminal[0]?.state ?? "")) {
     await reconcileAgentState(subject.implementation_dispatch_id)
-    return { ok: true, disposition: "canceled" }
+    return { ok: true, disposition: terminal[0]!.state }
   }
   const accepted = result.result === "accepted"
   await github.publishReviewCheck(repository, subject.head_sha, accepted,
@@ -310,7 +330,7 @@ function reviewerPrompt(packet: Record<string, unknown>, profile: string,
   stable: string; volatile: string } {
   return { stable: [
     reverification
-      ? "Continue only as the same independent reviewer for a mechanically bounded finding correction."
+      ? "Review only the mechanically bounded finding correction; the host may use same-thread re-verification or fresh isolation recovery."
       : "Act only as a fresh independent substantive pull-request reviewer.",
     "Do not edit files, push, merge, release, change policy, or invoke Symphony.",
     "Inspect only the exact revision-bound packet and narrowly necessary referenced files.",
@@ -333,10 +353,20 @@ async function priorChangesRequestedReview(sql: Sql,
   dispatchId: string): Promise<PriorReview | null> {
   const rows = await sql<PriorReview[]>`
     select review_attempt_id::text, head_sha, profile, policy_version,
-      reviewer_thread_id, findings
+      reviewer_dispatch_id::text, reviewer_thread_id, repository, pull_request_number,
+      base_sha, rules_fingerprint, risk_dimensions, findings
     from momi_agent_ops.review_attempts
     where implementation_dispatch_id = ${dispatchId}::uuid
       and state = 'changes_requested' and reviewer_thread_id is not null
     order by generation desc limit 1`
   return rows[0] ?? null
+}
+
+function boundedRequiredOutcome(description: string | null): string {
+  if (!description) return "Implement the named issue acceptance criteria."
+  const appendix = description.indexOf("## Authoritative owner amendment")
+  const outcomeEnd = description.indexOf("## Source decisions")
+  const outcome = description.slice(0, outcomeEnd > 0 ? outcomeEnd : Math.min(description.length, 1200))
+  const mandate = appendix >= 0 ? description.slice(appendix) : ""
+  return `${outcome.trim()}\n\n${mandate.trim()}`.slice(0, 4_800)
 }

@@ -1,4 +1,5 @@
-import { REVIEW_CHECK_NAME } from "../../../src/independent_review.ts"
+import { REVIEW_CHECK_NAME, reviewRiskDimensions,
+  type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 
 export type GitHubReviewSubject = {
@@ -9,10 +10,16 @@ export type GitHubReviewSubject = {
   headSha: string
   baseSha: string
   changedPaths: string[]
+  riskDimensions: ReviewRiskDimension[]
   diffArtifactRef: string
 }
 
+export type GitHubCorrectionDelta = { changedPaths: string[];
+  changedHunks: Array<{ path: string; old_start: number; old_end: number }>;
+  riskDimensions: ReviewRiskDimension[] }
+
 export type GitHubMergeFacts = {
+  baseHeadSha: string
   requiredCi: { headSha: string; conclusion: "success" | "pending" | "failure" | "unknown" }
   reviewCheck: { name: string; headSha: string; conclusion: "success" | "pending" | "failure" | "unknown" }
   reviewCheckRequired: boolean
@@ -24,9 +31,16 @@ export type GitHubMergeFacts = {
 export class GitHubReviewGateway {
   private readonly token: string
   private readonly fetchImpl: typeof fetch
-  constructor(fetchImpl: typeof fetch = fetch, token = Deno.env.get("MOMI_GITHUB_REVIEW_TOKEN")?.trim() ?? "") {
-    if (!token) throw new Error("github_review_credential_unconfigured")
-    this.token = token; this.fetchImpl = fetchImpl
+  private readonly publisher: string
+  private readonly appId: number
+  constructor(fetchImpl: typeof fetch = fetch,
+    token = Deno.env.get("MOMI_GITHUB_REVIEW_TOKEN")?.trim() ?? "",
+    publisher = Deno.env.get("MOMI_GITHUB_REVIEW_PUBLISHER")?.trim() ?? "",
+    appId = Number(Deno.env.get("MOMI_GITHUB_REVIEW_APP_ID")?.trim() ?? "")) {
+    if (!token || !publisher || !Number.isSafeInteger(appId) || appId < 1) {
+      throw new Error("github_review_credential_unconfigured")
+    }
+    this.token = token; this.fetchImpl = fetchImpl; this.publisher = publisher; this.appId = appId
   }
 
   async loadSubject(repository: string, pullRequestNumber: number): Promise<GitHubReviewSubject> {
@@ -51,16 +65,21 @@ export class GitHubReviewGateway {
     if (changedPaths.length === 0 || changedPaths.some((path) => !path)) {
       throw new Error("review_diff_empty_or_malformed")
     }
+    const riskDimensions = reviewRiskDimensions(files.map((file) => ({
+      path: text(file.filename), patch: typeof file.patch === "string" ? file.patch : null,
+    })))
     return { repository, pullRequestNumber, state: pr.state as "open" | "closed",
-      baseBranch, headSha, baseSha, changedPaths,
+      baseBranch, headSha, baseSha, changedPaths, riskDimensions,
       diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${baseSha}...${headSha}` }
   }
 
   async loadMergeFacts(repository: string, baseBranch: string,
     pullRequestNumber: number, headSha: string): Promise<GitHubMergeFacts> {
-    const [checks, statuses, protection, reviews, threads, rulesetBypass] = await Promise.all([
+    const [checks, statuses, branch, protection, reviews, threads, rulesetBypass] = await Promise.all([
       this.request<Record<string, unknown>>(`/repos/${repository}/commits/${headSha}/check-runs`),
       this.request<Array<Record<string, unknown>>>(`/repos/${repository}/commits/${headSha}/statuses`),
+      this.request<Record<string, unknown>>(
+        `/repos/${repository}/branches/${encodeURIComponent(baseBranch)}`),
       this.request<Record<string, unknown>>(
         `/repos/${repository}/branches/${encodeURIComponent(baseBranch)}/protection`),
       this.loadReviews(repository, pullRequestNumber),
@@ -68,14 +87,17 @@ export class GitHubReviewGateway {
       this.loadRulesetBypass(repository).catch(() => null),
     ])
     const runs = Array.isArray(checks.check_runs) ? checks.check_runs as Array<Record<string, unknown>> : []
-    const reviewStatuses = statuses.filter((status) => status.context === REVIEW_CHECK_NAME)
-    const reviewCheck = conclusion([...runs.filter((run) => run.name === REVIEW_CHECK_NAME),
+    const reviewStatuses = statuses.filter((status) => status.context === REVIEW_CHECK_NAME &&
+      text(object(status.creator).login) === this.publisher)
+    const reviewCheck = conclusion([...runs.filter((run) => run.name === REVIEW_CHECK_NAME &&
+      Number(object(run.app).id) === this.appId),
       ...reviewStatuses])
     const required = object(protection.required_status_checks)
+    const requiredChecks = Array.isArray(required.checks)
+      ? required.checks as Array<Record<string, unknown>> : []
     const requiredNames = [
       ...(Array.isArray(required.contexts) ? required.contexts : []),
-      ...(Array.isArray(required.checks) ? (required.checks as Array<Record<string, unknown>>)
-        .map((check) => check.context) : []),
+      ...requiredChecks.map((check) => check.context),
     ]
     const requiredCiNames = [...new Set(requiredNames.map(String))]
       .filter((name) => name !== REVIEW_CHECK_NAME)
@@ -87,10 +109,13 @@ export class GitHubReviewGateway {
       const login = text(object(review.user).login)
       if (login) latestReviewByAuthor.set(login, String(review.state ?? "").toUpperCase())
     }
-    return { requiredCi: { headSha,
+    const baseHeadSha = text(object(branch.commit).sha)
+    if (!/^[0-9a-f]{40}$/.test(baseHeadSha)) throw new Error("github_base_branch_malformed")
+    return { baseHeadSha, requiredCi: { headSha,
       conclusion: requiredConclusion(requiredCiNames, runs, statuses) },
       reviewCheck: { name: REVIEW_CHECK_NAME, headSha, conclusion: reviewCheck },
-      reviewCheckRequired: requiredNames.includes(REVIEW_CHECK_NAME),
+      reviewCheckRequired: required.strict === true && requiredChecks.some((check) =>
+        check.context === REVIEW_CHECK_NAME && Number(check.app_id) === this.appId),
       bypassPossible: object(protection.allow_force_pushes).enabled === true ||
         object(protection.allow_deletions).enabled === true || enforceAdmins.enabled !== true ||
         hasBypassActors(bypassAllowances) || rulesetBypass !== false,
@@ -101,6 +126,11 @@ export class GitHubReviewGateway {
 
   async compareChangedPaths(repository: string, previousSha: string,
     nextSha: string): Promise<string[]> {
+    return (await this.loadCorrectionDelta(repository, previousSha, nextSha)).changedPaths
+  }
+
+  async loadCorrectionDelta(repository: string, previousSha: string,
+    nextSha: string): Promise<GitHubCorrectionDelta> {
     if (![previousSha, nextSha].every((sha) => /^[0-9a-f]{40}$/.test(sha))) {
       throw new Error("review_compare_revision_invalid")
     }
@@ -112,7 +142,21 @@ export class GitHubReviewGateway {
     if (paths.length === 0 || paths.length > 300 || paths.some((path) => !path)) {
       throw new Error("review_compare_unbounded_or_empty")
     }
-    return paths
+    const changedHunks: GitHubCorrectionDelta["changedHunks"] = []
+    for (const file of files) {
+      const path = text(file.filename)
+      if (typeof file.patch !== "string") return { changedPaths: paths, changedHunks: [],
+        riskDimensions: ["ambiguous"] }
+      for (const match of file.patch.matchAll(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/gm)) {
+        const start = Number(match[1]); const count = Number(match[2] ?? 1)
+        changedHunks.push({ path, old_start: start, old_end: start + Math.max(count, 1) - 1 })
+      }
+    }
+    if (changedHunks.length === 0) return { changedPaths: paths, changedHunks,
+      riskDimensions: ["ambiguous"] }
+    return { changedPaths: paths, changedHunks,
+      riskDimensions: reviewRiskDimensions(files.map((file) => ({ path: text(file.filename),
+        patch: String(file.patch) }))) }
   }
 
   async loadHeadChecks(repository: string, headSha: string): Promise<Array<{

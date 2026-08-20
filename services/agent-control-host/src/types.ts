@@ -22,6 +22,7 @@ export type HostDispatch = {
   runtime_role?: "independent_reviewer"
   review_subject?: HostReviewSubject
   review_thread_id?: string
+  review_workspace_id?: string
 }
 
 export type HostReviewSubject = {
@@ -149,6 +150,8 @@ export type HostRecord = {
   runtimeRole?: "implementation" | "independent_reviewer"
   reviewSubject?: HostReviewSubject
   reviewResult?: HostReviewResult | null
+  reviewWorkspaceId?: string
+  reviewWorkspaceCleanedAt?: string | null
   updatedAt: string
 }
 

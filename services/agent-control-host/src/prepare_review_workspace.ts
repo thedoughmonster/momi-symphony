@@ -13,11 +13,11 @@ export async function prepareReviewWorkspace(
   config: HostConfiguration,
   input: HostDispatch,
 ): Promise<string> {
-  if (input.schema_version !== 4 || !input.review_subject) {
+  if (input.schema_version !== 4 || !input.review_subject || !input.review_workspace_id) {
     throw new Error("review_workspace_subject_missing")
   }
   const root = join(tmpdir(), "momi-agent-control-reviews")
-  const workspace = join(root, input.work_id)
+  const workspace = join(root, input.review_workspace_id)
   await mkdir(root, { recursive: true, mode: 0o700 })
   const exists = await stat(workspace).then(() => true, () => false)
   if (!exists) {

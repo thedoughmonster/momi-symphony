@@ -3,6 +3,9 @@ export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
 
 export type ReviewProfile = "low" | "standard" | "high"
 export type ReviewResult = "accepted" | "changes_requested" | "inconclusive" | "escalate"
+export type ReviewRiskDimension = "architecture" | "security_auth" | "public_contract" |
+  "schema_migration" | "concurrency" | "scheduler_recovery_cancellation" |
+  "release_credential" | "runtime_network" | "general" | "ambiguous"
 
 export type ReviewFinding = {
   id: string
@@ -69,6 +72,7 @@ const highRisk = [
   /^\.github\//, /^supabase\/migrations\//, /(?:^|\/)(?:auth|security|credential|secret)/i,
   /(?:^|\/)(?:scheduler|recovery|cancellation|migration|database|persistence|network|runtime)/i,
   /^services\/agent-control(?:-host)?\//, /(?:^|\/)contracts?\//,
+  /(?:^|\/)AGENTS(?:\.override)?\.md$/,
 ]
 const lowRisk = [/\.md$/i, /(?:^|\/)docs?\//i]
 
@@ -78,6 +82,43 @@ export function selectReviewProfile(paths: string[]): ReviewProfile {
   if (paths.some((path) => highRisk.some((pattern) => pattern.test(path)))) return "high"
   if (paths.every((path) => lowRisk.some((pattern) => pattern.test(path)))) return "low"
   return "standard"
+}
+
+/** Deterministic material-risk dimensions; missing patch authority promotes to ambiguous. */
+export function reviewRiskDimensions(files: Array<{ path: string; patch?: string | null }> |
+  string[]): ReviewRiskDimension[] {
+  const normalized = files.map((file) => typeof file === "string"
+    ? { path: file, patch: "" } : file)
+  if (normalized.length === 0 || normalized.some((file) =>
+    !validRepositoryPath(file.path) || file.patch === null)) return ["ambiguous"]
+  const dimensions = new Set<ReviewRiskDimension>()
+  for (const file of normalized) {
+    const evidence = `${file.path}\n${file.patch ?? ""}`
+    if (/agent-control|architecture|dispatch|lifecycle|review|authority/i.test(evidence)) {
+      dimensions.add("architecture")
+    }
+    if (/auth|security|permission|token|secret|identity|attest/i.test(evidence)) {
+      dimensions.add("security_auth")
+    }
+    if (/contract|schema\.json|public|api\b|webhook/i.test(evidence)) {
+      dimensions.add("public_contract")
+    }
+    if (/migration|schema|database|postgres|sql\b|momi_agent_ops/i.test(evidence)) {
+      dimensions.add("schema_migration")
+    }
+    if (/concurr|lock|race|atomic|lease|fenc/i.test(evidence)) dimensions.add("concurrency")
+    if (/scheduler|recovery|recover|cancel|stale|supersed/i.test(evidence)) {
+      dimensions.add("scheduler_recovery_cancellation")
+    }
+    if (/release|deploy|credential|branch.protection|status.check/i.test(evidence)) {
+      dimensions.add("release_credential")
+    }
+    if (/runtime|network|fetch\b|host|sandbox|workspace|thread|turn/i.test(evidence)) {
+      dimensions.add("runtime_network")
+    }
+  }
+  if (dimensions.size === 0) dimensions.add("general")
+  return [...dimensions].sort()
 }
 
 export function validateReviewReceipt(value: unknown, subject: ReviewSubject,
@@ -151,13 +192,25 @@ export function requiresFreshReviewer(input: {
   nextProfile: ReviewProfile
   priorReviewerAvailable: boolean
   policyChanged: boolean
+  subjectChanged: boolean
+  rulesChanged: boolean
   changedPaths: string[]
-  findingPaths: string[]
+  findings: Array<{ path: string; line: number | null }>
+  changedHunks: Array<{ path: string; old_start: number; old_end: number }>
+  previousRiskDimensions: ReviewRiskDimension[]
+  correctionRiskDimensions: ReviewRiskDimension[]
 }): boolean {
   if (!input.priorReviewerAvailable || input.policyChanged ||
-    input.previousProfile !== input.nextProfile) return true
-  const bounded = new Set(input.findingPaths)
-  return input.changedPaths.length === 0 || input.changedPaths.some((path) => !bounded.has(path))
+    input.subjectChanged || input.rulesChanged || input.previousProfile !== input.nextProfile ||
+    input.correctionRiskDimensions.includes("ambiguous") ||
+    input.correctionRiskDimensions.some((dimension) =>
+      !input.previousRiskDimensions.includes(dimension))) return true
+  const findingPaths = new Set(input.findings.map((finding) => finding.path))
+  if (input.changedPaths.length === 0 || input.changedHunks.length === 0 ||
+    input.changedPaths.some((path) => !findingPaths.has(path))) return true
+  return input.changedHunks.some((hunk) => !input.findings.some((finding) =>
+    finding.path === hunk.path && finding.line !== null &&
+    finding.line >= hunk.old_start - 3 && finding.line <= hunk.old_end + 3))
 }
 
 export function buildBoundedReviewerPacket(input: {

@@ -16,7 +16,8 @@ export function dispatchFingerprint(dispatch: HostDispatch): string {
       stable_prefix_fingerprint: dispatch.stable_prefix_fingerprint,
       context_fingerprint: dispatch.context_fingerprint,
       policy_version: dispatch.policy_version, runtime_role: dispatch.runtime_role,
-      review_subject: dispatch.review_subject, review_thread_id: dispatch.review_thread_id }
+      review_subject: dispatch.review_subject, review_thread_id: dispatch.review_thread_id,
+      review_workspace_id: dispatch.review_workspace_id }
     : dispatch.schema_version === 3
     ? { ...common, interaction_mode: dispatch.interaction_mode,
       thread_name: dispatch.thread_name, budget: dispatch.budget,

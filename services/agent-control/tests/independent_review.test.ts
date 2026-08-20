@@ -82,8 +82,11 @@ test("exact-head merge reduction fails closed for every missing authority", () =
 
 test("same reviewer may verify a path-and-policy bounded correction", () => {
   const common = { previousProfile: "high" as const, nextProfile: "high" as const,
-    priorReviewerAvailable: true, policyChanged: false,
-    findingPaths: ["src/a.ts"] }
+    priorReviewerAvailable: true, policyChanged: false, subjectChanged: false,
+    rulesChanged: false, findings: [{ path: "src/a.ts", line: 10 }],
+    changedHunks: [{ path: "src/a.ts", old_start: 9, old_end: 11 }],
+    previousRiskDimensions: ["architecture" as const],
+    correctionRiskDimensions: ["architecture" as const] }
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"] }), false)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts", "src/b.ts"] }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
@@ -92,6 +95,16 @@ test("same reviewer may verify a path-and-policy bounded correction", () => {
     nextProfile: "standard" }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
     priorReviewerAvailable: false }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    rulesChanged: true }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    subjectChanged: true }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    correctionRiskDimensions: ["security_auth"] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    correctionRiskDimensions: ["ambiguous"] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    changedHunks: [{ path: "src/a.ts", old_start: 100, old_end: 101 }] }), true)
 })
 
 test("review packets include only exact bounded sources", () => {

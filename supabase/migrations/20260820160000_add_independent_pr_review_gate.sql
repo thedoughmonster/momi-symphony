@@ -53,6 +53,11 @@ create table momi_agent_ops.review_attempts (
   reviewer_turn_id text,
   packet_fingerprint text not null check (packet_fingerprint ~ '^fnv1a64:[0-9a-f]{16}$'),
   packet_artifact_ref text not null check (length(packet_artifact_ref) between 1 and 500),
+  rules_fingerprint text not null check (rules_fingerprint ~ '^fnv1a64:[0-9a-f]{16}$'),
+  risk_dimensions text[] not null check (cardinality(risk_dimensions) between 1 and 16),
+  correction_risk_dimensions text[] not null check (
+    cardinality(correction_risk_dimensions) between 1 and 16
+  ),
   result text check (result is null or result in (
     'accepted', 'changes_requested', 'inconclusive', 'escalate'
   )),
@@ -74,6 +79,7 @@ create table momi_agent_ops.review_attempts (
   terminal_at timestamptz,
   stale_at timestamptz,
   canceled_at timestamptz,
+  interruption_confirmed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (implementation_dispatch_id, generation)
@@ -109,6 +115,9 @@ create function momi_agent_ops.create_review_attempt_v1(
   p_policy_version text,
   p_packet_fingerprint text,
   p_packet_artifact_ref text,
+  p_rules_fingerprint text,
+  p_risk_dimensions text[],
+  p_correction_risk_dimensions text[],
   p_reverification_of uuid,
   p_review_limit integer
 ) returns table (
@@ -130,6 +139,9 @@ begin
     or p_base_branch !~ '^[A-Za-z0-9._/-]+$' or p_pull_request_number < 1
     or p_head_sha !~ '^[0-9a-f]{40}$' or p_base_sha !~ '^[0-9a-f]{40}$'
     or p_packet_fingerprint !~ '^fnv1a64:[0-9a-f]{16}$'
+    or p_rules_fingerprint !~ '^fnv1a64:[0-9a-f]{16}$'
+    or cardinality(p_risk_dimensions) not between 1 and 16
+    or cardinality(p_correction_risk_dimensions) not between 1 and 16
     or length(p_packet_artifact_ref) not between 1 and 500
     or p_review_limit not between 1 and 32 then
     raise exception 'review_attempt_invalid' using errcode = '22023';
@@ -187,6 +199,12 @@ begin
   update momi_agent_ops.review_attempts attempt set state = 'superseded', terminal_at = now(),
     updated_at = now() where attempt.implementation_dispatch_id = p_dispatch_id
     and attempt.state in ('reserved', 'running');
+  if exists (select 1 from momi_agent_ops.review_attempts attempt
+    where attempt.implementation_dispatch_id = p_dispatch_id
+      and attempt.state = 'superseded' and attempt.reviewer_thread_id is not null
+      and attempt.interruption_confirmed_at is null) then
+    disposition := 'reviewer_interruption_pending'; return next; return;
+  end if;
   select count(*) into active_reviews from momi_agent_ops.review_attempts attempt
   where attempt.state in ('reserved', 'running');
   if active_reviews >= p_review_limit then
@@ -202,6 +220,10 @@ begin
       and source.state = 'changes_requested'
       and source.reviewer_thread_id is not null
       and source.profile = p_profile and source.policy_version = p_policy_version
+      and source.repository = p_repository
+      and source.pull_request_number = p_pull_request_number
+      and source.base_sha = p_base_sha
+      and source.rules_fingerprint = p_rules_fingerprint
       and source.head_sha <> p_head_sha;
     if not found then disposition := 'reverification_refused'; return next; return; end if;
     reviewer_thread_id := prior_reviewer.reviewer_thread_id;
@@ -210,12 +232,14 @@ begin
   insert into momi_agent_ops.review_attempts (
     implementation_dispatch_id, reverification_of, generation, repository, base_branch, pull_request_number,
     head_sha, base_sha, profile, policy_version, reviewer_capability_token_hash,
-    packet_fingerprint, packet_artifact_ref
+    packet_fingerprint, packet_artifact_ref, rules_fingerprint,
+    risk_dimensions, correction_risk_dimensions
   ) values (
     p_dispatch_id, p_reverification_of, next_generation, p_repository, p_base_branch, p_pull_request_number,
     p_head_sha, p_base_sha, p_profile, p_policy_version,
     encode(extensions.digest(convert_to(token::text, 'UTF8'), 'sha256'), 'hex'),
-    p_packet_fingerprint, p_packet_artifact_ref
+    p_packet_fingerprint, p_packet_artifact_ref, p_rules_fingerprint,
+    p_risk_dimensions, p_correction_risk_dimensions
   ) returning review_attempts.review_attempt_id, review_attempts.reviewer_dispatch_id
     into review_attempt_id, reviewer_dispatch_id;
   update momi_agent_ops.run_records record set review_state = 'pending',
@@ -301,7 +325,15 @@ begin
     and review.generation = p_generation and review.profile = p_profile
     and review.policy_version = p_policy_version for update;
   if not found then return false; end if;
-  if attempt.state <> 'running' then
+  if attempt.state in ('stale', 'superseded', 'canceled') then
+    update momi_agent_ops.review_attempts review set
+      result = p_result, findings = p_findings,
+      result_fingerprint = p_result_fingerprint, result_artifact_ref = p_result_artifact_ref,
+      telemetry = p_telemetry, terminal_at = coalesce(review.terminal_at, now()),
+      updated_at = now()
+    where review.review_attempt_id = attempt.review_attempt_id;
+    return true;
+  elsif attempt.state <> 'running' then
     return attempt.result = p_result
       and attempt.result_fingerprint = p_result_fingerprint
       and attempt.result_artifact_ref = p_result_artifact_ref
@@ -519,6 +551,79 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.record_review_interruption_v1(
+  p_dispatch_id uuid,
+  p_capability_token uuid,
+  p_thread_id text,
+  p_turn_id text,
+  p_reviewer_dispatch_id uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+begin
+  update momi_agent_ops.review_attempts review set
+    interruption_confirmed_at = coalesce(review.interruption_confirmed_at, now()),
+    updated_at = now()
+  where review.reviewer_dispatch_id = p_reviewer_dispatch_id
+    and review.implementation_dispatch_id = p_dispatch_id
+    and review.state in ('superseded', 'canceled')
+    and exists (select 1 from momi_agent_ops.dispatches work
+      where work.dispatch_id = p_dispatch_id
+        and work.host_callback_token_hash = encode(extensions.digest(
+          convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+        and work.codex_thread_id = p_thread_id and work.codex_turn_id = p_turn_id);
+  return found;
+end;
+$$;
+
+create function momi_agent_ops.record_cancellation_v3(
+  p_dispatch_id uuid, p_capability_token uuid, p_cancellation_state text
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare selected_target uuid;
+declare recorded boolean;
+begin
+  select work.target_dispatch_id into selected_target
+  from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex');
+  if not found or selected_target is null then return false; end if;
+  recorded := momi_agent_ops.record_cancellation_v2(
+    p_dispatch_id, p_capability_token, p_cancellation_state
+  );
+  if not recorded then return false; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  )
+  update momi_agent_ops.review_attempts review set state = 'canceled',
+    canceled_at = coalesce(review.canceled_at, now()),
+    terminal_at = coalesce(review.terminal_at, now()),
+    interruption_confirmed_at = now(), updated_at = now()
+  where review.implementation_dispatch_id in (
+    select owned.dispatch_id from lifecycle owned
+  ) and review.state in ('reserved', 'running');
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  )
+  update momi_agent_ops.run_records run set review_state = 'failed',
+    review_receipt_id = null, review_check_sha = null,
+    merge_preflight_sha = null, merge_preflight_base_sha = null,
+    merge_preflight_review_receipt_id = null, merge_preflight_at = null,
+    updated_at = now()
+  where run.dispatch_id in (select owned.dispatch_id from lifecycle owned)
+    and exists (select 1 from momi_agent_ops.review_attempts review
+      where review.implementation_dispatch_id = run.dispatch_id
+        and review.state = 'canceled');
+  return true;
+end;
+$$;
+
 create function momi_agent_ops.record_terminal_v5(
   p_dispatch_id uuid, p_capability_token uuid, p_thread_id text, p_turn_id text,
   p_readiness_result text, p_terminal_disposition text,
@@ -558,7 +663,8 @@ end;
 $$;
 
 revoke all on function momi_agent_ops.create_review_attempt_v1(
-  uuid, uuid, text, text, text, text, bigint, text, text, text, text, text, text, uuid, integer
+  uuid, uuid, text, text, text, text, bigint, text, text, text, text, text, text,
+  text, text[], text[], uuid, integer
 ), momi_agent_ops.record_reviewer_start_v1(uuid, uuid, text, text, text),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, integer, text, text,
@@ -571,7 +677,9 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
   momi_agent_ops.get_review_status_v1(uuid, uuid, text, text),
   momi_agent_ops.record_lifecycle_evidence_v3(
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text
-  ), momi_agent_ops.record_terminal_v5(
+  ), momi_agent_ops.record_review_interruption_v1(uuid, uuid, text, text, uuid),
+  momi_agent_ops.record_cancellation_v3(uuid, uuid, text),
+  momi_agent_ops.record_terminal_v5(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
   )
   from public, anon, authenticated, service_role;

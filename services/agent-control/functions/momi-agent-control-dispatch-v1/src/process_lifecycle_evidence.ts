@@ -1,5 +1,6 @@
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import { recordLifecycleEvidence } from "./record_lifecycle_evidence.ts"
+import { interruptSupersededReviews } from "./interrupt_superseded_reviews.ts"
 import type { LifecycleEvidenceInput } from "./types.ts"
 import { processReviewRequest } from "./review_controller.ts"
 
@@ -9,8 +10,10 @@ export async function processLifecycleEvidence(
   project: (dispatchId: string) => Promise<unknown> = reconcileAgentState,
   review: (input: import("./types.ts").ReviewRequestInput) => Promise<Record<string, unknown>> =
     processReviewRequest,
+  interrupt: (input: LifecycleEvidenceInput) => Promise<void> = interruptSupersededReviews,
 ): Promise<{ ok: true; disposition: "recorded"; review?: Record<string, unknown> }> {
   if (!await record(input)) throw new Error("lifecycle_evidence_record_refused")
+  await interrupt(input)
   await project(input.work_id)
   const reviewResult = input.phase === "validating" && input.status === "succeeded"
     ? await review({ event: "review_request", work_id: input.work_id,

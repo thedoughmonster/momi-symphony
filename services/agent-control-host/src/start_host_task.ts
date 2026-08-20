@@ -9,16 +9,19 @@ export async function startHostTask(
 ): Promise<HostAcceptance> {
   const cwd = input.schema_version === 4
     ? await reviewWorkspace(config, input) : config.workspaceRoot
+  let reusedReviewerThread = false
   if (input.schema_version === 4 && input.review_thread_id) {
-    await client.request("thread/unarchive", { threadId: input.review_thread_id })
+    reusedReviewerThread = await client.request("thread/unarchive", {
+      threadId: input.review_thread_id,
+    }).then(() => true, () => false)
   }
-  const threadId = input.schema_version === 4 && input.review_thread_id
+  const threadId = input.schema_version === 4 && input.review_thread_id && reusedReviewerThread
     ? input.review_thread_id
     : (await client.request<{ thread: { id: string } }>("thread/start", {
       cwd,
       serviceName: "momi-agent-control", threadSource: "momi_agent_control",
     })).thread.id
-  if (!(input.schema_version === 4 && input.review_thread_id)) {
+  if (!(input.schema_version === 4 && input.review_thread_id && reusedReviewerThread)) {
     await client.request("thread/name/set", { threadId, name: input.thread_name })
   }
   const turnInput: Record<string, unknown> = {
@@ -42,7 +45,8 @@ export async function startHostTask(
       runtime_role: "independent_reviewer",
       implementation_dispatch_id: input.review_subject?.implementation_dispatch_id,
       review_generation: input.review_subject?.generation,
-      review_mode: input.review_thread_id ? "bounded_reverification" : "fresh",
+      review_mode: reusedReviewerThread ? "bounded_reverification" :
+        input.review_thread_id ? "fresh_recovery" : "fresh",
     }
     turnInput.outputSchema = { type: "object", additionalProperties: false,
       required: ["result", "findings", "artifact_ref"], properties: {

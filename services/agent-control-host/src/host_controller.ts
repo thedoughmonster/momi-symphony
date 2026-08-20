@@ -1,6 +1,7 @@
 import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
 import { budgetDisposition, buildAttemptTelemetry } from "./attempt_telemetry.ts"
 import { cancelHostWork } from "./cancel_host_work.ts"
+import { cleanupReviewWorkspace } from "./cleanup_review_workspace.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
 import { extractReviewResult } from "./extract_review_result.ts"
 import { handleHostNotification } from "./handle_host_notification.ts"
@@ -69,6 +70,17 @@ export class HostController {
         ? "host_start_ambiguous" : "host_dispatch_in_progress")
     }
     try {
+      if (input.runtime_role === "independent_reviewer" && !input.review_thread_id) {
+        for (const oldReview of this.ledger.recordsForImplementation(
+          input.review_subject!.implementation_dispatch_id)) {
+          if (oldReview.workId !== input.work_id && oldReview.state === "terminal" &&
+            oldReview.callbackSent && oldReview.reviewResult?.result === "changes_requested" &&
+            oldReview.reviewWorkspaceId && !oldReview.reviewWorkspaceCleanedAt) {
+            await cleanupReviewWorkspace(this.config, oldReview)
+            await this.ledger.reviewWorkspaceCleaned(oldReview.workId)
+          }
+        }
+      }
       const started = await startHostTask(this.client, this.config, input)
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
@@ -138,7 +150,15 @@ export class HostController {
     }
   }
   private async deliverCallback(record: HostRecord): Promise<void> {
-    await this.callback(record); await this.ledger.callbackSent(record.workId)
+    if (!record.callbackSent) {
+      await this.callback(record); await this.ledger.callbackSent(record.workId)
+    }
+    if (record.runtimeRole === "independent_reviewer" &&
+      record.reviewResult?.result !== "changes_requested" &&
+      record.reviewWorkspaceId && !record.reviewWorkspaceCleanedAt) {
+      await cleanupReviewWorkspace(this.config, record)
+      await this.ledger.reviewWorkspaceCleaned(record.workId)
+    }
   }
   private scheduleCallback(record: HostRecord): void {
     if (this.callbackTimers.has(record.workId)) return

@@ -44,7 +44,9 @@
     "LINEAER_ACCESS",
     "LINEAR_API_KEY",
     "MOMI_CODEX_HOST_SECRET",
-    "MOMI_GITHUB_REVIEW_TOKEN"
+    "MOMI_GITHUB_REVIEW_TOKEN",
+    "MOMI_GITHUB_REVIEW_PUBLISHER",
+    "MOMI_GITHUB_REVIEW_APP_ID"
   ],
   "configuration": [],
   "deployment": {
@@ -104,6 +106,7 @@
       "momi_agent_ops.recover_dead_letter_dispatch_v1",
       "momi_agent_ops.record_cancellation_v1",
       "momi_agent_ops.record_cancellation_v2",
+      "momi_agent_ops.record_cancellation_v3",
       "momi_agent_ops.record_host_acceptance_v1",
       "momi_agent_ops.record_linear_writeback_v1",
       "momi_agent_ops.record_linear_writeback_v2",
@@ -113,6 +116,7 @@
       "momi_agent_ops.record_lifecycle_evidence_v1",
       "momi_agent_ops.record_lifecycle_evidence_v2",
       "momi_agent_ops.record_lifecycle_evidence_v3",
+      "momi_agent_ops.record_review_interruption_v1",
       "momi_agent_ops.create_review_attempt_v1",
       "momi_agent_ops.record_reviewer_start_v1",
       "momi_agent_ops.record_review_result_v1",

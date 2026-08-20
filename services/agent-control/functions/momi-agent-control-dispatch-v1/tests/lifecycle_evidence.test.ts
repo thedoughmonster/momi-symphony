@@ -31,9 +31,10 @@ test("a durable receipt is recorded before projection", async () => {
   const order: string[] = []
   assert.deepEqual(await processLifecycleEvidence(input,
     () => { order.push("record"); return Promise.resolve(true) },
-    () => { order.push("project"); return Promise.resolve() }),
+    () => { order.push("project"); return Promise.resolve() }, undefined,
+    () => { order.push("interrupt"); return Promise.resolve() }),
   { ok: true, disposition: "recorded" })
-  assert.deepEqual(order, ["record", "project"])
+  assert.deepEqual(order, ["record", "interrupt", "project"])
   await assert.rejects(processLifecycleEvidence(input,
     () => Promise.resolve(false), () => Promise.reject(new Error("must_not_project"))),
   /record_refused/)
@@ -46,8 +47,9 @@ test("focused validation success automatically enters independent review", async
     () => { order.push("project"); return Promise.resolve() },
     (review) => { order.push("review"); assert.equal(review.event, "review_request")
       assert.equal(review.pull_request_number, input.pull_request_number)
-      return Promise.resolve({ disposition: "accepted" }) })
-  assert.deepEqual(order, ["record", "project", "review"])
+      return Promise.resolve({ disposition: "accepted" }) },
+    () => { order.push("interrupt"); return Promise.resolve() })
+  assert.deepEqual(order, ["record", "interrupt", "project", "review"])
   assert.deepEqual(result, { ok: true, disposition: "recorded",
     review: { disposition: "accepted" } })
 })

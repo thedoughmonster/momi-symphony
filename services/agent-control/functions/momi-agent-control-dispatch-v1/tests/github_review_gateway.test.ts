@@ -22,10 +22,14 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
       { name: "CI", conclusion: "success" },
     ] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([
-      { context: "Symphony Independent Review", state: "success" },
+      { context: "Symphony Independent Review", state: "success",
+        creator: { login: "review-publisher" } },
     ])
+    if (url.endsWith("/branches/main")) return response({ commit: { sha: base } })
     if (url.endsWith("/branches/main/protection")) return response({
-      required_status_checks: { contexts: ["CI", "Symphony Independent Review"], checks: [] },
+      required_status_checks: { strict: true,
+        contexts: ["CI", "Symphony Independent Review"],
+        checks: [{ context: "Symphony Independent Review", app_id: 42 }] },
       enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false },
       allow_deletions: { enabled: false },
     })
@@ -46,7 +50,7 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
       encoding: "base64", content: btoa("service rules") })
     if (url.includes("/contents/")) return new Response("missing", { status: 404 })
     return new Response("missing", { status: 404 })
-  }, "review-token")
+  }, "review-token", "review-publisher", 42)
   const subject = await gateway.loadSubject("thedoughmonster/momi-symphony", 16)
   assert.equal(subject.headSha, head)
   assert.equal(subject.baseSha, base)
@@ -59,6 +63,7 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
     ["AGENTS.md", "services/agent-control/AGENTS.md"])
   assert.equal(rules.every((rule) => /^fnv1a64:[0-9a-f]{16}$/.test(rule.fingerprint)), true)
   const facts = await gateway.loadMergeFacts(subject.repository, "main", 16, head)
+  assert.equal(facts.baseHeadSha, base)
   assert.equal(facts.requiredCi.conclusion, "success")
   assert.equal(facts.reviewCheck.conclusion, "success")
   assert.equal(facts.reviewCheckRequired, true)
@@ -82,11 +87,12 @@ test("unknown review-thread authority remains ineligible evidence", async () => 
     const url = String(input)
     if (url.endsWith(`/commits/${head}/check-runs`)) return response({ check_runs: [] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([])
+    if (url.endsWith("/branches/main")) return response({ commit: { sha: base } })
     if (url.endsWith("/branches/main/protection")) return response({
       required_status_checks: { contexts: [] }, enforce_admins: { enabled: false } })
     if (url.includes("/pulls/16/reviews?")) return response([])
     return new Response("forbidden", { status: 403 })
-  }, "review-token")
+  }, "review-token", "review-publisher", 42)
   const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
   assert.equal(facts.authoritativeBlockingThreads, -1)
   assert.equal(facts.requiredCi.conclusion, "unknown")
@@ -101,8 +107,10 @@ test("missing required CI and enabled bypasses fail closed", async () => {
       { name: "CI", conclusion: "success" },
     ] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([
-      { context: "Symphony Independent Review", state: "success" },
+      { context: "Symphony Independent Review", state: "success",
+        creator: { login: "review-publisher" } },
     ])
+    if (url.endsWith("/branches/main")) return response({ commit: { sha: base } })
     if (url.endsWith("/branches/main/protection")) return response({
       required_status_checks: { contexts: ["CI", "lint", "Symphony Independent Review"] },
       enforce_admins: { enabled: true }, allow_force_pushes: { enabled: true },
@@ -114,7 +122,7 @@ test("missing required CI and enabled bypasses fail closed", async () => {
     } } } })
     if (url.includes("/rulesets?")) return response([])
     return new Response("missing", { status: 404 })
-  }, "review-token")
+  }, "review-token", "review-publisher", 42)
   const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
   assert.equal(facts.requiredCi.conclusion, "unknown")
   assert.equal(facts.bypassPossible, true)
@@ -129,10 +137,11 @@ test("latest same-context success replaces stale failure and bypass actors are a
     ] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([
       { id: 3, context: "Symphony Independent Review", state: "failure",
-        created_at: "2026-08-20T10:00:00Z" },
+        created_at: "2026-08-20T10:00:00Z", creator: { login: "review-publisher" } },
       { id: 4, context: "Symphony Independent Review", state: "success",
-        created_at: "2026-08-20T11:00:00Z" },
+        created_at: "2026-08-20T11:00:00Z", creator: { login: "review-publisher" } },
     ])
+    if (url.endsWith("/branches/main")) return response({ commit: { sha: base } })
     if (url.endsWith("/branches/main/protection")) return response({
       required_status_checks: { contexts: ["CI", "Symphony Independent Review"] },
       required_pull_request_reviews: { bypass_pull_request_allowances: {
@@ -146,7 +155,7 @@ test("latest same-context success replaces stale failure and bypass actors are a
     } } } })
     if (url.includes("/rulesets?")) return response([])
     return new Response("missing", { status: 404 })
-  }, "review-token")
+  }, "review-token", "review-publisher", 42)
   const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
   assert.equal(facts.requiredCi.conclusion, "success")
   assert.equal(facts.reviewCheck.conclusion, "success")

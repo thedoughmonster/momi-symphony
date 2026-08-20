@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["schema_version", "work_id", "capability_token", "issue_id", "issue_identifier", "issue_url", "project_id", "project_name", "repository", "base_branch", "active_states", "interaction_mode", "thread_name", "stable_instruction", "volatile_context", "stable_prefix_fingerprint", "context_fingerprint", "policy_version", "budget", "runtime_role", "review_subject"],
+  "required": ["schema_version", "work_id", "capability_token", "issue_id", "issue_identifier", "issue_url", "project_id", "project_name", "repository", "base_branch", "active_states", "interaction_mode", "thread_name", "stable_instruction", "volatile_context", "stable_prefix_fingerprint", "context_fingerprint", "policy_version", "budget", "runtime_role", "review_workspace_id", "review_subject"],
   "properties": {
     "schema_version": {"const": 4},
     "work_id": {"type": "string", "format": "uuid"},
@@ -23,6 +23,7 @@
     "policy_version": {"type": "string", "minLength": 1, "maxLength": 120},
     "runtime_role": {"const": "independent_reviewer"},
     "review_thread_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "review_workspace_id": {"type": "string", "format": "uuid"},
     "review_subject": {
       "type": "object",
       "required": ["implementation_dispatch_id", "pull_request_number", "head_sha", "base_sha", "generation", "profile", "policy_version"],

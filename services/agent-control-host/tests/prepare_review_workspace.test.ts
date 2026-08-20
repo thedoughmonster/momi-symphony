@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto"
 import test from "node:test"
 
 import { prepareReviewWorkspace } from "../src/prepare_review_workspace.ts"
+import { cleanupReviewWorkspace } from "../src/cleanup_review_workspace.ts"
 import type { HostDispatch } from "../src/types.ts"
 
 const run = promisify(execFile)
@@ -24,7 +25,8 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     await run("git", ["add", "subject.txt"], { cwd: repository })
     await run("git", ["commit", "-m", "first"], { cwd: repository })
     const first = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
-    const dispatch = { schema_version: 4, work_id: randomUUID(), review_subject: {
+    const dispatch = { schema_version: 4, work_id: randomUUID(),
+      review_workspace_id: randomUUID(), review_subject: {
       implementation_dispatch_id: implementationId, head_sha: first,
     } } as HostDispatch
     workspace = await prepareReviewWorkspace({ workspaceRoot: repository,
@@ -39,9 +41,13 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
       review_subject: { ...dispatch.review_subject!, head_sha: second, generation: 2 } }
     const nextWorkspace = await prepareReviewWorkspace({ workspaceRoot: repository,
       repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, updated)
-    assert.notEqual(nextWorkspace, workspace)
+    assert.equal(nextWorkspace, workspace)
     assert.equal(await readFile(join(nextWorkspace, "subject.txt"), "utf8"), "second\n")
-    await run("git", ["worktree", "remove", "--force", nextWorkspace], { cwd: repository })
+    await cleanupReviewWorkspace({ workspaceRoot: repository,
+      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, {
+      runtimeRole: "independent_reviewer", reviewWorkspaceId: dispatch.review_workspace_id,
+    })
+    assert.equal(await stat(nextWorkspace).then(() => true, () => false), false)
   } finally {
     if (workspace) await run("git", ["worktree", "remove", "--force", workspace],
       { cwd: repository }).catch(() => undefined)

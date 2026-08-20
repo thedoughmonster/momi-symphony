@@ -15,6 +15,7 @@ const dispatch: HostDispatch = { schema_version: 4,
   project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
   base_branch: "main", active_states: ["In Progress"], interaction_mode: "one_shot",
   thread_name: "MOX-260 · independent review", runtime_role: "independent_reviewer",
+  review_workspace_id: "00000000-0000-4000-8000-000000000006",
   stable_instruction: "Perform read-only independent semantic review of the exact subject only.",
   volatile_context: "Exact bounded packet with repository, PR, revisions, rules, and diff evidence.",
   stable_prefix_fingerprint: "fnv1a64:1111111111111111",
@@ -74,6 +75,23 @@ test("bounded correction reuses only the prior reviewer thread with a fresh turn
   const metadata = (requests.find((request) => request.method === "turn/start")?.params as {
     responsesapiClientMetadata: Record<string, unknown> }).responsesapiClientMetadata
   assert.equal(metadata.review_mode, "bounded_reverification")
+})
+
+test("unavailable prior reviewer starts a fresh isolated recovery thread", async () => {
+  const requests: string[] = []
+  const client = { connect: async () => undefined, onNotification: () => undefined,
+    request: async <T>(method: string): Promise<T> => {
+      requests.push(method)
+      if (method === "thread/unarchive") throw new Error("reviewer unavailable")
+      if (method === "thread/start") return { thread: { id: "recovery-thread" } } as T
+      if (method === "turn/start") return { turn: { id: "recovery-turn" } } as T
+      return {} as T
+    } } as AppServerClient
+  const result = await startHostTask(client, { workspaceRoot: "/workspace",
+    repository: dispatch.repository, baseBranch: "main" },
+  { ...dispatch, review_thread_id: "unavailable-thread" }, async () => "/isolated-review")
+  assert.deepEqual(result, { thread_id: "recovery-thread", turn_id: "recovery-turn" })
+  assert.deepEqual(requests, ["thread/unarchive", "thread/start", "thread/name/set", "turn/start"])
 })
 
 test("review result validation computes provenance and rejects blocking acceptance", () => {

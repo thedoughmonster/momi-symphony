@@ -18,7 +18,7 @@
       "required": ["ok", "disposition"],
       "properties": {
         "ok": {"const": true},
-        "disposition": {"enum": ["recorded", "created", "already_accepted", "already_reserved", "capacity_wait", "accepted", "changes_requested", "inconclusive", "escalate"]},
+        "disposition": {"enum": ["recorded", "created", "already_accepted", "already_reserved", "already_running", "capacity_wait", "focused_validation_required", "implementation_identity_refused", "reverification_refused", "reviewer_interruption_pending", "accepted", "changes_requested", "inconclusive", "escalate", "canceled", "stale", "superseded"]},
         "review": {"type": "object"},
         "review_attempt_id": {"type": ["string", "null"]},
         "reviewer_dispatch_id": {"type": ["string", "null"]},

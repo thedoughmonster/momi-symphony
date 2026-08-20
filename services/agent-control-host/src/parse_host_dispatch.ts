@@ -29,7 +29,7 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
     "context_fingerprint", "interaction_mode", "issue_id", "issue_identifier", "issue_url",
     "policy_version", "project_id", "project_name", "repository", "review_subject",
     "runtime_role", "schema_version", "stable_instruction", "stable_prefix_fingerprint",
-    "thread_name", "volatile_context", "work_id"].sort().join(",")
+    "thread_name", "volatile_context", "work_id", "review_workspace_id"].sort().join(",")
   const reviewerReverification = [...reviewer.split(","), "review_thread_id"].sort().join(",")
   const actual = Object.keys(body).sort().join(",")
   if (body.schema_version === 1 && (actual !== legacy || !validInstruction(body.instruction))) return null
@@ -51,6 +51,7 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
     !validInstruction(body.volatile_context) || !validFingerprint(body.context_fingerprint) ||
     !validFingerprint(body.stable_prefix_fingerprint) ||
     typeof body.policy_version !== "string" || !validBudget(body.budget) ||
+    !uuid.test(String(body.review_workspace_id ?? "")) ||
     (body.review_thread_id !== undefined &&
       (typeof body.review_thread_id !== "string" || body.review_thread_id.length < 1 ||
         body.review_thread_id.length > 200)) ||

@@ -24,6 +24,10 @@ export class HostLedger {
   getRecovery(workId: string): HostRecoveryRecord | null { return this.recoveries.get(workId) ?? null }
   findByThread(threadId: string): HostRecord | null {
     return [...this.records.values()].find((record) => record.threadId === threadId) ?? null }
+  recordsForImplementation(implementationDispatchId: string): HostRecord[] {
+    return [...this.records.values()].filter((record) =>
+      record.reviewSubject?.implementation_dispatch_id === implementationDispatchId)
+  }
   async reserveCancellation(workId: string, fingerprint: string,
     targetWorkIds: string[]): Promise<HostCancellationRecord | null> {
     const existing = this.cancellations.get(workId)
@@ -63,7 +67,10 @@ export class HostLedger {
     return [...this.records.values()].filter((record) =>
       record.state === "accepted" || record.state === "interactive" ||
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
-      (record.state === "terminal" && !record.callbackSent))
+      (record.state === "terminal" && (!record.callbackSent ||
+        (record.runtimeRole === "independent_reviewer" &&
+          record.reviewResult?.result !== "changes_requested" &&
+          Boolean(record.reviewWorkspaceId) && !record.reviewWorkspaceCleanedAt))))
   }
   activeWorkIds(): string[] {
     return [...this.records.values()]
@@ -78,7 +85,7 @@ export class HostLedger {
     interactionMode: "one_shot" | "interactive" = "one_shot",
     dispatch?: Pick<import("./types.ts").HostDispatch, "budget" | "policy_version" |
       "stable_prefix_fingerprint" | "context_fingerprint" | "runtime_role" |
-      "review_subject">,
+      "review_subject" | "review_workspace_id">,
   ): Promise<HostRecord> {
     const existing = this.records.get(workId)
     if (existing) {
@@ -97,6 +104,8 @@ export class HostLedger {
       contextFingerprint: dispatch?.context_fingerprint,
       runtimeRole: dispatch?.runtime_role ?? "implementation",
       reviewSubject: dispatch?.review_subject, reviewResult: null,
+      reviewWorkspaceId: dispatch?.review_workspace_id,
+      reviewWorkspaceCleanedAt: null,
       telemetry: null, startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
@@ -131,6 +140,9 @@ export class HostLedger {
   }
   async callbackSent(workId: string): Promise<void> {
     const record = this.require(workId); record.callbackSent = true
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async reviewWorkspaceCleaned(workId: string): Promise<void> {
+    const record = this.require(workId); record.reviewWorkspaceCleanedAt = new Date().toISOString()
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async cancellationRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.cancellationRequestedAt ??= new Date().toISOString()
