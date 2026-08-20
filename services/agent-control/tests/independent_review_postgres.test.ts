@@ -555,7 +555,7 @@ test("no-attempt review dispositions clear prior exact-subject identities", asyn
       capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id
     ) values (
       ${capacityDispatchId}::uuid, ${capacityDeliveryId}::uuid, 'review-capacity-holder',
-      ${capacityIssueId}::uuid, 'MOX-999', 'https://linear.example/MOX-999',
+      ${capacityIssueId}::uuid, 'MOX-999', 'https://linear.app/moxx-workboard/issue/MOX-999/review-capacity-holder',
       ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
       array['In Progress'], 'active', ${"8".repeat(64)}, ${"9".repeat(64)},
       'capacity-thread', 'capacity-turn')
