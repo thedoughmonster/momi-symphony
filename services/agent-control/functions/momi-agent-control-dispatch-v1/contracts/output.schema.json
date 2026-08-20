@@ -82,7 +82,7 @@
       "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation"],
       "properties": {
         "ok": {"const": true},
-        "disposition": {"enum": ["already_accepted", "already_running", "changes_requested"]},
+        "disposition": {"enum": ["already_accepted", "already_running", "changes_requested", "already_ambiguous"]},
         "review_attempt_id": {"$ref": "#/$defs/uuid"},
         "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
         "generation": {"type": "integer", "minimum": 1}

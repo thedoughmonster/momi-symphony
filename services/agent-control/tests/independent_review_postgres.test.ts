@@ -185,6 +185,52 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
       review_receipt_id = ${currentReviewAttemptId}::uuid, review_check_sha = ${newHead}
     where dispatch_id = ${currentDispatchId}::uuid
   `
+  const startAttemptId = "30000000-0000-4000-8000-000000000011"
+  const startReviewerId = "30000000-0000-4000-8000-000000000012"
+  const startToken = "30000000-0000-4000-8000-000000000013"
+  const resultAttemptId = "30000000-0000-4000-8000-000000000014"
+  const resultReviewerId = "30000000-0000-4000-8000-000000000015"
+  const resultToken = "30000000-0000-4000-8000-000000000016"
+  const escalationAttemptId = "30000000-0000-4000-8000-000000000017"
+  const escalationReviewerId = "30000000-0000-4000-8000-000000000018"
+  const escalationToken = "30000000-0000-4000-8000-000000000019"
+  await database.sql`
+    insert into momi_agent_ops.review_attempts (
+      review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
+      generation, repository, base_branch, pull_request_number, head_sha, base_sha,
+      profile, review_model, reasoning_effort, budget_fingerprint, policy_version,
+      state, runtime_role, result, reviewer_capability_token_hash,
+      reviewer_thread_id, reviewer_turn_id, packet_fingerprint, packet_artifact_ref,
+      rules_fingerprint, risk_dimensions, correction_risk_dimensions
+    ) values (
+      ${startAttemptId}::uuid, ${currentDispatchId}::uuid, ${startReviewerId}::uuid, 3,
+      'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+      'high', 'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a',
+      'independent-review-v1', 'canceled', null, null,
+      encode(extensions.digest(convert_to(${startToken}, 'UTF8'), 'sha256'), 'hex'),
+      null, null, 'fnv1a64:7777777777777777', 'review://MOX-260/start-race',
+      'fnv1a64:8888888888888888', array['concurrency'], array['concurrency']
+    ), (
+      ${resultAttemptId}::uuid, ${currentDispatchId}::uuid, ${resultReviewerId}::uuid, 4,
+      'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+      'high', 'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a',
+      'independent-review-v1', 'running', 'independent_reviewer', null,
+      encode(extensions.digest(convert_to(${resultToken}, 'UTF8'), 'sha256'), 'hex'),
+      'result-race-thread', 'result-race-turn', 'fnv1a64:9999999999999999',
+      'review://MOX-260/result-race', 'fnv1a64:aaaaaaaaaaaaaaaa',
+      array['concurrency'], array['concurrency']
+    ), (
+      ${escalationAttemptId}::uuid, ${currentDispatchId}::uuid,
+      ${escalationReviewerId}::uuid, 5, 'thedoughmonster/momi-symphony', 'main', 16,
+      ${newHead}, ${baseSha}, 'low', 'gpt-5.6-luna', 'low',
+      'fnv1a64:9ede9fa30f041ad1', 'independent-review-v1', 'escalated',
+      'independent_reviewer', 'escalate',
+      encode(extensions.digest(convert_to(${escalationToken}, 'UTF8'), 'sha256'), 'hex'),
+      'escalation-race-thread', 'escalation-race-turn', 'fnv1a64:bbbbbbbbbbbbbbbb',
+      'review://MOX-260/escalation-race', 'fnv1a64:cccccccccccccccc',
+      array['concurrency'], array['concurrency']
+    )
+  `
   const [beforeRace] = await database.sql<{ run: unknown; review: unknown }[]>`
     select to_jsonb(run) as run, to_jsonb(review) as review
     from momi_agent_ops.run_records run
@@ -195,8 +241,12 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
 
   let releaseNewer!: () => void
   let reportInserted!: () => void
+  let requestWaitProbe!: () => void
+  let reportAdvisoryWait!: (value: boolean) => void
   const release = new Promise<void>((resolve) => { releaseNewer = resolve })
   const inserted = new Promise<void>((resolve) => { reportInserted = resolve })
+  const waitProbeRequested = new Promise<void>((resolve) => { requestWaitProbe = resolve })
+  const advisoryWait = new Promise<boolean>((resolve) => { reportAdvisoryWait = resolve })
   const newerGeneration = database.sql.begin(async (sql) => {
     await sql`
       insert into momi_agent_ops.raw_webhook_envelopes (
@@ -223,11 +273,26 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
     await sql`insert into momi_agent_ops.run_records (dispatch_id)
       values (${newerDispatchId}::uuid)`
     reportInserted()
+    await waitProbeRequested
+    const deadline = Date.now() + 2_000
+    let observed = false
+    while (!observed && Date.now() < deadline) {
+      const [waiting] = await sql<{ waiting: boolean }[]>`
+        select exists (
+          select 1 from pg_catalog.pg_locks
+          where locktype = 'advisory' and not granted
+        ) as waiting
+      `
+      observed = waiting.waiting
+      if (!observed) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    reportAdvisoryWait(observed)
     await release
   })
   await inserted
-  const racedCallback = (async () => {
-    const [result] = await database.sql<{ recorded: boolean }[]>`
+  const racedAuthorities = Promise.all([
+    (async () => {
+      const [result] = await database.sql<{ recorded: boolean }[]>`
       select momi_agent_ops.record_lifecycle_evidence_v3(
         ${currentDispatchId}::uuid, ${callbackToken}::uuid,
         'implementation-thread', 'implementation-turn',
@@ -235,28 +300,97 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
         'mox-260-independent-pr-review', 16, 'validating', 'running',
         ${newHead}, ${nextHead}, null, 'raced-new-head-callback'
       ) as recorded
-    `
-    return result.recorded
-  })()
-  const deadline = Date.now() + 2_000
-  let advisoryWaitObserved = false
-  try {
-    while (!advisoryWaitObserved && Date.now() < deadline) {
-      const [waiting] = await database.sql<{ waiting: boolean }[]>`
-        select exists (
-          select 1 from pg_catalog.pg_locks
-          where locktype = 'advisory' and not granted
-        ) as waiting
       `
-      advisoryWaitObserved = waiting.waiting
-      if (!advisoryWaitObserved) await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-  } finally {
-    releaseNewer()
-  }
+      return ["lifecycle", result.recorded] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ disposition: string }[]>`
+        select disposition from momi_agent_ops.create_review_attempt_v1(
+          ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+          'implementation-thread', 'implementation-turn',
+          'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+          'high', 'independent-review-v1', 'fnv1a64:dddddddddddddddd',
+          'review://MOX-260/create-race', 'fnv1a64:eeeeeeeeeeeeeeee',
+          array['concurrency'], array['concurrency'], null, 4)
+      `
+      return ["create", result.disposition] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ disposition: string }[]>`
+        select disposition from momi_agent_ops.create_escalated_review_attempt_v1(
+          ${escalationReviewerId}::uuid, ${escalationToken}::uuid,
+          'escalation-race-thread', 'escalation-race-turn',
+          'fnv1a64:ffffffffffffffff', 'review://MOX-260/escalated-create-race',
+          'fnv1a64:1212121212121212', array['concurrency'], 4)
+      `
+      return ["escalation", result.disposition] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ recorded: boolean }[]>`
+        select momi_agent_ops.record_reviewer_start_v1(
+          ${startReviewerId}::uuid, ${startToken}::uuid, 'independent_reviewer',
+          'start-race-thread', 'start-race-turn') as recorded
+      `
+      return ["start", result.recorded] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ recorded: boolean }[]>`
+        select momi_agent_ops.record_review_result_v1(
+          ${resultReviewerId}::uuid, ${resultToken}::uuid, 'independent_reviewer',
+          'result-race-thread', 'result-race-turn', 'thedoughmonster/momi-symphony', 16,
+          ${newHead}, ${baseSha}, 4, 'high', 'gpt-5.6-sol', 'high',
+          'fnv1a64:0b9ef0157af3f30a', 'independent-review-v1', 'inconclusive',
+          '[]'::jsonb, ${`sha256:${"3".repeat(64)}`}, 'review://MOX-260/result-race',
+          '{}'::jsonb) as recorded
+      `
+      return ["result", result.recorded] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ recorded: boolean }[]>`
+        select momi_agent_ops.record_review_check_v1(
+          ${currentDispatchId}::uuid, ${currentReviewAttemptId}::uuid, ${newHead},
+          'Symphony Independent Review', 'success') as recorded
+      `
+      return ["check", result.recorded] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ eligible: boolean }[]>`
+        select momi_agent_ops.merge_review_eligible_v1(
+          ${currentDispatchId}::uuid, 'thedoughmonster/momi-symphony', 'main', 16,
+          ${newHead}, ${baseSha}, 'independent-review-v1', 'high') as eligible
+      `
+      return ["eligible", result.eligible] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ recorded: boolean }[]>`
+        select momi_agent_ops.record_merge_preflight_v1(
+          ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+          'implementation-thread', 'implementation-turn',
+          'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+          'independent-review-v1', 'high') as recorded
+      `
+      return ["preflight", result.recorded] as const
+    })(),
+    (async () => {
+      const [result] = await database.sql<{ count: number }[]>`
+        select count(*)::integer as count from momi_agent_ops.record_terminal_v5(
+          ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+          'implementation-thread', 'implementation-turn', 'ready', 'completed',
+          'obsolete concurrent terminal', now(), '{}'::jsonb)
+      `
+      return ["terminal", result.count] as const
+    })(),
+  ])
+  requestWaitProbe()
+  const advisoryWaitObserved = await advisoryWait
+  releaseNewer()
   await newerGeneration
   assert.equal(advisoryWaitObserved, true)
-  assert.equal(await racedCallback, false)
+  assert.deepEqual(Object.fromEntries(await racedAuthorities), {
+    lifecycle: false, create: "current_generation_refused",
+    escalation: "escalation_identity_refused", start: false, result: true,
+    check: false, eligible: false, preflight: false, terminal: 0,
+  })
 
   const [afterRace] = await database.sql<typeof beforeRace[]>`
     select to_jsonb(run) as run, to_jsonb(review) as review
@@ -502,6 +636,113 @@ test("review escalation promotes low to standard to high and then exhausts", asy
       "fnv1a64:9ede9fa30f041ad1", "fnv1a64:9631b8b9d5daf636",
       "fnv1a64:0b9ef0157af3f30a"],
     states: ["escalated", "escalated", "failed"] })
+})
+
+test("ambiguous reviewer response loss blocks replacement until terminal reconciliation",
+async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  const deliveryId = "31500000-0000-4000-8000-000000000001"
+  const dispatchId = "31500000-0000-4000-8000-000000000002"
+  const ambiguousIssueId = "31500000-0000-4000-8000-000000000003"
+  const callback = "31500000-0000-4000-8000-000000000004"
+  const head = "f".repeat(40)
+  await database.sql`
+    insert into momi_agent_ops.raw_webhook_envelopes (
+      delivery_id, raw_body, payload, payload_sha256, auth_result
+    ) values (${deliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+      ${"d".repeat(64)}, 'verified')
+  `
+  await database.sql`
+    insert into momi_agent_ops.dispatches (
+      dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
+      linear_issue_identifier, linear_issue_url, action, changed_fields,
+      mapped_repository, mapped_base_branch, active_states, work_status,
+      capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id
+    ) values (
+      ${dispatchId}::uuid, ${deliveryId}::uuid, 'ambiguous-review-response-loss',
+      ${ambiguousIssueId}::uuid, 'MOX-260',
+      'https://linear.app/moxx-workboard/issue/MOX-260/ambiguous-review-response-loss',
+      ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+      array['In Progress'], 'active', ${"e".repeat(64)},
+      encode(extensions.digest(convert_to(${callback}, 'UTF8'), 'sha256'), 'hex'),
+      'implementation-thread', 'implementation-turn')
+  `
+  await database.sql`
+    insert into momi_agent_ops.run_records (
+      dispatch_id, head_sha, validation_state, validation_sha
+    ) values (${dispatchId}::uuid, ${head}, 'succeeded', ${head})
+  `
+  const create = async (packet: string) => {
+    const [result] = await database.sql<{
+      disposition: string; review_attempt_id: string; reviewer_dispatch_id: string;
+      reviewer_capability_token: string | null; generation: number
+    }[]>`
+      select disposition, review_attempt_id::text, reviewer_dispatch_id::text,
+        reviewer_capability_token::text, generation
+      from momi_agent_ops.create_review_attempt_v1(
+        ${dispatchId}::uuid, ${callback}::uuid, 'implementation-thread',
+        'implementation-turn', 'thedoughmonster/momi-symphony', 'main', 16,
+        ${head}, ${baseSha}, 'high', 'independent-review-v1', ${packet},
+        'review://MOX-260/ambiguous-response-loss', 'fnv1a64:2222222222222222',
+        array['scheduler_recovery_cancellation'],
+        array['scheduler_recovery_cancellation'], null, 4)
+    `
+    return result
+  }
+  const created = await create('fnv1a64:1111111111111111')
+  assert.equal(created.disposition, "created")
+  assert.ok(created.reviewer_capability_token)
+  const [ambiguous] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_start_ambiguous_v1(
+      ${created.reviewer_dispatch_id}::uuid,
+      ${created.reviewer_capability_token}::uuid) as recorded
+  `
+  assert.equal(ambiguous.recorded, true)
+
+  const blocked = await create('fnv1a64:3333333333333333')
+  assert.deepEqual(blocked, { disposition: "already_ambiguous",
+    review_attempt_id: created.review_attempt_id,
+    reviewer_dispatch_id: created.reviewer_dispatch_id,
+    reviewer_capability_token: null, generation: 1 })
+  const [blockedState] = await database.sql<{
+    attempt_count: number; state: string; terminal_at: string | null
+  }[]>`
+    select count(*) over ()::integer as attempt_count, state, terminal_at::text
+    from momi_agent_ops.review_attempts
+    where implementation_dispatch_id = ${dispatchId}::uuid
+  `
+  assert.deepEqual(blockedState, { attempt_count: 1, state: "ambiguous", terminal_at: null })
+
+  const [reconciled] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_result_v1(
+      ${created.reviewer_dispatch_id}::uuid, ${created.reviewer_capability_token}::uuid,
+      'independent_reviewer', 'recovered-review-thread', 'recovered-review-turn',
+      'thedoughmonster/momi-symphony', 16, ${head}, ${baseSha}, 1, 'high',
+      'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a',
+      'independent-review-v1', 'inconclusive', '[]'::jsonb,
+      ${`sha256:${"4".repeat(64)}`}, 'review://MOX-260/reconciled-response-loss',
+      '{}'::jsonb) as recorded
+  `
+  assert.equal(reconciled.recorded, true)
+  const [terminal] = await database.sql<{
+    state: string; result: string; reviewer_thread_id: string;
+    reviewer_turn_id: string; terminal: boolean; interruption_confirmed: boolean
+  }[]>`
+    select state, result, reviewer_thread_id, reviewer_turn_id,
+      terminal_at is not null as terminal,
+      interruption_confirmed_at is not null as interruption_confirmed
+    from momi_agent_ops.review_attempts
+    where review_attempt_id = ${created.review_attempt_id}::uuid
+  `
+  assert.deepEqual(terminal, { state: "failed", result: "inconclusive",
+    reviewer_thread_id: "recovered-review-thread", reviewer_turn_id: "recovered-review-turn",
+    terminal: true, interruption_confirmed: true })
+
+  const replacement = await create('fnv1a64:5555555555555555')
+  assert.equal(replacement.disposition, "created")
+  assert.equal(replacement.generation, 2)
+  assert.notEqual(replacement.reviewer_dispatch_id, created.reviewer_dispatch_id)
 })
 
 test("no-attempt review dispositions clear prior exact-subject identities", async (context) => {

@@ -13,6 +13,7 @@ import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
 import { sendTerminalCallback } from "../src/send_terminal_callback.ts"
 import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostDispatch, HostRecord } from "../src/types.ts"
+import { REVIEW_FINDING_ID_PATTERN } from "../../agent-control/src/independent_review.ts"
 
 const dispatch: HostDispatch = { schema_version: 4,
   work_id: "00000000-0000-4000-8000-000000000001",
@@ -39,6 +40,75 @@ const dispatch: HostDispatch = { schema_version: 4,
 const reviewConfig = { workspaceRoot: "/workspace", repository: dispatch.repository,
   baseBranch: "main", reviewWorkspaceRoot: "/review-harness" }
 const reviewSubjectWorkspace = "/review-harness/exact-subject"
+const callbackInputSchema = JSON.parse(await readFile(new URL(
+  "../../agent-control/functions/momi-agent-control-dispatch-v1/contracts/input.schema.json",
+  import.meta.url), "utf8")) as Record<string, unknown>
+
+function matchesSchema(schema: unknown, value: unknown,
+  root: Record<string, unknown>): boolean {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false
+  const rule = schema as Record<string, unknown>
+  if (typeof rule.$ref === "string") {
+    const target = rule.$ref.split("/").slice(1).reduce<unknown>((current, part) =>
+      current && typeof current === "object"
+        ? (current as Record<string, unknown>)[part.replaceAll("~1", "/").replaceAll("~0", "~")]
+        : undefined, root)
+    return matchesSchema(target, value, root)
+  }
+  if (Array.isArray(rule.anyOf) && !rule.anyOf.some((entry) =>
+    matchesSchema(entry, value, root))) return false
+  if (Array.isArray(rule.oneOf) && rule.oneOf.filter((entry) =>
+    matchesSchema(entry, value, root)).length !== 1) return false
+  if (Array.isArray(rule.allOf) && !rule.allOf.every((entry) =>
+    matchesSchema(entry, value, root))) return false
+  if (rule.not !== undefined && matchesSchema(rule.not, value, root)) return false
+  if (rule.if !== undefined && matchesSchema(rule.if, value, root) &&
+    rule.then !== undefined && !matchesSchema(rule.then, value, root)) return false
+  if (rule.if !== undefined && !matchesSchema(rule.if, value, root) &&
+    rule.else !== undefined && !matchesSchema(rule.else, value, root)) return false
+  if ("const" in rule && !Object.is(rule.const, value)) return false
+  if (Array.isArray(rule.enum) && !rule.enum.some((entry) => Object.is(entry, value))) return false
+  if (rule.type !== undefined && !matchesType(rule.type, value)) return false
+  if (typeof value === "string") {
+    if (typeof rule.minLength === "number" && value.length < rule.minLength) return false
+    if (typeof rule.maxLength === "number" && value.length > rule.maxLength) return false
+    if (typeof rule.pattern === "string" && !new RegExp(rule.pattern).test(value)) return false
+    if (rule.format === "uuid" &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(value)) return false
+  }
+  if (typeof value === "number" && typeof rule.minimum === "number" &&
+    value < rule.minimum) return false
+  if (Array.isArray(value)) {
+    if (typeof rule.maxItems === "number" && value.length > rule.maxItems) return false
+    if (rule.contains !== undefined && !value.some((entry) =>
+      matchesSchema(rule.contains, entry, root))) return false
+    if (rule.items !== undefined && value.some((entry) =>
+      !matchesSchema(rule.items, entry, root))) return false
+  }
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>
+    const properties = rule.properties && typeof rule.properties === "object"
+      ? rule.properties as Record<string, unknown> : {}
+    if (Array.isArray(rule.required) && rule.required.some((key) =>
+      typeof key !== "string" || !Object.hasOwn(object, key))) return false
+    if (rule.additionalProperties === false && Object.keys(object).some((key) =>
+      !Object.hasOwn(properties, key))) return false
+    for (const [key, entry] of Object.entries(object)) {
+      if (properties[key] !== undefined && !matchesSchema(properties[key], entry, root)) return false
+    }
+  }
+  return true
+}
+
+function matchesType(type: unknown, value: unknown): boolean {
+  const types = Array.isArray(type) ? type : [type]
+  return types.some((candidate) => candidate === "null" ? value === null
+    : candidate === "array" ? Array.isArray(value)
+    : candidate === "object" ? value !== null && typeof value === "object" && !Array.isArray(value)
+    : candidate === "integer" ? Number.isInteger(value)
+    : typeof value === candidate)
+}
 
 test("v4 review dispatch is strictly role-attested and starts a fresh typed turn", async () => {
   assert.deepEqual(parseHostDispatch(dispatch), dispatch)
@@ -266,6 +336,61 @@ test("review result validation computes provenance and rejects blocking acceptan
     type: "agentMessage", text: JSON.stringify({ result: "changes_requested",
       findings: [{ ...finding, path: "src\\a.ts" }],
       artifact_ref: "review://attempt/4" }) }] }), null)
+})
+
+test("review result fixtures agree across App Server, extraction, and callback schemas", async () => {
+  let outputSchema: Record<string, unknown> | null = null
+  const client = { connect: async () => undefined, onNotification: () => undefined,
+    request: async <T>(method: string, params: unknown): Promise<T> => {
+      if (method === "thread/start") return { thread: { id: "schema-thread" } } as T
+      if (method === "turn/start") {
+        outputSchema = (params as Record<string, unknown>).outputSchema as Record<string, unknown>
+        return { turn: { id: "schema-turn" } } as T
+      }
+      return {} as T
+    } } as AppServerClient
+  await startHostTask(client, reviewConfig, dispatch, async () => reviewSubjectWorkspace)
+  assert.ok(outputSchema)
+  assert.equal(JSON.stringify(outputSchema).includes(REVIEW_FINDING_ID_PATTERN), true)
+  assert.equal(JSON.stringify(callbackInputSchema).includes(REVIEW_FINDING_ID_PATTERN), true)
+  const blocking = { id: "finding-1", severity: "blocking", category: "correctness",
+    path: "src/a.ts", line: 1, contract: "must fail closed",
+    required_outcome: "reject stale evidence", evidence: "stale evidence passes" }
+  const nonblocking = { ...blocking, id: "finding.2", severity: "nonblocking" }
+  const telemetry = { policy_version: "independent-review-v1",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 1,
+    cached_input_tokens: 0, output_tokens: 1, model_visible_tool_bytes: 1,
+    model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+    retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1,
+    disposition: "completed" }
+  const fixtures = [
+    { expected: true, value: { result: "accepted", findings: [],
+      artifact_ref: "review://accepted" } },
+    { expected: true, value: { result: "accepted", findings: [nonblocking],
+      artifact_ref: "review://accepted-nonblocking" } },
+    { expected: false, value: { result: "accepted", findings: [blocking],
+      artifact_ref: "review://accepted-blocking" } },
+    { expected: false, value: { result: "changes_requested",
+      findings: [{ ...blocking, id: "bad id" }], artifact_ref: "review://bad-id" } },
+    { expected: true, value: { result: "changes_requested", findings: [blocking],
+      artifact_ref: "review://changes" } },
+  ] as const
+  for (const fixture of fixtures) {
+    const extracted = extractReviewResult({ id: "turn", status: "completed", items: [{
+      type: "agentMessage", text: JSON.stringify(fixture.value) }] })
+    const callback = { event: "review_terminal", reviewer_dispatch_id: dispatch.work_id,
+      capability_token: dispatch.capability_token, runtime_role: "independent_reviewer",
+      thread_id: "schema-thread", turn_id: "schema-turn",
+      review_subject: dispatch.review_subject, review_result: {
+        ...fixture.value, result_fingerprint: `sha256:${"a".repeat(64)}` },
+      terminal_disposition: "completed", archived_at: "2026-08-20T00:00:00.000Z",
+      telemetry }
+    assert.equal(matchesSchema(outputSchema, fixture.value, outputSchema), fixture.expected)
+    assert.equal(extracted !== null, fixture.expected)
+    assert.equal(matchesSchema(callbackInputSchema, callback, callbackInputSchema),
+      fixture.expected)
+  }
 })
 
 test("full-access implementation execution cannot obtain sealed reviewer credentials", async () => {

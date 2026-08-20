@@ -237,7 +237,8 @@ test("strict output contract covers every current review response family", async
   }
   const existingRequest = (disposition: string) => ({ ok: true, disposition,
     review_attempt_id: reviewAttemptId, reviewer_dispatch_id: reviewerId, generation: 1 })
-  for (const disposition of ["already_accepted", "already_running", "changes_requested"]) {
+  for (const disposition of ["already_accepted", "already_running", "changes_requested",
+    "already_ambiguous"]) {
     assertOutput(existingRequest(disposition))
   }
 

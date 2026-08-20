@@ -1,7 +1,8 @@
 import { isAbsolute, relative, resolve } from "node:path"
 
 import type { AppServerClient, HostAcceptance, HostConfiguration, HostDispatch } from "./types.ts"
-import { REVIEW_FINDING_PATH_PATTERN } from "../../agent-control/src/independent_review.ts"
+import { REVIEW_FINDING_ID_PATTERN, REVIEW_FINDING_PATH_PATTERN } from
+  "../../agent-control/src/independent_review.ts"
 import { prepareReviewWorkspace } from "./prepare_review_workspace.ts"
 
 export type HostStartObserver = {
@@ -89,7 +90,7 @@ export async function startHostTask(
           additionalProperties: false,
           required: ["id", "severity", "category", "path", "line", "contract",
             "required_outcome", "evidence"], properties: {
-            id: { type: "string", minLength: 3, maxLength: 120 },
+            id: { type: "string", pattern: REVIEW_FINDING_ID_PATTERN },
             severity: { enum: ["blocking", "nonblocking"] },
             category: { type: "string", maxLength: 120 },
             path: { type: "string", minLength: 1, maxLength: 500,
@@ -98,7 +99,14 @@ export async function startHostTask(
             contract: { type: "string", minLength: 1, maxLength: 2000 },
             required_outcome: { type: "string", minLength: 1, maxLength: 2000 },
             evidence: { type: "string", minLength: 1, maxLength: 2000 },
-          } } }, artifact_ref: { type: "string", minLength: 1, maxLength: 500 } } }
+          } } }, artifact_ref: { type: "string", minLength: 1, maxLength: 500 } },
+      allOf: [{ anyOf: [
+        { required: ["result", "findings"], properties: { result: { const: "accepted" },
+          findings: { items: { properties: { severity: { const: "nonblocking" } } } } } },
+        { required: ["result"], properties: {
+          result: { enum: ["changes_requested", "inconclusive", "escalate"] },
+        } },
+      ] }] }
   } else if (input.interaction_mode === "one_shot") {
     turnInput.outputSchema = { type: "object", additionalProperties: false,
       required: ["readiness_result", "disposition", "summary"], properties: {

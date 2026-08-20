@@ -2,6 +2,8 @@ import { stableFingerprint } from "./execution_efficiency.ts"
 
 export const REVIEW_POLICY_VERSION = "independent-review-v1" as const
 export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
+export const REVIEW_FINDING_ID_PATTERN =
+  "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$" as const
 export const REVIEW_FINDING_PATH_PATTERN =
   "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).{1,500}$" as const
 
@@ -310,7 +312,7 @@ export function validReviewFinding(value: unknown): boolean {
   const keys = ["category", "contract", "evidence", "id", "line", "path",
     "required_outcome", "severity"]
   return Object.keys(finding).sort().join(",") === keys.join(",") &&
-    /^[a-z0-9][a-z0-9._:-]{2,119}$/i.test(finding.id) &&
+    new RegExp(REVIEW_FINDING_ID_PATTERN).test(finding.id) &&
     ["blocking", "nonblocking"].includes(finding.severity) &&
     typeof finding.category === "string" && finding.category.length <= 120 &&
     validRepositoryPath(finding.path) &&

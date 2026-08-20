@@ -260,8 +260,10 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /implementation_canceled/)
   assert.match(migration, /attempt\.state in \('canceled', 'superseded'\)/)
   assert.match(migration, /record_review_start_ambiguous_v1/)
+  assert.match(migration, /state in \('reserved', 'running', 'ambiguous'\)/)
+  assert.match(migration, /disposition := 'already_ambiguous'/)
   assert.match(migration, /review\.state = 'ambiguous'.*review\.runtime_role is null/s)
-  assert.match(migration, /attempt\.state in \('ambiguous', 'stale', 'superseded', 'canceled'\)/)
+  assert.match(migration, /attempt\.state = 'ambiguous'[\s\S]+state = 'failed'/)
   assert.match(migration, /interruption_confirmed_at = coalesce\(review\.interruption_confirmed_at, now\(\)\)/)
   assert.doesNotMatch(migration, /record_review_interruption_v1/)
   assert.doesNotMatch(migration, /interruption_confirmed_at = case when review\.state = 'running'/)
@@ -275,12 +277,36 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /run\.merge_sha is null/)
   assert.match(migration, /record_lifecycle_evidence_v3/)
   assert.match(migration, /if p_phase = 'reviewing' then return false/)
-  assert.match(migration, /current_dispatch_id is distinct from selected\.dispatch_id/)
+  assert.match(migration,
+    /record_lifecycle_evidence_v3[\s\S]+fence_current_dispatch_generation_v1\(p_dispatch_id\)[\s\S]+for update/)
+  assert.match(migration,
+    /record_terminal_v5[\s\S]+fence_current_dispatch_generation_v1\(p_dispatch_id\)[\s\S]+for update/)
   assert.match(migration, /work\.action = \('exec' \|\| 'ute-run'\)/)
   assert.match(migration, /serialize_dispatch_generation_v1/)
   assert.match(migration, /fence_current_dispatch_generation_v1/)
   assert.match(migration, /disposition := 'current_generation_refused'/)
   assert.match(migration, /pg_advisory_xact_lock\(pg_catalog\.hashtextextended/)
+  for (const routine of ["create_review_attempt_v1", "create_escalated_review_attempt_v1",
+    "record_reviewer_start_v1", "record_review_result_v1",
+    "record_lifecycle_evidence_v3", "record_terminal_v5"]) {
+    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
+    const end = migration.indexOf("\n$$;", start)
+    const body = migration.slice(start, end)
+    assert.ok(start >= 0 && end > start, `${routine} body missing`)
+    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
+      `${routine} generation fence missing`)
+    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") < body.indexOf("for update"),
+      `${routine} must acquire the advisory fence before row locks`)
+  }
+  for (const routine of ["record_review_start_ambiguous_v1", "record_review_check_v1",
+    "merge_review_eligible_v1", "record_merge_preflight_v1"]) {
+    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
+    const end = migration.indexOf("\n$$;", start)
+    const body = migration.slice(start, end)
+    assert.ok(start >= 0 && end > start, `${routine} body missing`)
+    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
+      `${routine} generation fence missing`)
+  }
   assert.match(migration,
     /current_run\.head_sha is distinct from p_previous_revision_sha then return false/)
   assert.match(migration, /current_run\.branch_name is distinct from p_branch_name/)
