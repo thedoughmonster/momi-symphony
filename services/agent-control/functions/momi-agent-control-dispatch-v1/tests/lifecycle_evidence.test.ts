@@ -38,3 +38,20 @@ test("a durable receipt is recorded before projection", async () => {
     () => Promise.resolve(false), () => Promise.reject(new Error("must_not_project"))),
   /record_refused/)
 })
+
+test("focused validation success automatically enters independent review", async () => {
+  const order: string[] = []
+  const result = await processLifecycleEvidence({ ...input, status: "succeeded" },
+    () => { order.push("record"); return Promise.resolve(true) },
+    () => { order.push("project"); return Promise.resolve() },
+    (review) => { order.push("review"); assert.equal(review.event, "review_request")
+      assert.equal(review.pull_request_number, input.pull_request_number)
+      return Promise.resolve({ disposition: "accepted" }) })
+  assert.deepEqual(order, ["record", "project", "review"])
+  assert.deepEqual(result, { ok: true, disposition: "recorded",
+    review: { disposition: "accepted" } })
+})
+
+test("implementation callbacks cannot submit review-phase lifecycle evidence", () => {
+  assert.equal(parseDispatchInput({ ...input, phase: "reviewing" }), null)
+})

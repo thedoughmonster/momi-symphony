@@ -1,5 +1,5 @@
 export type HostDispatch = {
-  schema_version: 1 | 2 | 3
+  schema_version: 1 | 2 | 3 | 4
   work_id: string
   capability_token: string
   issue_id: string
@@ -19,6 +19,37 @@ export type HostDispatch = {
   context_fingerprint?: string
   policy_version?: string
   budget?: HostExecutionBudget
+  runtime_role?: "independent_reviewer"
+  review_subject?: HostReviewSubject
+  review_thread_id?: string
+}
+
+export type HostReviewSubject = {
+  implementation_dispatch_id: string
+  pull_request_number: number
+  head_sha: string
+  base_sha: string
+  generation: number
+  profile: "low" | "standard" | "high"
+  policy_version: string
+}
+
+export type HostReviewFinding = {
+  id: string
+  severity: "blocking" | "nonblocking"
+  category: string
+  path: string
+  line: number | null
+  contract: string
+  required_outcome: string
+  evidence: string
+}
+
+export type HostReviewResult = {
+  result: "accepted" | "changes_requested" | "inconclusive" | "escalate"
+  findings: HostReviewFinding[]
+  artifact_ref: string
+  result_fingerprint: string
 }
 
 export type HostExecutionBudget = {
@@ -115,6 +146,9 @@ export type HostRecord = {
   policyVersion?: string
   stablePrefixFingerprint?: string
   contextFingerprint?: string
+  runtimeRole?: "implementation" | "independent_reviewer"
+  reviewSubject?: HostReviewSubject
+  reviewResult?: HostReviewResult | null
   updatedAt: string
 }
 

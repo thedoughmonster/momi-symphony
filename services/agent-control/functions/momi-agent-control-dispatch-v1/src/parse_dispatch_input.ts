@@ -1,13 +1,15 @@
-import type { DispatchInput, LifecycleEvidenceInput, SchedulerPumpInput,
-  TerminalInput } from "./types.ts"
+import type { DispatchInput, LifecycleEvidenceInput, MergePreflightInput, SchedulerPumpInput,
+  ReviewRequestInput, ReviewStatusInput, ReviewTerminalInput, TerminalInput } from "./types.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export function parseDispatchInput(
   value: unknown,
-): DispatchInput | LifecycleEvidenceInput | SchedulerPumpInput | TerminalInput | null {
+): DispatchInput | LifecycleEvidenceInput | MergePreflightInput | ReviewRequestInput | ReviewStatusInput |
+  ReviewTerminalInput | SchedulerPumpInput | TerminalInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const body = value as Record<string, unknown>
+  if (body.event === "review_terminal") return parseReviewTerminal(body)
   if (body.event === "scheduler_pump") {
     const active = body.active_work_ids
     const keys = Object.keys(body).sort().join(",")
@@ -27,6 +29,14 @@ export function parseDispatchInput(
     return keys === "capability_token,work_id"
       ? { work_id: body.work_id as string, capability_token: body.capability_token as string }
       : null
+  }
+  if (body.event === "review_request") return parseReviewRequest(body)
+  if (body.event === "merge_preflight") return parseMergePreflight(body)
+  if (body.event === "review_status") {
+    const keys = ["capability_token", "event", "thread_id", "turn_id", "work_id"]
+    if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
+      typeof body.thread_id !== "string" || typeof body.turn_id !== "string") return null
+    return body as ReviewStatusInput
   }
   if (body.event === "lifecycle_evidence") return parseLifecycleEvidence(body)
   if (body.event !== "terminal" || typeof body.thread_id !== "string" ||
@@ -49,13 +59,80 @@ export function parseDispatchInput(
     telemetry: body.telemetry as TerminalInput["telemetry"] }
 }
 
+function parseMergePreflight(body: Record<string, unknown>): MergePreflightInput | null {
+  const keys = ["base_branch", "capability_token", "event", "pull_request_number",
+    "repository", "thread_id", "turn_id", "work_id"]
+  if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
+    typeof body.thread_id !== "string" || typeof body.turn_id !== "string" ||
+    typeof body.repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repository) ||
+    typeof body.base_branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.base_branch) ||
+    !Number.isSafeInteger(body.pull_request_number) || Number(body.pull_request_number) < 1) return null
+  return body as MergePreflightInput
+}
+
+function parseReviewRequest(body: Record<string, unknown>): ReviewRequestInput | null {
+  const keys = ["base_branch", "branch_name", "capability_token", "event",
+    "pull_request_number", "repository", "thread_id", "turn_id", "work_id"]
+  if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
+    typeof body.thread_id !== "string" || typeof body.turn_id !== "string" ||
+    typeof body.repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repository) ||
+    typeof body.base_branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.base_branch) ||
+    typeof body.branch_name !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.branch_name) ||
+    !Number.isSafeInteger(body.pull_request_number) || Number(body.pull_request_number) < 1) return null
+  return body as ReviewRequestInput
+}
+
+function parseReviewTerminal(body: Record<string, unknown>): ReviewTerminalInput | null {
+  const keys = ["archived_at", "capability_token", "event", "review_result",
+    "review_subject", "reviewer_dispatch_id", "runtime_role", "telemetry",
+    "terminal_disposition", "thread_id", "turn_id"]
+  if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
+    !uuid.test(String(body.reviewer_dispatch_id)) ||
+    !uuid.test(String(body.capability_token)) || body.runtime_role !== "independent_reviewer" ||
+    typeof body.thread_id !== "string" || typeof body.turn_id !== "string" ||
+    !["completed", "failed", "interrupted"].includes(String(body.terminal_disposition)) ||
+    typeof body.archived_at !== "string" || Number.isNaN(Date.parse(body.archived_at)) ||
+    !validReviewSubject(body.review_subject) || !validTelemetry(body.telemetry)) return null
+  if (body.review_result !== null && !validReviewResult(body.review_result)) return null
+  if ((body.terminal_disposition === "completed") !== (body.review_result !== null)) return null
+  return body as ReviewTerminalInput
+}
+
+function validReviewSubject(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  const keys = ["base_sha", "generation", "head_sha", "implementation_dispatch_id",
+    "policy_version", "profile", "pull_request_number"]
+  return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
+    uuid.test(String(body.implementation_dispatch_id)) &&
+    Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
+    /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
+    /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
+    Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
+    ["low", "standard", "high"].includes(String(body.profile)) &&
+    typeof body.policy_version === "string" && body.policy_version.length <= 120
+}
+
+function validReviewResult(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  const keys = ["artifact_ref", "findings", "result", "result_fingerprint"]
+  return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
+    ["accepted", "changes_requested", "inconclusive", "escalate"].includes(String(body.result)) &&
+    Array.isArray(body.findings) && body.findings.length <= 100 &&
+    typeof body.artifact_ref === "string" && body.artifact_ref.length <= 500 &&
+    /^sha256:[0-9a-f]{64}$/.test(String(body.result_fingerprint))
+}
+
 function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenceInput | null {
   const required = ["base_branch", "branch_name", "capability_token", "event", "phase",
     "pull_request_number", "repository", "revision_sha", "status", "thread_id", "turn_id",
     "work_id"]
   const optional = ["merge_sha", "workflow_run_id"].filter((key) => body[key] !== undefined)
   if (Object.keys(body).sort().join(",") !== [...required, ...optional].sort().join(",") ||
-    !["validating", "reviewing", "releasing"].includes(String(body.phase)) ||
+    !["validating", "releasing"].includes(String(body.phase)) ||
     !["pending", "running", "succeeded", "failed"].includes(String(body.status)) ||
     typeof body.thread_id !== "string" || typeof body.turn_id !== "string" ||
     typeof body.repository !== "string" ||

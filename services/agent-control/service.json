@@ -15,10 +15,13 @@
       "momi.agent_control.dispatch.v1",
       "momi.agent_control.decision_alert_work.v1",
       "momi.agent_control.linear_webhook.v1",
+      "momi.agent_control.independent_review.v1",
+      "momi.agent_control.merge_preflight.v1",
       "momi.agent_control.scheduler_pump.v1"
     ],
     "consumes": [
       {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v2"},
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_review_dispatch.v1"},
       {"service": "agent-control-host", "contract": "momi.agent_control.host_cancel.v2"},
       {"service": "agent-control-host", "contract": "momi.agent_control.host_recover.v1"}
     ]
@@ -30,6 +33,7 @@
   "network": {
     "outbound_hosts": [
       "api.linear.app",
+      "api.github.com",
       "configured:codex_host_adapter_url",
       "configured:supabase_project_url"
     ]
@@ -39,7 +43,8 @@
     "LINEAR_WEBHOOK_SECRET",
     "LINEAER_ACCESS",
     "LINEAR_API_KEY",
-    "MOMI_CODEX_HOST_SECRET"
+    "MOMI_CODEX_HOST_SECRET",
+    "MOMI_GITHUB_REVIEW_TOKEN"
   ],
   "configuration": [],
   "deployment": {
@@ -72,6 +77,7 @@
       "momi_agent_ops.project_mappings",
       "momi_agent_ops.raw_webhook_envelopes",
       "momi_agent_ops.run_records",
+      "momi_agent_ops.review_attempts",
       "momi_agent_ops.scheduler_route_policies",
       "momi_agent_ops.scheduler_leaders",
       "momi_agent_ops.scheduler_candidates",
@@ -106,11 +112,19 @@
       "momi_agent_ops.record_linear_writeback_v5",
       "momi_agent_ops.record_lifecycle_evidence_v1",
       "momi_agent_ops.record_lifecycle_evidence_v2",
+      "momi_agent_ops.record_lifecycle_evidence_v3",
+      "momi_agent_ops.create_review_attempt_v1",
+      "momi_agent_ops.record_reviewer_start_v1",
+      "momi_agent_ops.record_review_result_v1",
+      "momi_agent_ops.record_review_check_v1",
+      "momi_agent_ops.get_review_status_v1",
+      "momi_agent_ops.merge_review_eligible_v1",
       "momi_agent_ops.record_recovery_v1",
       "momi_agent_ops.record_terminal_v1",
       "momi_agent_ops.record_terminal_v2",
       "momi_agent_ops.record_terminal_v3",
       "momi_agent_ops.record_terminal_v4",
+      "momi_agent_ops.record_terminal_v5",
       "momi_agent_ops.retry_dispatch_v1",
       "momi_agent_ops.run_dispatch_recovery_v1",
       "momi_agent_ops.acquire_scheduler_leader_v1",

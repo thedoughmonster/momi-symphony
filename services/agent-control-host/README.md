@@ -47,6 +47,12 @@ budget. Terminal callbacks include bounded usage telemetry; full tool output is
 replaced by redacted, artifact-linked receipts. See
 [`docs/operations/execution-efficiency.md`](../../docs/operations/execution-efficiency.md).
 
+Independent review uses the v4 transport on the same authenticated host path. It creates a fresh
+thread/turn with an attested reviewer role, a revision-bound bounded packet, a typed review-only
+output schema, and zero mutation authority. The ledger preserves reviewer role and exact subject
+for callback provenance. Reviewer callbacks never become implementation terminal receipts; see
+[`docs/operations/independent-review.md`](../../docs/operations/independent-review.md).
+
 When explicitly enabled after the protected development acceptance, this same
 process owns the sole scheduler timer. `MOMI_AGENT_CONTROL_RELEASE_SHA` must be
 the exact protected 40-character commit under acceptance. The pump posts only

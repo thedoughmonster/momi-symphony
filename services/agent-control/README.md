@@ -78,6 +78,8 @@ and host pump are both disabled by default; see
 The canonical lifecycle reducer and repairable output-only Linear projection are
 documented in
 [`docs/operations/agent-state.md`](../../docs/operations/agent-state.md).
+The mandatory exact-head independent review phase and deterministic merge gate are documented in
+[`docs/operations/independent-review.md`](../../docs/operations/independent-review.md).
 
 ## Exact dead-letter recovery
 

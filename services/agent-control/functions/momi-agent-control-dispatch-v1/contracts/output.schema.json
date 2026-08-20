@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "oneOf": [
+  "anyOf": [
     {
       "type": "object",
       "required": ["ok", "disposition"],
@@ -10,6 +10,44 @@
           "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
         },
         "thread_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["ok", "disposition"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"enum": ["recorded", "created", "already_accepted", "already_reserved", "capacity_wait", "accepted", "changes_requested", "inconclusive", "escalate"]},
+        "review": {"type": "object"},
+        "review_attempt_id": {"type": ["string", "null"]},
+        "reviewer_dispatch_id": {"type": ["string", "null"]},
+        "generation": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["ok", "eligible", "head_sha", "base_sha"],
+      "properties": {
+        "ok": {"const": true},
+        "eligible": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["ok", "state", "findings"],
+      "properties": {
+        "ok": {"const": true},
+        "state": {"type": "string"}, "result": {"type": ["string", "null"]},
+        "findings": {"type": "array"}, "reviewer_dispatch_id": {"type": "string"},
+        "head_sha": {"type": "string"}, "base_sha": {"type": "string"},
+        "generation": {"type": "integer"}, "profile": {"type": "string"},
+        "policy_version": {"type": "string"}
       },
       "additionalProperties": false
     },

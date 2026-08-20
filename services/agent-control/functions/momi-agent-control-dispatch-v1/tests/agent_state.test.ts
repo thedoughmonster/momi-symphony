@@ -44,6 +44,16 @@ test("exact delivery receipts drive validating, reviewing, and releasing", () =>
     release_state: "running", release_sha: merge })), "releasing")
 })
 
+test("review rework resumes working while inconclusive evidence waits", () => {
+  const head = "a".repeat(40)
+  assert.equal(deriveAgentState(evidence({ head_sha: head,
+    review_state: "changes_requested", review_sha: head,
+    work_status: "active" })), "working")
+  assert.equal(deriveAgentState(evidence({ head_sha: head,
+    review_state: "inconclusive", review_sha: head,
+    work_status: "active" })), "waiting")
+})
+
 test("terminal state requires applicable obligations and Linear writeback", () => {
   const terminal = { work_status: "completed" as const, readiness_result: "ready",
     terminal_disposition: "completed" as const, terminal_at: "2026-08-20T12:00:00Z" }

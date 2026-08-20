@@ -7,7 +7,7 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
   const body = value as Record<string, unknown>
   const commonStrings = ["work_id", "capability_token", "issue_id", "issue_identifier",
     "issue_url", "project_id", "project_name", "repository", "base_branch"]
-  if (![1, 2, 3].includes(body.schema_version as number) ||
+  if (![1, 2, 3, 4].includes(body.schema_version as number) ||
     commonStrings.some((key) => typeof body[key] !== "string") ||
     !uuid.test(String(body.work_id)) || !uuid.test(String(body.capability_token)) ||
     !uuid.test(String(body.issue_id)) || !uuid.test(String(body.project_id)) ||
@@ -25,6 +25,12 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
     "policy_version", "project_id", "project_name", "repository", "schema_version",
     "stable_instruction", "stable_prefix_fingerprint", "thread_name", "volatile_context",
     "work_id"].sort().join(",")
+  const reviewer = ["active_states", "base_branch", "budget", "capability_token",
+    "context_fingerprint", "interaction_mode", "issue_id", "issue_identifier", "issue_url",
+    "policy_version", "project_id", "project_name", "repository", "review_subject",
+    "runtime_role", "schema_version", "stable_instruction", "stable_prefix_fingerprint",
+    "thread_name", "volatile_context", "work_id"].sort().join(",")
+  const reviewerReverification = [...reviewer.split(","), "review_thread_id"].sort().join(",")
   const actual = Object.keys(body).sort().join(",")
   if (body.schema_version === 1 && (actual !== legacy || !validInstruction(body.instruction))) return null
   if (body.schema_version === 2 && (actual !== interactive ||
@@ -38,10 +44,36 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
     !validInstruction(body.volatile_context) || !validFingerprint(body.context_fingerprint) ||
     !validFingerprint(body.stable_prefix_fingerprint) ||
     typeof body.policy_version !== "string" || !validBudget(body.budget))) return null
+  if (body.schema_version === 4 && (![reviewer, reviewerReverification].includes(actual) ||
+    body.interaction_mode !== "one_shot" || body.runtime_role !== "independent_reviewer" ||
+    typeof body.thread_name !== "string" || body.thread_name.length < 1 ||
+    body.thread_name.length > 120 || !validInstruction(body.stable_instruction) ||
+    !validInstruction(body.volatile_context) || !validFingerprint(body.context_fingerprint) ||
+    !validFingerprint(body.stable_prefix_fingerprint) ||
+    typeof body.policy_version !== "string" || !validBudget(body.budget) ||
+    (body.review_thread_id !== undefined &&
+      (typeof body.review_thread_id !== "string" || body.review_thread_id.length < 1 ||
+        body.review_thread_id.length > 200)) ||
+    !validReviewSubject(body.review_subject, body.policy_version))) return null
   return { ...body,
     interaction_mode: body.schema_version === 1 ? "one_shot" : body.interaction_mode,
     thread_name: body.schema_version !== 1
       ? body.thread_name : `${body.issue_identifier} · agent run` } as HostDispatch
+}
+
+function validReviewSubject(value: unknown, policyVersion: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  const keys = ["base_sha", "generation", "head_sha", "implementation_dispatch_id",
+    "policy_version", "profile", "pull_request_number"]
+  return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
+    uuid.test(String(body.implementation_dispatch_id)) &&
+    Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
+    /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
+    /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
+    Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
+    ["low", "standard", "high"].includes(String(body.profile)) &&
+    typeof body.policy_version === "string" && body.policy_version === policyVersion
 }
 
 function validInstruction(value: unknown): boolean {

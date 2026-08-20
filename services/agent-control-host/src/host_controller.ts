@@ -2,6 +2,7 @@ import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
 import { budgetDisposition, buildAttemptTelemetry } from "./attempt_telemetry.ts"
 import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
+import { extractReviewResult } from "./extract_review_result.ts"
 import { handleHostNotification } from "./handle_host_notification.ts"
 import { HostLedger } from "./host_ledger.ts"
 import { recoverHostTurn } from "./recover_host_turn.ts"
@@ -110,7 +111,15 @@ export class HostController {
       }
       await this.client.request("thread/archive", { threadId: record.threadId })
       const archivedAt = new Date().toISOString()
-      let summary = extractTerminalSummary(turn)
+      const reviewResult = record.runtimeRole === "independent_reviewer"
+        ? extractReviewResult(turn) : null
+      let summary = record.runtimeRole === "independent_reviewer"
+        ? reviewResult
+          ? { readiness_result: "ready" as const, terminal_disposition: "completed" as const,
+            summary: `Independent review completed with result ${reviewResult.result}.` }
+          : { readiness_result: "failed" as const, terminal_disposition: "failed" as const,
+            summary: "Independent reviewer ended without a valid typed review result." }
+        : extractTerminalSummary(turn)
       const telemetry = buildAttemptTelemetry(record, turn, summary.terminal_disposition)
       const budget = this.budgetExhausted.has(record.workId)
         ? "budget_elapsed_exhausted" : budgetDisposition(record, telemetry)
@@ -119,7 +128,7 @@ export class HostController {
         summary: `${budget}; the durable checkpoint is preserved for operator-directed resume.` }
       telemetry.disposition = summary.terminal_disposition
       await this.ledger.recordTelemetry(record.workId, telemetry)
-      const terminal = await this.ledger.terminal(record.workId, summary, archivedAt)
+      const terminal = await this.ledger.terminal(record.workId, summary, archivedAt, reviewResult)
       await this.deliverCallback(terminal)
     } finally {
       this.finalizing.delete(record.workId)

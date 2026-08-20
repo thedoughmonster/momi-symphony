@@ -77,7 +77,8 @@ export class HostLedger {
   async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
     dispatch?: Pick<import("./types.ts").HostDispatch, "budget" | "policy_version" |
-      "stable_prefix_fingerprint" | "context_fingerprint">,
+      "stable_prefix_fingerprint" | "context_fingerprint" | "runtime_role" |
+      "review_subject">,
   ): Promise<HostRecord> {
     const existing = this.records.get(workId)
     if (existing) {
@@ -94,6 +95,8 @@ export class HostLedger {
       budget: dispatch?.budget, policyVersion: dispatch?.policy_version,
       stablePrefixFingerprint: dispatch?.stable_prefix_fingerprint,
       contextFingerprint: dispatch?.context_fingerprint,
+      runtimeRole: dispatch?.runtime_role ?? "implementation",
+      reviewSubject: dispatch?.review_subject, reviewResult: null,
       telemetry: null, startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
@@ -114,9 +117,11 @@ export class HostLedger {
     if (record.interactionMode !== "interactive") throw new Error("host_interaction_mode_conflict")
     record.state = "interactive"; record.updatedAt = new Date().toISOString(); await this.persist()
   }
-  async terminal(workId: string, result: TerminalSummary, archivedAt: string): Promise<HostRecord> {
+  async terminal(workId: string, result: TerminalSummary, archivedAt: string,
+    reviewResult?: import("./types.ts").HostReviewResult | null): Promise<HostRecord> {
     const record = this.require(workId)
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
+    record.reviewResult = reviewResult ?? null
     record.callbackSent = false; record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
   async recordTelemetry(workId: string,

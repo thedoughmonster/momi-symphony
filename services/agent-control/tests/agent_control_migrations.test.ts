@@ -14,6 +14,8 @@ const efficiencyPath = "supabase/migrations/20260820070000_add_execution_efficie
 const lifecyclePath = "supabase/migrations/20260820130000_add_canonical_agent_state_lifecycle.sql"
 const nativeCancellationPath =
   "supabase/migrations/20260820143000_retire_action_labels_and_native_cancellation.sql"
+const independentReviewPath =
+  "supabase/migrations/20260820160000_add_independent_pr_review_gate.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -222,4 +224,34 @@ test("native cancellation retires routine labels and fences the exact lifecycle"
   assert.match(migration, /request escalated validation/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+})
+
+test("independent review receipts are private, exact-revision, and author-proof", async () => {
+  const migration = await readFile(independentReviewPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /create table momi_agent_ops\.review_attempts/)
+  assert.match(migration, /implementation_dispatch_id uuid not null references/)
+  assert.match(migration, /reviewer_dispatch_id uuid not null unique/)
+  assert.match(migration, /reverification_of uuid references/)
+  assert.match(migration, /source\.state = 'changes_requested'/)
+  assert.match(migration, /runtime_role.*independent_reviewer/s)
+  assert.match(migration, /head_sha text not null/)
+  assert.match(migration, /base_sha text not null/)
+  assert.match(migration, /profile in \('low', 'standard', 'high'\)/)
+  assert.match(migration, /create_review_attempt_v1/)
+  assert.match(migration, /record_reviewer_start_v1/)
+  assert.match(migration, /reviewer_thread_id is distinct from work\.codex_thread_id/)
+  assert.match(migration, /record_review_result_v1/)
+  assert.match(migration, /p_result = 'accepted' and blocking_count > 0/)
+  assert.match(migration, /record_review_check_v1/)
+  assert.match(migration, /Symphony Independent Review/)
+  assert.match(migration, /merge_review_eligible_v1/)
+  assert.match(migration, /record_lifecycle_evidence_v3/)
+  assert.match(migration, /if p_phase = 'reviewing' then return false/)
+  assert.match(migration, /record_terminal_v5/)
+  assert.match(migration, /implementation_terminal_obligations_incomplete/)
+  assert.match(migration, /review_attempts_one_active_idx/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+  assert.match(migration, /from public, anon, authenticated, service_role/)
 })

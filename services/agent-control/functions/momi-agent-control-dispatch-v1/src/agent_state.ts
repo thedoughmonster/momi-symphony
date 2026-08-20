@@ -7,7 +7,7 @@ export const AGENT_STATES = [
 
 export type AgentState = typeof AGENT_STATES[number]
 export type DeliveryEvidenceState = "not_required" | "pending" | "running" |
-  "succeeded" | "failed"
+  "succeeded" | "failed" | "changes_requested" | "inconclusive"
 
 export type AgentStateEvidence = {
   lifecycle_version: typeof AGENT_STATE_LIFECYCLE_VERSION
@@ -66,6 +66,7 @@ export function deriveAgentState(evidence: AgentStateEvidence): AgentState {
   if (evidence.review_state === "pending" || evidence.review_state === "running") {
     return "reviewing"
   }
+  if (evidence.review_state === "inconclusive") return "waiting"
   if (evidence.validation_state === "pending" || evidence.validation_state === "running") {
     return "validating"
   }
