@@ -52,7 +52,7 @@ export async function assertSchedulerSecurity(sql: Sql): Promise<void> {
       and procedure.proname like '%scheduler%'
     order by procedure.proname
   `
-  assert.equal(functions.length, 8)
+  assert.equal(functions.length, 9)
   for (const routine of functions) {
     assert.equal(routine.prosecdef, false, routine.proname)
     assert.deepEqual(routine.proconfig, ["search_path=\"\""], routine.proname)

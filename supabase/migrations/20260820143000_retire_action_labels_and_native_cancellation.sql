@@ -471,10 +471,12 @@ declare
   effective_summary text;
   canceled boolean;
 begin
+  if p_telemetry is null or jsonb_typeof(p_telemetry) <> 'object' then
+    raise exception 'invalid execution telemetry' using errcode = '22023';
+  end if;
   if p_readiness_result not in ('ready', 'unready', 'failed')
     or p_terminal_disposition not in ('completed', 'failed', 'interrupted')
-    or p_archived_at is null or p_telemetry is null
-    or jsonb_typeof(p_telemetry) <> 'object' then
+    or p_archived_at is null then
     raise exception 'invalid terminal callback' using errcode = '22023';
   end if;
   select work.* into selected from momi_agent_ops.dispatches work
