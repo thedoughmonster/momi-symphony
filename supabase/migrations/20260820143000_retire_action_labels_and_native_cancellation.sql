@@ -577,9 +577,6 @@ grant all on function momi_agent_ops.accept_linear_webhook_v5(
   ),
   momi_agent_ops.record_terminal_v4(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
-  ),
-  momi_agent_ops.claim_scheduler_candidate_v2(
-    text, uuid, text, bigint, uuid, bigint, bigint
   ) to service_role;
 
 revoke all on function momi_agent_ops.accept_linear_webhook_v5(
@@ -596,4 +593,4 @@ revoke all on function momi_agent_ops.accept_linear_webhook_v5(
   ),
   momi_agent_ops.claim_scheduler_candidate_v2(
     text, uuid, text, bigint, uuid, bigint, bigint
-  ) from public, anon, authenticated;
+  ) from public, anon, authenticated, service_role;
