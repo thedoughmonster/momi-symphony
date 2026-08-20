@@ -381,7 +381,7 @@ create function momi_agent_ops.get_review_status_v1(
 ) returns table (
   state text, result text, findings jsonb, reviewer_dispatch_id uuid,
   head_sha text, base_sha text, generation integer, profile text, policy_version text
-) language plpgsql stable security invoker set search_path = '' as $$
+) language sql stable security invoker set search_path = '' as $$
   select review.state, review.result, review.findings, review.reviewer_dispatch_id,
     review.head_sha, review.base_sha, review.generation, review.profile, review.policy_version
   from momi_agent_ops.dispatches work
