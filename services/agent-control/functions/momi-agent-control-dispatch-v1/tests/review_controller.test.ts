@@ -230,7 +230,8 @@ test("strict output contract covers every current review response family", async
   assertOutput({ ok: false, disposition: "retrying" })
   const requestWithoutIdentity = (disposition: string) => ({ ok: true, disposition,
     review_attempt_id: null, reviewer_dispatch_id: null, generation: null })
-  for (const disposition of ["implementation_identity_refused", "focused_validation_required",
+  for (const disposition of ["implementation_identity_refused", "current_generation_refused",
+    "focused_validation_required",
     "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]) {
     assertOutput(requestWithoutIdentity(disposition))
   }
@@ -342,8 +343,8 @@ test("merge preflight persists its exact receipt before projecting the required 
   const timeline: string[] = []
   const subject = { repository, pullRequestNumber: 16, state: "open" as const,
     baseBranch: "main", headSha: head, baseSha: base,
-    changedPaths: ["services/agent-control/src/independent_review.ts"],
-    riskDimensions: ["architecture" as const], diffArtifactRef: "github://diff" }
+    changedPaths: ["src/feature.ts"],
+    riskDimensions: ["security_auth" as const], diffArtifactRef: "github://diff" }
   let factsCalls = 0
   const github = { loadSubject: async () => subject,
     loadMergeFacts: async () => {

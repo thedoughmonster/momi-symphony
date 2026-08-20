@@ -20,6 +20,36 @@ test("correction hunks bind every changed line to an old-revision anchor", () =>
   ])
 })
 
+test("correction reuse requires complete compare ancestry and file counts", async () => {
+  const previous = "c".repeat(40)
+  const next = "d".repeat(40)
+  const visiblePatch = ["@@ -9,2 +9,2 @@", "-old", "+new", " context"].join("\n")
+  const comparison = (changes: number) => ({ status: "ahead", ahead_by: 1,
+    merge_base_commit: { sha: previous }, files: [{ filename: "src/feature.ts",
+      additions: changes - 1, deletions: 1, changes, patch: visiblePatch }] })
+  const complete = new GitHubReviewGateway(async () => response(comparison(2)),
+    "review-token", "review-publisher", 42)
+  const delta = await complete.loadCorrectionDelta(
+    "thedoughmonster/momi-symphony", previous, next)
+  assert.equal(delta.changedHunks.length, 1)
+  assert.equal(delta.changedHunks[0]?.changed_line_count, 2)
+  assert.equal(delta.riskDimensions.includes("ambiguous"), false)
+
+  const truncated = new GitHubReviewGateway(async () => response(comparison(4)),
+    "review-token", "review-publisher", 42)
+  assert.deepEqual(await truncated.loadCorrectionDelta(
+    "thedoughmonster/momi-symphony", previous, next), {
+    changedPaths: ["src/feature.ts"], changedHunks: [], riskDimensions: ["ambiguous"],
+  })
+  const unrelated = new GitHubReviewGateway(async () => response({ ...comparison(2),
+    merge_base_commit: { sha: "e".repeat(40) } }),
+  "review-token", "review-publisher", 42)
+  assert.deepEqual(await unrelated.loadCorrectionDelta(
+    "thedoughmonster/momi-symphony", previous, next), {
+    changedPaths: ["src/feature.ts"], changedHunks: [], riskDimensions: ["ambiguous"],
+  })
+})
+
 test("GitHub review gateway freezes exact PR identity and fail-closed merge facts", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = []
   const gateway = new GitHubReviewGateway(async (input, init) => {
@@ -74,6 +104,7 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
   assert.equal(subject.baseSha, base)
   assert.deepEqual(subject.changedPaths, [
     "services/agent-control/src/independent_review.ts", "supabase/migrations/next.sql"])
+  assert.deepEqual(subject.riskDimensions, ["ambiguous"])
   assert.equal(subject.diffArtifactRef,
     `https://api.github.com/repos/${subject.repository}/compare/${base}...${head}`)
   const rules = await gateway.loadApplicableRules(subject.repository, base, subject.changedPaths)

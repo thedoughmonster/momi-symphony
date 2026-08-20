@@ -69,7 +69,7 @@
       "properties": {
         "ok": {"const": true},
         "disposition": {
-          "enum": ["implementation_identity_refused", "focused_validation_required", "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]
+          "enum": ["implementation_identity_refused", "current_generation_refused", "focused_validation_required", "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]
         },
         "review_attempt_id": {"type": "null"},
         "reviewer_dispatch_id": {"type": "null"},

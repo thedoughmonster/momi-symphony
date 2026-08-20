@@ -96,9 +96,12 @@ const highRisk = [
 ]
 const lowRisk = [/\.md$/i, /(?:^|\/)docs?\//i]
 
-/** Risk selection is deterministic. Unknown or mixed surfaces promote upward. */
-export function selectReviewProfile(paths: string[]): ReviewProfile {
-  if (paths.length === 0 || paths.some((path) => !validRepositoryPath(path))) return "high"
+/** Risk selection is deterministic. Missing, ambiguous, or material patch evidence promotes. */
+export function selectReviewProfile(paths: string[],
+  riskDimensions: ReviewRiskDimension[]): ReviewProfile {
+  if (paths.length === 0 || paths.some((path) => !validRepositoryPath(path)) ||
+    riskDimensions.length === 0 || riskDimensions.includes("ambiguous")) return "high"
+  if (riskDimensions.some((dimension) => dimension !== "general")) return "high"
   if (paths.some((path) => highRisk.some((pattern) => pattern.test(path)))) return "high"
   if (paths.every((path) => lowRisk.some((pattern) => pattern.test(path)))) return "low"
   return "standard"

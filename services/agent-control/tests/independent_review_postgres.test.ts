@@ -266,6 +266,70 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
     where run.dispatch_id = ${currentDispatchId}::uuid
   `
   assert.deepEqual(afterRace, beforeRace)
+
+  await database.sql`update momi_agent_ops.run_records set review_check_sha = null,
+    merge_preflight_sha = null, merge_preflight_base_sha = null,
+    merge_preflight_review_receipt_id = null, merge_preflight_at = null
+    where dispatch_id = ${currentDispatchId}::uuid`
+  const [beforeOldAuthority] = await database.sql<{
+    run: unknown; review: unknown; attempt_count: number
+  }[]>`
+    select to_jsonb(run) as run, to_jsonb(review) as review,
+      (select count(*)::integer from momi_agent_ops.review_attempts attempt
+        where attempt.implementation_dispatch_id = ${currentDispatchId}::uuid) as attempt_count
+    from momi_agent_ops.run_records run
+    join momi_agent_ops.review_attempts review
+      on review.review_attempt_id = ${currentReviewAttemptId}::uuid
+    where run.dispatch_id = ${currentDispatchId}::uuid
+  `
+  const [reuse] = await database.sql<{
+    disposition: string; review_attempt_id: string | null;
+    reviewer_dispatch_id: string | null; generation: number | null
+  }[]>`
+    select disposition, review_attempt_id::text, reviewer_dispatch_id::text, generation
+    from momi_agent_ops.create_review_attempt_v1(
+      ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+      'implementation-thread', 'implementation-turn',
+      'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+      'high', 'independent-review-v1', 'fnv1a64:5555555555555555',
+      'review://MOX-260/current-generation-refused', 'fnv1a64:6666666666666666',
+      array['concurrency'], array['concurrency'], null, 4)
+  `
+  assert.deepEqual(reuse, { disposition: "current_generation_refused",
+    review_attempt_id: null, reviewer_dispatch_id: null, generation: null })
+  const [eligible] = await database.sql<{ eligible: boolean }[]>`
+    select momi_agent_ops.merge_review_eligible_v1(
+      ${currentDispatchId}::uuid, 'thedoughmonster/momi-symphony', 'main', 16,
+      ${newHead}, ${baseSha}, 'independent-review-v1', 'high') as eligible`
+  assert.equal(eligible.eligible, false)
+  const [projected] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_check_v1(
+      ${currentDispatchId}::uuid, ${currentReviewAttemptId}::uuid, ${newHead},
+      'Symphony Independent Review', 'success') as recorded`
+  assert.equal(projected.recorded, false)
+  const [preflight] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_merge_preflight_v1(
+      ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+      'implementation-thread', 'implementation-turn',
+      'thedoughmonster/momi-symphony', 'main', 16, ${newHead}, ${baseSha},
+      'independent-review-v1', 'high') as recorded`
+  assert.equal(preflight.recorded, false)
+  const [terminal] = await database.sql<{ count: number }[]>`
+    select count(*)::integer as count from momi_agent_ops.record_terminal_v5(
+      ${currentDispatchId}::uuid, ${callbackToken}::uuid,
+      'implementation-thread', 'implementation-turn', 'ready', 'completed',
+      'must not complete an obsolete generation', now(), '{}'::jsonb)`
+  assert.equal(terminal.count, 0)
+  const [afterOldAuthority] = await database.sql<typeof beforeOldAuthority[]>`
+    select to_jsonb(run) as run, to_jsonb(review) as review,
+      (select count(*)::integer from momi_agent_ops.review_attempts attempt
+        where attempt.implementation_dispatch_id = ${currentDispatchId}::uuid) as attempt_count
+    from momi_agent_ops.run_records run
+    join momi_agent_ops.review_attempts review
+      on review.review_attempt_id = ${currentReviewAttemptId}::uuid
+    where run.dispatch_id = ${currentDispatchId}::uuid
+  `
+  assert.deepEqual(afterOldAuthority, beforeOldAuthority)
 })
 
 test("review escalation promotes low to standard to high and then exhausts", async (context) => {

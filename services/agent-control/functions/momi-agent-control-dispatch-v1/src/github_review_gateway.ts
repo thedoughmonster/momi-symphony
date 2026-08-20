@@ -65,9 +65,12 @@ export class GitHubReviewGateway {
     if (changedPaths.length === 0 || changedPaths.some((path) => !path)) {
       throw new Error("review_diff_empty_or_malformed")
     }
-    const riskDimensions = reviewRiskDimensions(files.map((file) => ({
-      path: text(file.filename), patch: typeof file.patch === "string" ? file.patch : null,
-    })))
+    const completePatches = files.map((file) => completeChangedHunks(file))
+    const riskDimensions = completePatches.some((hunks) => hunks === null)
+      ? ["ambiguous" as const]
+      : reviewRiskDimensions(files.map((file) => ({
+        path: text(file.filename), patch: String(file.patch),
+      })))
     return { repository, pullRequestNumber, state: pr.state as "open" | "closed",
       baseBranch, headSha, baseSha, changedPaths, riskDimensions,
       diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${baseSha}...${headSha}` }
@@ -140,12 +143,18 @@ export class GitHubReviewGateway {
     if (paths.length === 0 || paths.length > 300 || paths.some((path) => !path)) {
       throw new Error("review_compare_unbounded_or_empty")
     }
+    const mergeBase = object(comparison.merge_base_commit)
+    if (comparison.status !== "ahead" || text(mergeBase.sha) !== previousSha ||
+      !Number.isSafeInteger(comparison.ahead_by) || Number(comparison.ahead_by) < 1) {
+      return { changedPaths: paths, changedHunks: [], riskDimensions: ["ambiguous"] }
+    }
     const changedHunks: GitHubCorrectionDelta["changedHunks"] = []
     for (const file of files) {
-      const path = text(file.filename)
-      if (typeof file.patch !== "string") return { changedPaths: paths, changedHunks: [],
-        riskDimensions: ["ambiguous"] }
-      changedHunks.push(...parseChangedHunks(path, file.patch))
+      const hunks = completeChangedHunks(file)
+      if (hunks === null) {
+        return { changedPaths: paths, changedHunks: [], riskDimensions: ["ambiguous"] }
+      }
+      changedHunks.push(...hunks)
     }
     if (changedHunks.length === 0) return { changedPaths: paths, changedHunks,
       riskDimensions: ["ambiguous"] }
@@ -306,6 +315,33 @@ export function parseChangedHunks(path: string, patch: string): ReviewChangedHun
     }
   }
   finish()
+  return hunks
+}
+
+function patchChangeCounts(patch: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  let inHunk = false
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) { inHunk = true; continue }
+    if (!inHunk || line.startsWith("\\ No newline at end of file")) continue
+    if (line.startsWith("+")) additions += 1
+    else if (line.startsWith("-")) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+function completeChangedHunks(file: Record<string, unknown>): ReviewChangedHunk[] | null {
+  if (typeof file.patch !== "string") return null
+  const additions = Number(file.additions)
+  const deletions = Number(file.deletions)
+  const changes = Number(file.changes)
+  const counts = patchChangeCounts(file.patch)
+  const hunks = parseChangedHunks(text(file.filename), file.patch)
+  if (![additions, deletions, changes].every((value) =>
+    Number.isSafeInteger(value) && value >= 0) || changes !== additions + deletions ||
+    counts.additions !== additions || counts.deletions !== deletions ||
+    hunks.reduce((total, hunk) => total + hunk.changed_line_count, 0) !== changes) return null
   return hunks
 }
 

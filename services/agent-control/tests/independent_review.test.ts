@@ -3,7 +3,7 @@ import test from "node:test"
 
 import { buildBoundedReviewerPacket, reduceMergeEligibility, requiresFreshReviewer,
   reviewBudgetFingerprint, reviewExecutionBudget, reviewExecutionProfile,
-  REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION, selectReviewProfile,
+  reviewRiskDimensions, REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION, selectReviewProfile,
   validateReviewReceipt, type MergeGateEvidence, type ReviewReceipt,
   type ReviewSubject } from "../src/independent_review.ts"
 
@@ -36,12 +36,33 @@ function gate(overrides: Partial<MergeGateEvidence> = {}): MergeGateEvidence {
 }
 
 test("risk routing promotes sensitive and ambiguous surfaces", () => {
-  assert.equal(selectReviewProfile(["docs/operator.md"]), "low")
-  assert.equal(selectReviewProfile(["services/decision-alert-delivery/src/a.ts"]), "standard")
-  assert.equal(selectReviewProfile(["supabase/migrations/next.sql"]), "high")
-  assert.equal(selectReviewProfile(["services/agent-control/src/x.ts"]), "high")
-  assert.equal(selectReviewProfile([]), "high")
-  assert.equal(selectReviewProfile(["../outside"]), "high")
+  assert.equal(selectReviewProfile(["docs/operator.md"], ["general"]), "low")
+  assert.equal(selectReviewProfile(["services/decision-alert-delivery/src/a.ts"],
+    ["general"]), "standard")
+  assert.equal(selectReviewProfile(["supabase/migrations/next.sql"],
+    ["schema_migration"]), "high")
+  assert.equal(selectReviewProfile(["services/agent-control/src/x.ts"],
+    ["architecture"]), "high")
+  assert.equal(selectReviewProfile([], ["general"]), "high")
+  assert.equal(selectReviewProfile(["../outside"], ["general"]), "high")
+  assert.equal(selectReviewProfile(["docs/operator.md"], []), "high")
+  assert.equal(selectReviewProfile(["docs/operator.md"], ["ambiguous"]), "high")
+  const requiredHighRiskPatches = [
+    ["architecture", "control plane lifecycle authority dispatch"],
+    ["security_auth", "authenticate token identity permission"],
+    ["public_contract", "public API webhook contract"],
+    ["schema_migration", "postgres database schema migration"],
+    ["concurrency", "atomic advisory lock race fence"],
+    ["scheduler_recovery_cancellation", "scheduler recovery cancellation stale work"],
+    ["release_credential", "deploy release credential branch protection status check"],
+    ["runtime_network", "runtime network fetch host sandbox workspace"],
+  ] as const
+  for (const [expectedDimension, patch] of requiredHighRiskPatches) {
+    const dimensions = reviewRiskDimensions([{ path: "src/feature.ts", patch }])
+    assert.equal(dimensions.includes(expectedDimension), true, expectedDimension)
+    assert.equal(selectReviewProfile(["src/feature.ts"], dimensions), "high",
+      expectedDimension)
+  }
   assert.deepEqual(reviewExecutionProfile("standard"),
     { model: "gpt-5.6-terra", reasoning_effort: "medium" })
   assert.deepEqual(reviewExecutionProfile("high"),

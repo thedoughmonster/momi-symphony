@@ -43,7 +43,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if (issue.identifier !== route.issueIdentifier ||
     issue.native_ref.project_id !== route.projectId ||
     !route.activeStates.includes(issue.state)) throw new Error("review_issue_context_refused")
-  const profile = selectReviewProfile(subject.changedPaths)
+  const profile = reviewProfileForSubject(subject)
   const execution = reviewExecutionProfile(profile)
   const [applicableRules, headCi] = await Promise.all([
     github.loadApplicableRules(input.repository, subject.baseSha, subject.changedPaths),
@@ -191,7 +191,8 @@ export async function processMergePreflight(input: MergePreflightInput,
     select momi_agent_ops.merge_review_eligible_v1(
       ${input.work_id}::uuid, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
-      ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as eligible`
+      ${REVIEW_POLICY_VERSION},
+      ${reviewProfileForSubject(subject)}) as eligible`
   if (canonical[0]?.eligible !== true) return { ok: true, eligible: false,
     reason: "canonical_review_ledger_ineligible",
     head_sha: subject.headSha, base_sha: subject.baseSha }
@@ -200,7 +201,8 @@ export async function processMergePreflight(input: MergePreflightInput,
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
-      ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as recorded`
+      ${REVIEW_POLICY_VERSION},
+      ${reviewProfileForSubject(subject)}) as recorded`
   if (persisted[0]?.recorded !== true || typeof row.review_attempt_id !== "string") {
     return { ok: true, eligible: false, reason: "merge_preflight_receipt_refused",
       head_sha: subject.headSha, base_sha: subject.baseSha }
@@ -241,7 +243,8 @@ export async function processMergePreflight(input: MergePreflightInput,
     select momi_agent_ops.merge_review_eligible_v1(
       ${input.work_id}::uuid, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
-      ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as eligible`
+      ${REVIEW_POLICY_VERSION},
+      ${reviewProfileForSubject(subject)}) as eligible`
   if (finalCanonical[0]?.eligible !== true) {
     await github.publishReviewCheck(input.repository, subject.headSha, false,
       "Canonical review ledger changed after merge preflight")
@@ -556,7 +559,7 @@ function mergeDecision(input: MergePreflightInput, subject: GitHubReviewSubject,
     authoritative_changes_requested: facts.authoritativeChangesRequested,
     branch_protection: { review_check_required: facts.reviewCheckRequired,
       bypass_possible: facts.bypassPossible }, current_policy_version: REVIEW_POLICY_VERSION,
-    expected_profile: selectReviewProfile(subject.changedPaths),
+    expected_profile: reviewProfileForSubject(subject),
     implementation_thread_id: String(row.implementation_thread_id ?? "") })
 }
 
@@ -571,6 +574,10 @@ async function priorChangesRequestedReview(sql: Sql,
       and state = 'changes_requested' and reviewer_thread_id is not null
     order by generation desc limit 1`
   return rows[0] ?? null
+}
+
+function reviewProfileForSubject(subject: GitHubReviewSubject) {
+  return selectReviewProfile(subject.changedPaths, subject.riskDimensions)
 }
 
 function boundedRequiredOutcome(description: string | null): string {
