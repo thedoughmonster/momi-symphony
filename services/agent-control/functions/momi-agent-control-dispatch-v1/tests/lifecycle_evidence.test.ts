@@ -75,6 +75,7 @@ test("review terminal callbacks require exact nested subject and result schemas"
     review_subject: { implementation_dispatch_id: input.work_id, pull_request_number: 16,
       head_sha: "a".repeat(40), base_sha: "b".repeat(40), generation: 1,
       profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+      budget_fingerprint: "fnv1a64:0b9ef0157af3f30a",
       policy_version: "independent-review-v1" },
     review_result: { result: "changes_requested", findings: [{ id: "finding-1",
       severity: "blocking", category: "correctness", path: "src/review.ts", line: 10,
@@ -83,6 +84,8 @@ test("review terminal callbacks require exact nested subject and result schemas"
       result_fingerprint: `sha256:${"1".repeat(64)}` }, terminal_disposition: "completed",
     archived_at: "2026-08-20T15:00:00.000Z", telemetry }
   assert.deepEqual(parseDispatchInput(review), review)
+  assert.equal(parseDispatchInput({ ...review, review_subject: {
+    ...review.review_subject, budget_fingerprint: "fnv1a64:9631b8b9d5daf636" } }), null)
   assert.equal(parseDispatchInput({ ...review, review_subject: {
     ...review.review_subject, extra: true } }), null)
   assert.equal(parseDispatchInput({ ...review, review_result: {

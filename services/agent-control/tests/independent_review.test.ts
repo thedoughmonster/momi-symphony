@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { buildBoundedReviewerPacket, reduceMergeEligibility, requiresFreshReviewer,
-  reviewExecutionBudget, reviewExecutionProfile, REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION,
-  selectReviewProfile,
+  reviewBudgetFingerprint, reviewExecutionBudget, reviewExecutionProfile,
+  REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION, selectReviewProfile,
   validateReviewReceipt, type MergeGateEvidence, type ReviewReceipt,
   type ReviewSubject } from "../src/independent_review.ts"
 
@@ -15,6 +15,7 @@ const subject: ReviewSubject = {
   repository: "thedoughmonster/momi-symphony", pull_request_number: 16,
   head_sha: head, base_sha: base, generation: 1, profile: "high",
   model: "gpt-5.6-sol", reasoning_effort: "high",
+  budget_fingerprint: reviewBudgetFingerprint("high"),
   policy_version: REVIEW_POLICY_VERSION,
 }
 const receipt: ReviewReceipt = { ...subject, reviewer_thread_id: "review-thread",
@@ -45,6 +46,10 @@ test("risk routing promotes sensitive and ambiguous surfaces", () => {
     { model: "gpt-5.6-terra", reasoning_effort: "medium" })
   assert.deepEqual(reviewExecutionProfile("high"),
     { model: "gpt-5.6-sol", reasoning_effort: "high" })
+  assert.deepEqual(["low", "standard", "high"].map((profile) =>
+    reviewBudgetFingerprint(profile as "low" | "standard" | "high")), [
+      "fnv1a64:9ede9fa30f041ad1", "fnv1a64:9631b8b9d5daf636",
+      "fnv1a64:0b9ef0157af3f30a"])
   assert.equal(reviewExecutionBudget("standard").model_turns, 8)
   assert.equal(reviewExecutionBudget("high").model_turns, 16)
 })
@@ -58,6 +63,9 @@ test("receipt validation rejects author identity, stale subject, malformed outpu
     subject, "implementation-thread"), /review_subject_mismatch:head_sha/)
   assert.throws(() => validateReviewReceipt({ ...receipt, model: "gpt-5.6-terra" },
     subject, "implementation-thread"), /review_subject_mismatch:model/)
+  assert.throws(() => validateReviewReceipt({ ...receipt,
+    budget_fingerprint: reviewBudgetFingerprint("standard") },
+  subject, "implementation-thread"), /review_subject_mismatch:budget_fingerprint/)
   assert.throws(() => validateReviewReceipt({ ...receipt, unexpected: true }, subject,
     "implementation-thread"), /review_result_malformed/)
   assert.throws(() => validateReviewReceipt({ ...receipt, findings: [{ id: "block-1",
@@ -74,6 +82,8 @@ test("exact-head merge reduction fails closed for every missing authority", () =
     ["review_not_accepted", gate({ review: null })],
     ["review_subject_stale_or_invalid", gate({ review: { ...receipt,
       head_sha: "d".repeat(40) } })],
+    ["review_subject_stale_or_invalid", gate({ review: { ...receipt,
+      budget_fingerprint: reviewBudgetFingerprint("standard") } })],
     ["required_ci_not_green", gate({ required_ci: { head_sha: head,
       conclusion: "pending" } })],
     ["review_check_not_green", gate({ review_check: { name: REVIEW_CHECK_NAME,

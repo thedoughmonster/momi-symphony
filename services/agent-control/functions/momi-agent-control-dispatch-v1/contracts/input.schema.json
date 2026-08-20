@@ -125,7 +125,7 @@
   "$defs": {
     "review_subject": {
       "type": "object",
-      "required": ["implementation_dispatch_id", "pull_request_number", "head_sha", "base_sha", "generation", "profile", "model", "reasoning_effort", "policy_version"],
+      "required": ["implementation_dispatch_id", "pull_request_number", "head_sha", "base_sha", "generation", "profile", "model", "reasoning_effort", "budget_fingerprint", "policy_version"],
       "properties": {
         "implementation_dispatch_id": {"type": "string", "format": "uuid"},
         "pull_request_number": {"type": "integer", "minimum": 1},
@@ -135,6 +135,7 @@
         "profile": {"enum": ["low", "standard", "high"]},
         "model": {"enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]},
         "reasoning_effort": {"enum": ["low", "medium", "high"]},
+        "budget_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
         "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
       },
       "additionalProperties": false

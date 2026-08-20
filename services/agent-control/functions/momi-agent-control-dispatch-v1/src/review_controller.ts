@@ -2,7 +2,8 @@ import type { Sql } from "postgres"
 
 import { getDatabase } from "../../../src/database.ts"
 import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSION,
-  requiresFreshReviewer, reviewExecutionBudget, reviewExecutionProfile, selectReviewProfile,
+  requiresFreshReviewer, reviewBudgetFingerprint, reviewExecutionBudget,
+  reviewExecutionProfile, selectReviewProfile,
   type ReviewReceipt,
   type ReviewCorrectionContext, type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
@@ -89,7 +90,8 @@ export async function processReviewRequest(input: ReviewRequestInput,
     reviewer_dispatch_id: "00000000-0000-4000-8000-000000000000",
     repository: subject.repository, pull_request_number: subject.pullRequestNumber,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
-    profile, ...execution, policy_version: REVIEW_POLICY_VERSION,
+    profile, ...execution, budget_fingerprint: reviewBudgetFingerprint(profile),
+    policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: issue.identifier, title: issue.title,
     required_outcome: boundedRequiredOutcome(issue.description) },
   applicable_rules: applicableRules.map(({ path, fingerprint }) => ({ path, fingerprint })),
@@ -131,7 +133,8 @@ export async function processReviewStatus(input: ReviewStatusInput,
   sql: Sql = getDatabase()): Promise<Record<string, unknown>> {
   const rows = await sql<Array<Record<string, unknown>>>`
     select state, result, findings, reviewer_dispatch_id::text, head_sha, base_sha,
-      generation, profile, review_model as model, reasoning_effort, policy_version
+      generation, profile, review_model as model, reasoning_effort, budget_fingerprint,
+      policy_version
     from momi_agent_ops.get_review_status_v1(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id})`
@@ -153,7 +156,8 @@ export async function processMergePreflight(input: MergePreflightInput,
       review.reviewer_dispatch_id::text,
       review.repository, review.pull_request_number, review.head_sha, review.base_sha,
       review.generation, review.profile, review.review_model as model,
-      review.reasoning_effort, review.policy_version, review.reviewer_thread_id,
+      review.reasoning_effort, review.budget_fingerprint, review.policy_version,
+      review.reviewer_thread_id,
       review.reviewer_turn_id, review.runtime_role, review.result, review.findings,
       review.result_artifact_ref as artifact_ref, review.result_fingerprint
     from momi_agent_ops.dispatches work
@@ -173,6 +177,7 @@ export async function processMergePreflight(input: MergePreflightInput,
     pull_request_number: Number(row.pull_request_number), head_sha: row.head_sha,
     base_sha: row.base_sha, generation: Number(row.generation), profile: row.profile,
     model: row.model, reasoning_effort: row.reasoning_effort,
+    budget_fingerprint: row.budget_fingerprint,
     policy_version: row.policy_version, reviewer_thread_id: row.reviewer_thread_id,
     reviewer_turn_id: row.reviewer_turn_id, runtime_role: row.runtime_role,
     result: row.result, findings: row.findings, artifact_ref: row.artifact_ref,
@@ -262,7 +267,8 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
       ${input.runtime_role}, ${input.thread_id}, ${input.turn_id}, ${repository},
       ${subject.pull_request_number}, ${subject.head_sha}, ${subject.base_sha},
       ${subject.generation}, ${subject.profile}, ${subject.model},
-      ${subject.reasoning_effort}, ${subject.policy_version}, ${result.result},
+      ${subject.reasoning_effort}, ${subject.budget_fingerprint},
+      ${subject.policy_version}, ${result.result},
       ${sql.json(result.findings as never)}::jsonb, ${result.result_fingerprint},
       ${result.artifact_ref}, ${sql.json(input.telemetry)}::jsonb
     ) as recorded`
@@ -328,7 +334,8 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
     reviewer_dispatch_id: "00000000-0000-4000-8000-000000000000",
     repository, pull_request_number: subject.pullRequestNumber,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
-    profile: nextProfile, ...execution, policy_version: REVIEW_POLICY_VERSION,
+    profile: nextProfile, ...execution, budget_fingerprint: reviewBudgetFingerprint(nextProfile),
+    policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: issue.identifier, title: issue.title,
     required_outcome: boundedRequiredOutcome(issue.description) },
   applicable_rules: applicableRules.map(({ path, fingerprint }) => ({ path, fingerprint })),
@@ -426,6 +433,7 @@ async function dispatchCreatedReviewAttempt(args: {
         review_subject: { implementation_dispatch_id: launch.workId,
         pull_request_number: launch.pullRequestNumber, head_sha: subject.headSha,
         base_sha: subject.baseSha, generation: attempt.generation, profile, ...execution,
+        budget_fingerprint: reviewBudgetFingerprint(profile),
         policy_version: REVIEW_POLICY_VERSION } }), signal: AbortSignal.timeout(10_000) })
   } catch {
     await markAmbiguousReviewStart(sql, attempt)

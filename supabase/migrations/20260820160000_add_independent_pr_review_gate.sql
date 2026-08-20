@@ -44,10 +44,11 @@ create table momi_agent_ops.review_attempts (
   profile text not null check (profile in ('low', 'standard', 'high')),
   review_model text not null,
   reasoning_effort text not null,
-  check ((profile, review_model, reasoning_effort) in (
-    ('low', 'gpt-5.6-luna', 'low'),
-    ('standard', 'gpt-5.6-terra', 'medium'),
-    ('high', 'gpt-5.6-sol', 'high')
+  budget_fingerprint text not null check (budget_fingerprint ~ '^fnv1a64:[0-9a-f]{16}$'),
+  check ((profile, review_model, reasoning_effort, budget_fingerprint) in (
+    ('low', 'gpt-5.6-luna', 'low', 'fnv1a64:9ede9fa30f041ad1'),
+    ('standard', 'gpt-5.6-terra', 'medium', 'fnv1a64:9631b8b9d5daf636'),
+    ('high', 'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a')
   )),
   policy_version text not null check (length(policy_version) between 1 and 120),
   state text not null default 'reserved' check (state in (
@@ -242,7 +243,8 @@ begin
   token := gen_random_uuid();
   insert into momi_agent_ops.review_attempts (
     implementation_dispatch_id, reverification_of, generation, repository, base_branch, pull_request_number,
-    head_sha, base_sha, profile, review_model, reasoning_effort, policy_version,
+    head_sha, base_sha, profile, review_model, reasoning_effort, budget_fingerprint,
+    policy_version,
     reviewer_capability_token_hash,
     packet_fingerprint, packet_artifact_ref, rules_fingerprint,
     risk_dimensions, correction_risk_dimensions
@@ -253,6 +255,9 @@ begin
       when 'standard' then 'gpt-5.6-terra' else 'gpt-5.6-sol' end,
     case p_profile when 'low' then 'low'
       when 'standard' then 'medium' else 'high' end,
+    case p_profile when 'low' then 'fnv1a64:9ede9fa30f041ad1'
+      when 'standard' then 'fnv1a64:9631b8b9d5daf636'
+      else 'fnv1a64:0b9ef0157af3f30a' end,
     p_policy_version,
     encode(extensions.digest(convert_to(token::text, 'UTF8'), 'sha256'), 'hex'),
     p_packet_fingerprint, p_packet_artifact_ref, p_rules_fingerprint,
@@ -353,7 +358,8 @@ begin
   insert into momi_agent_ops.review_attempts (
     implementation_dispatch_id, escalation_of, escalation_depth, generation,
     repository, base_branch, pull_request_number, head_sha, base_sha, profile,
-    review_model, reasoning_effort, policy_version, reviewer_capability_token_hash,
+    review_model, reasoning_effort, budget_fingerprint, policy_version,
+    reviewer_capability_token_hash,
     packet_fingerprint,
     packet_artifact_ref, rules_fingerprint, risk_dimensions, correction_risk_dimensions
   ) values (
@@ -362,6 +368,8 @@ begin
     source.head_sha, source.base_sha, next_profile,
     case next_profile when 'standard' then 'gpt-5.6-terra' else 'gpt-5.6-sol' end,
     case next_profile when 'standard' then 'medium' else 'high' end,
+    case next_profile when 'standard' then 'fnv1a64:9631b8b9d5daf636'
+      else 'fnv1a64:0b9ef0157af3f30a' end,
     source.policy_version,
     encode(extensions.digest(convert_to(token::text, 'UTF8'), 'sha256'), 'hex'),
     p_packet_fingerprint, p_packet_artifact_ref, p_rules_fingerprint,
@@ -455,6 +463,7 @@ create function momi_agent_ops.record_review_result_v1(
   p_profile text,
   p_review_model text,
   p_reasoning_effort text,
+  p_budget_fingerprint text,
   p_policy_version text,
   p_result text,
   p_findings jsonb,
@@ -469,10 +478,10 @@ declare canceled boolean;
 declare implementation_thread text;
 begin
   if p_runtime_role <> 'independent_reviewer'
-    or (p_profile, p_review_model, p_reasoning_effort) not in (
-      ('low', 'gpt-5.6-luna', 'low'),
-      ('standard', 'gpt-5.6-terra', 'medium'),
-      ('high', 'gpt-5.6-sol', 'high'))
+    or (p_profile, p_review_model, p_reasoning_effort, p_budget_fingerprint) not in (
+      ('low', 'gpt-5.6-luna', 'low', 'fnv1a64:9ede9fa30f041ad1'),
+      ('standard', 'gpt-5.6-terra', 'medium', 'fnv1a64:9631b8b9d5daf636'),
+      ('high', 'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a'))
     or p_result not in ('accepted', 'changes_requested', 'inconclusive', 'escalate')
     or jsonb_typeof(p_findings) <> 'array' or pg_column_size(p_findings) > 65536
     or p_result_fingerprint !~ '^sha256:[0-9a-f]{64}$'
@@ -493,6 +502,7 @@ begin
     and review.generation = p_generation and review.profile = p_profile
     and review.review_model = p_review_model
     and review.reasoning_effort = p_reasoning_effort
+    and review.budget_fingerprint = p_budget_fingerprint
     and review.policy_version = p_policy_version for update;
   if not found then return false; end if;
   if attempt.state = 'ambiguous' and attempt.reviewer_thread_id is null then
@@ -655,11 +665,12 @@ create function momi_agent_ops.get_review_status_v1(
 ) returns table (
   state text, result text, findings jsonb, reviewer_dispatch_id uuid,
   head_sha text, base_sha text, generation integer, profile text,
-  review_model text, reasoning_effort text, policy_version text
+  review_model text, reasoning_effort text, budget_fingerprint text, policy_version text
 ) language sql stable security invoker set search_path = '' as $$
   select review.state, review.result, review.findings, review.reviewer_dispatch_id,
     review.head_sha, review.base_sha, review.generation, review.profile,
-    review.review_model, review.reasoning_effort, review.policy_version
+    review.review_model, review.reasoning_effort, review.budget_fingerprint,
+    review.policy_version
   from momi_agent_ops.dispatches work
   join momi_agent_ops.review_attempts review
     on review.implementation_dispatch_id = work.dispatch_id
@@ -894,7 +905,7 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
   momi_agent_ops.record_review_start_ambiguous_v1(uuid, uuid),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, integer, text, text,
-    text, text, text, jsonb, text, text, jsonb
+    text, text, text, text, jsonb, text, text, jsonb
   ), momi_agent_ops.record_review_check_v1(uuid, uuid, text, text, text),
   momi_agent_ops.merge_review_eligible_v1(uuid, text, text, bigint, text, text, text, text),
   momi_agent_ops.record_merge_preflight_v1(

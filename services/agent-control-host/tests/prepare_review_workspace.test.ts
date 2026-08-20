@@ -80,6 +80,7 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
     const subject = { implementation_dispatch_id: implementationId, pull_request_number: 16,
       head_sha: head, base_sha: head, generation: 1, profile: "high" as const,
       model: "gpt-5.6-sol" as const, reasoning_effort: "high" as const,
+      budget_fingerprint: "fnv1a64:0b9ef0157af3f30a",
       policy_version: "independent-review-v1" }
     const reviewDispatch = { schema_version: 4, work_id: reviewerId,
       review_workspace_id: reviewerId, review_subject: subject } as HostDispatch

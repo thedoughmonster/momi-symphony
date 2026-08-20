@@ -79,6 +79,7 @@ export async function startHostTask(
       review_generation: input.review_subject?.generation,
       review_model: input.review_subject?.model,
       review_reasoning_effort: input.review_subject?.reasoning_effort,
+      review_budget_fingerprint: input.review_subject?.budget_fingerprint,
       review_mode: reviewMode,
     }
     turnInput.outputSchema = { type: "object", additionalProperties: false,

@@ -10,8 +10,9 @@ import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
 import { parseHostDispatch } from "../src/parse_host_dispatch.ts"
 import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
+import { sendTerminalCallback } from "../src/send_terminal_callback.ts"
 import { startHostTask } from "../src/start_host_task.ts"
-import type { AppServerClient, HostDispatch } from "../src/types.ts"
+import type { AppServerClient, HostDispatch, HostRecord } from "../src/types.ts"
 
 const dispatch: HostDispatch = { schema_version: 4,
   work_id: "00000000-0000-4000-8000-000000000001",
@@ -33,6 +34,7 @@ const dispatch: HostDispatch = { schema_version: 4,
   review_subject: { implementation_dispatch_id: "00000000-0000-4000-8000-000000000005",
     pull_request_number: 16, head_sha: "a".repeat(40), base_sha: "b".repeat(40),
     generation: 1, profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+    budget_fingerprint: "fnv1a64:0b9ef0157af3f30a",
     policy_version: "independent-review-v1" } }
 const reviewConfig = { workspaceRoot: "/workspace", repository: dispatch.repository,
   baseBranch: "main", reviewWorkspaceRoot: "/review-harness" }
@@ -45,6 +47,8 @@ test("v4 review dispatch is strictly role-attested and starts a fresh typed turn
     ...dispatch.review_subject!, policy_version: "wrong" } }), null)
   assert.equal(parseHostDispatch({ ...dispatch, review_subject: {
     ...dispatch.review_subject!, model: "gpt-5.6-terra" } }), null)
+  assert.equal(parseHostDispatch({ ...dispatch, review_subject: {
+    ...dispatch.review_subject!, budget_fingerprint: "fnv1a64:9631b8b9d5daf636" } }), null)
   assert.equal(parseHostDispatch({ ...dispatch, budget: { ...dispatch.budget!, model_turns: 8 } }), null)
   const requests: Array<{ method: string; params: unknown }> = []
   const client = { connect: async () => undefined, onNotification: () => undefined,
@@ -62,6 +66,8 @@ test("v4 review dispatch is strictly role-attested and starts a fresh typed turn
   assert.deepEqual(params.runtimeWorkspaceRoots, [reviewSubjectWorkspace])
   assert.equal(params.model, "gpt-5.6-sol")
   assert.equal(params.effort, "high")
+  assert.equal((params.responsesapiClientMetadata as Record<string, unknown>)
+    .review_budget_fingerprint, "fnv1a64:0b9ef0157af3f30a")
   assert.equal(requests.find((request) => request.method === "thread/start")
     ?.params && (requests.find((request) => request.method === "thread/start")
       ?.params as Record<string, unknown>).cwd, "/review-harness")
@@ -77,7 +83,8 @@ test("v4 review dispatch is strictly role-attested and starts a fresh typed turn
     budget: { model_turns: 8, no_progress_cycles: 2, subagents: 0, subagent_depth: 0,
       model_visible_tool_bytes: 48_000, elapsed_ms: 1_800_000 },
     review_subject: { ...dispatch.review_subject!, profile: "standard" as const,
-      model: "gpt-5.6-terra" as const, reasoning_effort: "medium" as const } }
+      model: "gpt-5.6-terra" as const, reasoning_effort: "medium" as const,
+      budget_fingerprint: "fnv1a64:9631b8b9d5daf636" } }
   const standardRequests: Array<{ method: string; params: unknown }> = []
   await startHostTask({ ...client, request: async <T>(method: string, request: unknown) => {
     standardRequests.push({ method, params: request })
@@ -88,6 +95,45 @@ test("v4 review dispatch is strictly role-attested and starts a fresh typed turn
     ?.params as Record<string, unknown>
   assert.equal(standardTurn.model, "gpt-5.6-terra")
   assert.equal(standardTurn.effort, "medium")
+  assert.equal((standardTurn.responsesapiClientMetadata as Record<string, unknown>)
+    .review_budget_fingerprint, "fnv1a64:9631b8b9d5daf636")
+})
+
+test("authenticated reviewer callback carries the exact launch budget fingerprint", async () => {
+  const previousUrl = process.env.MOMI_AGENT_CONTROL_CALLBACK_URL
+  const previousSecret = process.env.MOMI_CODEX_HOST_SECRET
+  let callback: Record<string, unknown> | null = null
+  process.env.MOMI_AGENT_CONTROL_CALLBACK_URL = "https://control.example/review-terminal"
+  process.env.MOMI_CODEX_HOST_SECRET = "host-secret"
+  const telemetry = { policy_version: "independent-review-v1",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 1,
+    cached_input_tokens: 0, output_tokens: 1, model_visible_tool_bytes: 1,
+    model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+    retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1,
+    disposition: "completed" as const }
+  const record = { workId: dispatch.work_id, fingerprint: "dispatch-fingerprint",
+    capabilityToken: dispatch.capability_token, state: "terminal", interactionMode: "one_shot",
+    threadId: "review-thread", turnId: "review-turn", callbackSent: false,
+    cancellationRequestedAt: null, updatedAt: "2026-08-20T00:00:00.000Z",
+    runtimeRole: "independent_reviewer", reviewSubject: dispatch.review_subject,
+    reviewResult: { result: "accepted", findings: [], artifact_ref: "review://exact",
+      result_fingerprint: `sha256:${"c".repeat(64)}` }, telemetry,
+    terminal: { readiness_result: "ready", terminal_disposition: "completed", summary: "",
+      archivedAt: "2026-08-20T00:00:00.000Z" } } as HostRecord
+  try {
+    await sendTerminalCallback(record, async (_url, init) => {
+      callback = JSON.parse(String(init?.body))
+      return new Response(null, { status: 204 })
+    })
+    assert.equal(((callback as Record<string, unknown>).review_subject as
+      Record<string, unknown>).budget_fingerprint, "fnv1a64:0b9ef0157af3f30a")
+  } finally {
+    if (previousUrl === undefined) delete process.env.MOMI_AGENT_CONTROL_CALLBACK_URL
+    else process.env.MOMI_AGENT_CONTROL_CALLBACK_URL = previousUrl
+    if (previousSecret === undefined) delete process.env.MOMI_CODEX_HOST_SECRET
+    else process.env.MOMI_CODEX_HOST_SECRET = previousSecret
+  }
 })
 
 test("candidate-head AGENTS cannot become reviewer governance", async () => {

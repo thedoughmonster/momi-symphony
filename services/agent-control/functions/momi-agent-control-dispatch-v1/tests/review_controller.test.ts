@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Sql } from "postgres"
 
-import { REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION } from "../../../src/independent_review.ts"
+import { reviewBudgetFingerprint, REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION } from
+  "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { processMergePreflight, processReviewTerminal,
   promoteReviewProfile } from "../src/review_controller.ts"
@@ -31,6 +32,7 @@ test("accepted review remains unprojected until authenticated merge preflight", 
     review_subject: { implementation_dispatch_id: implementationId,
       pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
       profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+      budget_fingerprint: reviewBudgetFingerprint("high"),
       policy_version: REVIEW_POLICY_VERSION },
     review_result: { result: "accepted", findings: [], artifact_ref: "review://exact",
       result_fingerprint: `sha256:${"c".repeat(64)}` }, terminal_disposition: "completed",
@@ -91,6 +93,7 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
     review_subject: { implementation_dispatch_id: implementationId,
       pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
       profile: "low", model: "gpt-5.6-luna", reasoning_effort: "low",
+      budget_fingerprint: reviewBudgetFingerprint("low"),
       policy_version: REVIEW_POLICY_VERSION },
     review_result: { result: "escalate", findings: [], artifact_ref: "review://low",
       result_fingerprint: `sha256:${"d".repeat(64)}` }, terminal_disposition: "completed",
@@ -116,6 +119,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
       "gpt-5.6-terra")
     assert.equal((hostBodies[0]?.review_subject as Record<string, unknown>).reasoning_effort,
       "medium")
+    assert.equal((hostBodies[0]?.review_subject as Record<string, unknown>).budget_fingerprint,
+      reviewBudgetFingerprint("standard"))
     assert.match(String(hostBodies[0]?.stable_instruction),
       /Protected governance requires exact substantive review/)
     assert.match(String(hostBodies[0]?.stable_instruction), new RegExp(base))
@@ -141,7 +146,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
   ;(exhaustedSql as unknown as { json: (value: unknown) => unknown }).json = (value) => value
   const exhausted = await processReviewTerminal({ ...input,
     review_subject: { ...input.review_subject, generation: 3, profile: "high",
-      model: "gpt-5.6-sol", reasoning_effort: "high" } },
+      model: "gpt-5.6-sol", reasoning_effort: "high",
+      budget_fingerprint: reviewBudgetFingerprint("high") } },
   exhaustedSql, github as never, async () => "Failed" as never)
   assert.equal(exhausted.disposition, "escalation_exhausted")
 })
@@ -169,6 +175,7 @@ test("merge preflight persists its exact receipt before projecting the required 
     implementation_dispatch_id: implementationId, reviewer_dispatch_id: reviewerId,
     repository, pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
     profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+    budget_fingerprint: reviewBudgetFingerprint("high"),
     policy_version: REVIEW_POLICY_VERSION,
     reviewer_thread_id: "review-thread", reviewer_turn_id: "review-turn",
     runtime_role: "independent_reviewer", result: "accepted", findings: [],

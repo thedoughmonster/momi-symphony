@@ -240,11 +240,15 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /head_sha text not null/)
   assert.match(migration, /base_sha text not null/)
   assert.match(migration, /profile in \('low', 'standard', 'high'\)/)
-  assert.match(migration, /\('low', 'gpt-5\.6-luna', 'low'\)/)
-  assert.match(migration, /\('standard', 'gpt-5\.6-terra', 'medium'\)/)
-  assert.match(migration, /\('high', 'gpt-5\.6-sol', 'high'\)/)
+  assert.match(migration,
+    /\('low', 'gpt-5\.6-luna', 'low', 'fnv1a64:9ede9fa30f041ad1'\)/)
+  assert.match(migration,
+    /\('standard', 'gpt-5\.6-terra', 'medium', 'fnv1a64:9631b8b9d5daf636'\)/)
+  assert.match(migration,
+    /\('high', 'gpt-5\.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a'\)/)
   assert.match(migration, /review\.review_model = p_review_model/)
   assert.match(migration, /review\.reasoning_effort = p_reasoning_effort/)
+  assert.match(migration, /review\.budget_fingerprint = p_budget_fingerprint/)
   assert.match(migration, /create_review_attempt_v1/)
   assert.match(migration, /create_escalated_review_attempt_v1/)
   assert.match(migration, /when 'low' then 'standard'.*when 'standard' then 'high'/s)

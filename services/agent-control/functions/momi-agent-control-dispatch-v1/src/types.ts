@@ -87,6 +87,7 @@ export type ReviewTerminalInput = {
     profile: "low" | "standard" | "high"
     model: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"
     reasoning_effort: "low" | "medium" | "high"
+    budget_fingerprint: string
     policy_version: string
   }
   review_result: null | {
