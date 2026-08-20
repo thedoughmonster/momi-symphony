@@ -16,5 +16,5 @@ export async function recordTerminal(
       ${sql.json(input.telemetry)}::jsonb
     )
   `
-  return rows[0] ?? null
+  return rows[0] ? { ...rows[0], work_id: input.work_id } : null
 }

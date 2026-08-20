@@ -27,6 +27,8 @@ export type SchedulerCandidate = {
   schedulerEligible: boolean
 }
 
+export type SchedulerClaim = { dispatchId: string }
+
 export async function listSchedulerRoutes(): Promise<SchedulerRoute[]> {
   const sql = getDatabase()
   const rows = await sql<{
@@ -99,6 +101,34 @@ export async function listSchedulerCandidateIds(route: SchedulerRoute): Promise<
   return rows.map((row) => row.linear_issue_id)
 }
 
+export async function listProjectableAgentStateDispatchIds(
+  route: SchedulerRoute,
+): Promise<string[]> {
+  const sql = getDatabase()
+  const rows = await sql<{ dispatch_id: string }[]>`
+    select current_work.dispatch_id::text
+    from momi_agent_ops.dispatches current_work
+    join momi_agent_ops.run_records run on run.dispatch_id = current_work.dispatch_id
+    join momi_agent_ops.project_mappings mapping
+      on mapping.linear_project_id = current_work.linear_project_id
+      and mapping.active
+      and mapping.repository = ${route.repository}
+      and mapping.base_branch = ${route.baseBranch}
+      and mapping.host_dispatch_url = ${route.hostDispatchUrl}
+    where current_work.action not in ('cancel-run', 'recover-discovery')
+      and not exists (
+        select 1 from momi_agent_ops.dispatches newer
+        where newer.linear_issue_id = current_work.linear_issue_id
+          and newer.action not in ('cancel-run', 'recover-discovery')
+          and (newer.created_at, newer.dispatch_id) >
+            (current_work.created_at, current_work.dispatch_id)
+      )
+    order by current_work.created_at desc, current_work.dispatch_id desc
+    limit 250
+  `
+  return rows.map((row) => row.dispatch_id)
+}
+
 export async function reconcileSchedulerCandidate(
   route: SchedulerRoute,
   issue: NormalizedLinearIssue,
@@ -151,17 +181,18 @@ export async function claimSchedulerCandidate(
   releaseSha: string,
   leader: SchedulerLeader,
   candidate: SchedulerCandidate,
-): Promise<boolean> {
+): Promise<SchedulerClaim | null> {
   const sql = getDatabase()
-  const rows = await sql<{ claimed: boolean }[]>`
-    select claimed
+  const rows = await sql<{ claimed: boolean; dispatch_id: string | null }[]>`
+    select claimed, dispatch_id::text
     from momi_agent_ops.claim_scheduler_candidate_v1(
       ${route.routeKey}, ${ownerId}::uuid, ${releaseSha}, ${leader.generation},
       ${candidate.candidateId}::uuid, ${candidate.generation},
       ${candidate.snapshotVersion}
     )
   `
-  return rows[0]?.claimed === true
+  return rows[0]?.claimed === true && rows[0].dispatch_id
+    ? { dispatchId: rows[0].dispatch_id } : null
 }
 
 export async function heartbeatSchedulerSlots(activeWorkIds: readonly string[]): Promise<void> {

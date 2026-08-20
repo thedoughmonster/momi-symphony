@@ -11,6 +11,7 @@ const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dea
 const schedulerPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
 const decisionAlertPath = "supabase/migrations/20260819082707_add_decision_alert_lifecycle.sql"
 const efficiencyPath = "supabase/migrations/20260820070000_add_execution_efficiency_telemetry.sql"
+const lifecyclePath = "supabase/migrations/20260820130000_add_canonical_agent_state_lifecycle.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -181,6 +182,25 @@ test("execution telemetry is private, complete, percentile-backed, and atomic", 
   assert.match(migration, /percentile_cont\(0\.95\)/)
   assert.match(migration, /create function momi_agent_ops\.record_terminal_v3/)
   assert.match(migration, /momi_agent_ops\.record_terminal_v2/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
+})
+
+test("canonical Agent State evidence is exact-generation, private, and repairable", async () => {
+  const migration = await readFile(lifecyclePath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  for (const state of ["queued", "checking", "working", "validating", "reviewing",
+    "releasing", "waiting", "failed", "stopped", "complete", "coordinating"]) {
+    assert.match(migration, new RegExp(`'${state}'`))
+  }
+  assert.match(migration, /lifecycle_version text not null default 'agent-state-v1'/)
+  assert.match(migration, /run_records_exact_validation/)
+  assert.match(migration, /validation_sha = head_sha/)
+  assert.match(migration, /review_sha = head_sha/)
+  assert.match(migration, /release_sha = merge_sha/)
+  assert.match(migration, /current_dispatch_id is distinct from selected\.dispatch_id/)
+  assert.match(migration, /record_agent_state_projection_v1/)
+  assert.match(migration, /security invoker set search_path = ''/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
 })

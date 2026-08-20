@@ -1,0 +1,73 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import { deriveAgentState } from "../src/agent_state.ts"
+import type { AgentStateEvidence } from "../src/agent_state.ts"
+
+function evidence(overrides: Partial<AgentStateEvidence> = {}): AgentStateEvidence {
+  return {
+    lifecycle_version: "agent-state-v1",
+    dispatch_id: "00000000-0000-4000-8000-000000000001",
+    current_dispatch_id: "00000000-0000-4000-8000-000000000001",
+    action: "execute-run", source_kind: "ready_leaf_scheduler", work_status: "pending",
+    attempt_count: 0, last_error_code: null, host_accepted_at: null,
+    cancellation_state: "not_requested", cancelled_at: null, readiness_result: "pending",
+    terminal_disposition: null, terminal_at: null, linear_writeback_at: null,
+    validation_state: "not_required", validation_sha: null,
+    review_state: "not_required", review_sha: null,
+    release_state: "not_required", release_sha: null,
+    head_sha: null, merge_sha: null, has_active_children: false,
+    ...overrides,
+  }
+}
+
+test("scheduler, claim, host, and child evidence derive without a model turn", () => {
+  assert.equal(deriveAgentState(evidence()), "queued")
+  assert.equal(deriveAgentState(evidence({ work_status: "claimed", attempt_count: 1 })), "checking")
+  assert.equal(deriveAgentState(evidence({ work_status: "active",
+    host_accepted_at: "2026-08-20T12:00:00Z" })), "working")
+  assert.equal(deriveAgentState(evidence({ work_status: "active",
+    host_accepted_at: "2026-08-20T12:00:00Z", has_active_children: true })), "coordinating")
+})
+
+test("exact delivery receipts drive validating, reviewing, and releasing", () => {
+  const head = "a".repeat(40)
+  const merge = "b".repeat(40)
+  assert.equal(deriveAgentState(evidence({ work_status: "active", head_sha: head,
+    validation_state: "running", validation_sha: head })), "validating")
+  assert.equal(deriveAgentState(evidence({ work_status: "active", head_sha: head,
+    validation_state: "succeeded", validation_sha: head,
+    review_state: "pending", review_sha: head })), "reviewing")
+  assert.equal(deriveAgentState(evidence({ work_status: "active", head_sha: head,
+    merge_sha: merge, validation_state: "succeeded", validation_sha: head,
+    review_state: "succeeded", review_sha: head,
+    release_state: "running", release_sha: merge })), "releasing")
+})
+
+test("terminal state requires applicable obligations and Linear writeback", () => {
+  const terminal = { work_status: "completed" as const, readiness_result: "ready",
+    terminal_disposition: "completed" as const, terminal_at: "2026-08-20T12:00:00Z" }
+  assert.equal(deriveAgentState(evidence(terminal)), "working")
+  assert.equal(deriveAgentState(evidence({ ...terminal,
+    linear_writeback_at: "2026-08-20T12:01:00Z" })), "complete")
+  const head = "a".repeat(40)
+  assert.equal(deriveAgentState(evidence({ ...terminal,
+    linear_writeback_at: "2026-08-20T12:01:00Z", head_sha: head,
+    validation_state: "pending", validation_sha: head })), "validating")
+})
+
+test("retry, exhausted failure, and cancellation are exceptional states", () => {
+  assert.equal(deriveAgentState(evidence({ attempt_count: 2,
+    last_error_code: "tracker_timeout" })), "waiting")
+  assert.equal(deriveAgentState(evidence({ work_status: "dead_letter" })), "failed")
+  assert.equal(deriveAgentState(evidence({ work_status: "cancelled",
+    cancelled_at: "2026-08-20T12:00:00Z" })), "stopped")
+})
+
+test("stale generations and unrelated delivery revisions fail closed", () => {
+  assert.throws(() => deriveAgentState(evidence({ current_dispatch_id:
+    "00000000-0000-4000-8000-000000000002" })), /generation_stale/)
+  assert.throws(() => deriveAgentState(evidence({ head_sha: "a".repeat(40),
+    validation_state: "running", validation_sha: "b".repeat(40) })),
+  /validation_revision_mismatch/)
+})

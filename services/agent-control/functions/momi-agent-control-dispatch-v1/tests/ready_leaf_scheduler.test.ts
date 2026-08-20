@@ -80,6 +80,7 @@ function dependencies(options: {
       const issue = options.issues.get(id); return issue ? [issue] : []
       })),
     candidateIds: () => Promise.resolve([...options.issues.keys()]),
+    projectable: () => Promise.resolve([]),
     reconcile: (_route, issue) => {
       const previous = lastEligible.get(issue.id) ?? false
       if (issue.dispatchable && !previous) {
@@ -101,12 +102,13 @@ function dependencies(options: {
     stale: () => Promise.resolve(true),
     claim: async (_route, _owner, _releaseSha, _leader, candidate) => {
       if (dispatched.has(candidate.candidateId) ||
-        active.size >= (options.capacity ?? 20)) return false
+        active.size >= (options.capacity ?? 20)) return null
       dispatched.add(candidate.candidateId)
       active.add(candidate.candidateId)
       maxActive = Math.max(maxActive, active.size)
-      return true
+      return { dispatchId: candidate.candidateId }
     },
+    project: () => Promise.resolve(),
     heartbeat: () => Promise.resolve(),
     providerRetry: (_routeKey, code) => { retryCodes.push(code); return Promise.resolve() },
     providerSuccess: () => Promise.resolve(),

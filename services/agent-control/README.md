@@ -71,6 +71,10 @@ one route-scoped leader plus fenced candidate/slot generations. The migration
 and host pump are both disabled by default; see
 [`docs/operations/scheduler.md`](../../docs/operations/scheduler.md).
 
+The canonical lifecycle reducer and repairable output-only Linear projection are
+documented in
+[`docs/operations/agent-state.md`](../../docs/operations/agent-state.md).
+
 ## Exact dead-letter recovery
 
 `momi_agent_ops.recover_dead_letter_dispatch_v1` is a private database-owner

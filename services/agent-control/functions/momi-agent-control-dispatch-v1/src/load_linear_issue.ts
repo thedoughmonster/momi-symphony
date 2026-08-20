@@ -15,14 +15,14 @@ export async function loadLinearIssue(
       project { id }
       team {
         id
-        labels(first: 250) { nodes { id name } }
+        labels(first: 250) { nodes { id name parent { name } } }
         states(first: 50) {
           nodes { id name type }
           pageInfo { hasNextPage endCursor }
         }
       }
       labels(first: 250) {
-        nodes { id name }
+        nodes { id name parent { name } }
         pageInfo { hasNextPage endCursor }
       }
       parent { id identifier state { id name type } }
@@ -75,13 +75,16 @@ function workflowState(value: unknown, code: string): LinearWorkflowState {
     type: type as LinearWorkflowState["type"] }
 }
 
-function labelNodes(value: unknown, code: string): Array<{ id: string; name: string }> {
+function labelNodes(value: unknown, code: string): Array<{
+  id: string; name: string; parentName: string | null
+}> {
   const connection = record(value)
   if (!connection || !Array.isArray(connection.nodes)) throw new Error(code)
   return connection.nodes.map((node) => {
     const label = record(node)
     if (!text(label?.id) || !text(label?.name)) throw new Error(code)
-    return { id: text(label?.id)!, name: text(label?.name)! }
+    return { id: text(label?.id)!, name: text(label?.name)!,
+      parentName: text(record(label?.parent)?.name) }
   })
 }
 
