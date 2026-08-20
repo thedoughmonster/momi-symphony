@@ -5,7 +5,6 @@ import { reconcileTerminal } from "../src/reconcile_terminal.ts"
 import type { TerminalContext, TerminalInput } from "../src/types.ts"
 
 const context = { issue_id: "00000000-0000-4000-8000-000000000010",
-  work_id: "00000000-0000-4000-8000-000000000001",
   issue_identifier: "MOX-253", action: "execute-run",
   linear_comment_id: "00000000-0000-4000-8000-000000000011" } as TerminalContext
 const terminal = { event: "terminal",

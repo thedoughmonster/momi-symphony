@@ -94,7 +94,6 @@ export type HostRecovery = { recovery_state: Exclude<RecoveryState,
   "not_requested" | "requested"> }
 
 export type TerminalContext = {
-  work_id: string
   issue_id: string
   issue_identifier: string
   action: AgentAction

@@ -12,6 +12,6 @@ export async function processTerminal(
   if (!context) throw new Error("terminal_record_refused")
   const commentId = await reconcile(context, input)
   if (!await writeback(input, commentId)) throw new Error("terminal_writeback_record_failed")
-  await project(context.work_id)
+  await project(input.work_id)
   return { ok: true, disposition: "completed" }
 }

@@ -15,7 +15,7 @@ test("terminal completion persists reconciled Linear evidence", async () => {
   let recordedComment: string | null = null
   const result = await processTerminal(terminal,
     () => Promise.resolve({ issue_id: "issue-1", issue_identifier: "MOX-151",
-      work_id: terminal.work_id, action: "cleanup", linear_comment_id: null }),
+      action: "cleanup", linear_comment_id: null }),
     () => Promise.resolve("comment-1"),
     (_input, commentId) => { recordedComment = commentId; return Promise.resolve(true) },
     () => Promise.resolve())
