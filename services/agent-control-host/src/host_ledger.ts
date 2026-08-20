@@ -72,6 +72,8 @@ export class HostLedger {
   }
   async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
+    dispatch?: Pick<import("./types.ts").HostDispatch, "budget" | "policy_version" |
+      "stable_prefix_fingerprint" | "context_fingerprint">,
   ): Promise<HostRecord> {
     const existing = this.records.get(workId)
     if (existing) {
@@ -85,6 +87,10 @@ export class HostLedger {
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
       callbackSent: false, cancellationRequestedAt: null, recoveryRequestedAt: null,
+      budget: dispatch?.budget, policyVersion: dispatch?.policy_version,
+      stablePrefixFingerprint: dispatch?.stable_prefix_fingerprint,
+      contextFingerprint: dispatch?.context_fingerprint,
+      telemetry: null, startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
     await this.persist(); return record
@@ -108,6 +114,11 @@ export class HostLedger {
     const record = this.require(workId)
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
     record.callbackSent = false; record.updatedAt = new Date().toISOString(); await this.persist(); return record
+  }
+  async recordTelemetry(workId: string,
+    telemetry: import("./types.ts").AttemptTelemetry): Promise<void> {
+    const record = this.require(workId); record.telemetry = telemetry
+    record.updatedAt = new Date().toISOString(); await this.persist()
   }
   async callbackSent(workId: string): Promise<void> {
     const record = this.require(workId); record.callbackSent = true

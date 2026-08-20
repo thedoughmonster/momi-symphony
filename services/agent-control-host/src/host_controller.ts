@@ -1,4 +1,5 @@
 import { dispatchFingerprint } from "./dispatch_fingerprint.ts"
+import { budgetDisposition, buildAttemptTelemetry } from "./attempt_telemetry.ts"
 import { cancelHostWork } from "./cancel_host_work.ts"
 import { extractTerminalSummary } from "./extract_terminal_summary.ts"
 import { handleHostNotification } from "./handle_host_notification.ts"
@@ -13,6 +14,8 @@ export class HostController {
   private finalizing = new Set<string>()
   private callbackTimers = new Set<string>()
   private notifications: Promise<void> = Promise.resolve()
+  private budgetTimers = new Map<string, NodeJS.Timeout>()
+  private budgetExhausted = new Set<string>()
   private readonly client: AppServerClient
   private readonly ledger: HostLedger
   private readonly config: HostConfiguration
@@ -33,6 +36,7 @@ export class HostController {
         else {
           const accepted = record.state === "ambiguous"
             ? await this.ledger.accept(record.workId, record.threadId!, record.turnId!) : record
+          this.scheduleBudget(accepted)
           await this.recover(accepted, true)
           if (accepted.state === "interactive") await this.client.request(
             "thread/unsubscribe", { threadId: accepted.threadId })
@@ -47,7 +51,7 @@ export class HostController {
       input.base_branch !== this.config.baseBranch) throw new Error("host_mapping_refused")
     const prior = this.ledger.get(input.work_id)
     const record = await this.ledger.reserve(input.work_id,
-      dispatchFingerprint(input), input.capability_token, input.interaction_mode)
+      dispatchFingerprint(input), input.capability_token, input.interaction_mode, input)
     if (prior) {
       if (record.threadId && record.turnId) {
         const resumed = record.state === "ambiguous"
@@ -55,6 +59,7 @@ export class HostController {
         if (resumed.state === "terminal" && !resumed.callbackSent) {
           this.scheduleCallback(resumed)
         } else if (resumed.state === "accepted") {
+          this.scheduleBudget(resumed)
           void this.recover(resumed).catch(() => undefined)
         }
         return { thread_id: record.threadId, turn_id: record.turnId }
@@ -66,6 +71,7 @@ export class HostController {
       const started = await startHostTask(this.client, this.config, input)
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
+      this.scheduleBudget(accepted)
       void this.recover(accepted).catch(() => undefined)
       return started
     } catch (error) {
@@ -92,6 +98,9 @@ export class HostController {
     if (!record.threadId || this.finalizing.has(record.workId)) return
     if (record.recoveryRequestedAt) return
     this.finalizing.add(record.workId)
+    const timer = this.budgetTimers.get(record.workId)
+    if (timer) clearTimeout(timer)
+    this.budgetTimers.delete(record.workId)
     try {
       if (record.interactionMode === "interactive" && !record.cancellationRequestedAt) {
         await this.client.request("thread/unsubscribe", { threadId: record.threadId })
@@ -99,8 +108,16 @@ export class HostController {
       }
       await this.client.request("thread/archive", { threadId: record.threadId })
       const archivedAt = new Date().toISOString()
-      const terminal = await this.ledger.terminal(
-        record.workId, extractTerminalSummary(turn), archivedAt)
+      let summary = extractTerminalSummary(turn)
+      const telemetry = buildAttemptTelemetry(record, turn, summary.terminal_disposition)
+      const budget = this.budgetExhausted.has(record.workId)
+        ? "budget_elapsed_exhausted" : budgetDisposition(record, telemetry)
+      this.budgetExhausted.delete(record.workId)
+      if (budget) summary = { readiness_result: "failed", terminal_disposition: "failed",
+        summary: `${budget}; the durable checkpoint is preserved for operator-directed resume.` }
+      telemetry.disposition = summary.terminal_disposition
+      await this.ledger.recordTelemetry(record.workId, telemetry)
+      const terminal = await this.ledger.terminal(record.workId, summary, archivedAt)
       await this.deliverCallback(terminal)
     } finally {
       this.finalizing.delete(record.workId)
@@ -116,5 +133,20 @@ export class HostController {
       this.callbackTimers.delete(record.workId)
       void this.deliverCallback(record).catch(() => undefined)
     }, 1000)
+  }
+  private scheduleBudget(record: HostRecord): void {
+    if (!record.budget || !record.threadId || !record.turnId ||
+      this.budgetTimers.has(record.workId)) return
+    const remaining = Math.max(0, record.budget.elapsed_ms -
+      (Date.now() - Date.parse(record.startedAt ?? record.updatedAt)))
+    const timer = setTimeout(() => {
+      this.budgetTimers.delete(record.workId)
+      this.budgetExhausted.add(record.workId)
+      void this.client.request("turn/interrupt", {
+        threadId: record.threadId, turnId: record.turnId,
+      }).catch(() => undefined)
+    }, remaining)
+    timer.unref()
+    this.budgetTimers.set(record.workId, timer)
   }
 }

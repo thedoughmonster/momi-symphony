@@ -1,4 +1,5 @@
 import { cancellationFingerprint } from "./cancellation_fingerprint.ts"
+import { buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostCancellation, HostCancellationResult,
   HostConfiguration } from "./types.ts"
@@ -27,6 +28,7 @@ export async function cancelHostWork(
     if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
     await ledger.cancellationRequested(target.workId)
     await client.request("thread/archive", { threadId: target.threadId })
+    await ledger.recordTelemetry(target.workId, buildSyntheticTelemetry(target, "interrupted"))
     await ledger.terminal(target.workId, { readiness_result: "ready",
       terminal_disposition: "interrupted",
       summary: "Interactive discovery task canceled and archived." },

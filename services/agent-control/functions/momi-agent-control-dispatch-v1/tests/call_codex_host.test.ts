@@ -28,9 +28,12 @@ test("uses the claimed private HTTPS endpoint and runtime bearer secret", async 
     assert.deepEqual(accepted, { thread_id: "thread", turn_id: "turn" })
     assert.equal(requestedUrl, work.host_dispatch_url)
     assert.equal(authorization, "Bearer test-secret")
-    assert.match(requestedBody, /"schema_version":2/)
+    assert.match(requestedBody, /"schema_version":3/)
     assert.match(requestedBody, /"interaction_mode":"one_shot"/)
     assert.match(requestedBody, /"thread_name":"MOX-154 · execute-run"/)
+    assert.match(requestedBody, /"stable_instruction":/)
+    assert.match(requestedBody, /"volatile_context":/)
+    assert.match(requestedBody, /"model_visible_tool_bytes":96000/)
     await callCodexHost({ ...work, action: "run-discovery" }, "capability", (_url, init) => {
       requestedBody = String(init?.body ?? "")
       return Promise.resolve(Response.json({ thread_id: "discovery", turn_id: "question" }))

@@ -27,6 +27,25 @@ export type TerminalInput = DispatchInput & {
   terminal_disposition: "completed" | "failed" | "interrupted"
   archived_at: string
   summary: string
+  telemetry: AttemptTelemetry
+}
+
+export type AttemptTelemetry = {
+  policy_version: string
+  stable_prefix_fingerprint: string
+  context_fingerprint: string
+  input_tokens: number | null
+  cached_input_tokens: number | null
+  output_tokens: number | null
+  model_visible_tool_bytes: number
+  model_turns: number
+  no_progress_cycles: number
+  subagents: number
+  max_subagent_depth: number
+  retries: number
+  repeated_failure_fingerprints: number
+  elapsed_ms: number
+  disposition: "completed" | "failed" | "interrupted"
 }
 
 export type ClaimedDispatch = {

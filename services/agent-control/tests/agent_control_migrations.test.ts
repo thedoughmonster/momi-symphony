@@ -10,6 +10,7 @@ const recoveryPath = "supabase/migrations/20260816083201_add_simple_discovery_re
 const deadLetterPath = "supabase/migrations/20260816183827_add_agent_control_dead_letter_recovery.sql"
 const schedulerPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
 const decisionAlertPath = "supabase/migrations/20260819082707_add_decision_alert_lifecycle.sql"
+const efficiencyPath = "supabase/migrations/20260820070000_add_execution_efficiency_telemetry.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -161,4 +162,25 @@ test("decision alerts are private, attempt-first, exact-release gated, and separ
   assert.doesNotMatch(migration, /\bmomi_alerting\b|slack_order|order_alert/i)
   assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
   assert.match(migration, /from public, anon, authenticated, service_role/)
+})
+
+test("execution telemetry is private, complete, percentile-backed, and atomic", async () => {
+  const migration = await readFile(efficiencyPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  for (const table of ["execution_attempt_telemetry", "execution_checkpoints"]) {
+    assert.match(migration, new RegExp(
+      `alter table momi_agent_ops\\.${table} enable row level security`,
+    ))
+  }
+  for (const field of ["input_tokens", "cached_input_tokens", "output_tokens",
+    "model_visible_tool_bytes", "model_turns", "no_progress_cycles", "subagents",
+    "max_subagent_depth", "retries", "repeated_failure_fingerprints", "elapsed_ms",
+    "terminal_disposition"]) assert.match(migration, new RegExp(field))
+  assert.match(migration, /create view momi_agent_ops\.execution_action_percentiles_v1/)
+  assert.match(migration, /percentile_cont\(0\.5\)/)
+  assert.match(migration, /percentile_cont\(0\.95\)/)
+  assert.match(migration, /create function momi_agent_ops\.record_terminal_v3/)
+  assert.match(migration, /momi_agent_ops\.record_terminal_v2/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
 })

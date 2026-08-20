@@ -28,6 +28,8 @@ curl --fail http://127.0.0.1:47931/health
 
 See `docs/operations/development.md` for development release and verification,
 `docs/operations/migration-authority.md` for the database handoff, and
-`docs/operations/rollback.md` before any cutover.
+`docs/operations/rollback.md` before any cutover. The bounded context, budget,
+checkpoint, compact-receipt, and telemetry contract is documented in
+`docs/operations/execution-efficiency.md`.
 
 Production activation is intentionally outside this repository-transfer issue.

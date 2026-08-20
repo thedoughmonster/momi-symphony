@@ -40,6 +40,12 @@ secret, workspace root, repository/base, ledger path, and an installed Codex
 App Server daemon. Put any public TLS/reverse-proxy boundary outside this
 process. The adapter never logs request bodies, prompts, or capability tokens.
 
+New dispatches use the v3 compact transport: stable action rules and volatile
+attempt context are separate input items with durable fingerprints and a typed
+budget. Terminal callbacks include bounded usage telemetry; full tool output is
+replaced by redacted, artifact-linked receipts. See
+[`docs/operations/execution-efficiency.md`](../../docs/operations/execution-efficiency.md).
+
 When explicitly enabled after the protected development acceptance, this same
 process owns the sole scheduler timer. `MOMI_AGENT_CONTROL_RELEASE_SHA` must be
 the exact protected 40-character commit under acceptance. The pump posts only
