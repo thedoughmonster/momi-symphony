@@ -47,12 +47,10 @@ export async function processReviewRequest(input: ReviewRequestInput,
     const changedPaths = await github.compareChangedPaths(input.repository,
       prior.head_sha, subject.headSha)
     const findingPaths = prior.findings.map((finding) => String(finding.path ?? ""))
-    const materialRiskChanged = !prior.findings.every((finding) =>
-      String(finding.category ?? "").toLowerCase() === "mechanical")
     if (!requiresFreshReviewer({ previousProfile: prior.profile, nextProfile: profile,
       priorReviewerAvailable: Boolean(prior.reviewer_thread_id),
       policyChanged: prior.policy_version !== REVIEW_POLICY_VERSION,
-      changedPaths, findingPaths, materialRiskChanged })) {
+      changedPaths, findingPaths })) {
       reverificationOf = prior.review_attempt_id
       reviewChangedPaths = changedPaths
       reviewDiffArtifactRef = `https://api.github.com/repos/${input.repository}/compare/${prior.head_sha}...${subject.headSha}`

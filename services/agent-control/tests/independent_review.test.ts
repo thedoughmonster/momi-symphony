@@ -80,14 +80,18 @@ test("exact-head merge reduction fails closed for every missing authority", () =
   }
 })
 
-test("same reviewer may verify only a mechanically bounded correction", () => {
+test("same reviewer may verify a path-and-policy bounded correction", () => {
   const common = { previousProfile: "high" as const, nextProfile: "high" as const,
-    priorReviewerAvailable: true, policyChanged: false, materialRiskChanged: false,
+    priorReviewerAvailable: true, policyChanged: false,
     findingPaths: ["src/a.ts"] }
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"] }), false)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts", "src/b.ts"] }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
     policyChanged: true }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    nextProfile: "standard" }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    priorReviewerAvailable: false }), true)
 })
 
 test("review packets include only exact bounded sources", () => {

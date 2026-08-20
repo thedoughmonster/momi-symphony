@@ -141,7 +141,11 @@ export function reduceMergeEligibility(evidence: MergeGateEvidence): MergeGateDe
   return { eligible: true }
 }
 
-/** Same-review correction is permitted only for an exact, mechanically bounded finding fix. */
+/**
+ * Same-review correction is permitted only when the exact delta stays on active finding paths
+ * and reviewer availability, policy, and deterministic risk profile are unchanged. Finding
+ * prose/category is not evidence that the correction itself broadened risk.
+ */
 export function requiresFreshReviewer(input: {
   previousProfile: ReviewProfile
   nextProfile: ReviewProfile
@@ -149,9 +153,8 @@ export function requiresFreshReviewer(input: {
   policyChanged: boolean
   changedPaths: string[]
   findingPaths: string[]
-  materialRiskChanged: boolean
 }): boolean {
-  if (!input.priorReviewerAvailable || input.policyChanged || input.materialRiskChanged ||
+  if (!input.priorReviewerAvailable || input.policyChanged ||
     input.previousProfile !== input.nextProfile) return true
   const bounded = new Set(input.findingPaths)
   return input.changedPaths.length === 0 || input.changedPaths.some((path) => !bounded.has(path))
