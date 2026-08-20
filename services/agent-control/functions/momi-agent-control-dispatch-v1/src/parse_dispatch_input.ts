@@ -131,6 +131,8 @@ function validReviewResult(value: unknown): boolean {
     ["accepted", "changes_requested", "inconclusive", "escalate"].includes(String(body.result)) &&
     Array.isArray(body.findings) && body.findings.length <= 100 &&
     body.findings.every(validReviewFinding) &&
+    !(body.result === "accepted" && body.findings.some((finding) =>
+      (finding as Record<string, unknown>).severity === "blocking")) &&
     typeof body.artifact_ref === "string" && body.artifact_ref.length > 0 &&
     body.artifact_ref.length <= 500 &&
     /^sha256:[0-9a-f]{64}$/.test(String(body.result_fingerprint))

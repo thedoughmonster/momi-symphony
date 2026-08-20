@@ -312,6 +312,7 @@ export function validReviewFinding(value: unknown): boolean {
   const keys = ["category", "contract", "evidence", "id", "line", "path",
     "required_outcome", "severity"]
   return Object.keys(finding).sort().join(",") === keys.join(",") &&
+    typeof finding.id === "string" &&
     new RegExp(REVIEW_FINDING_ID_PATTERN).test(finding.id) &&
     ["blocking", "nonblocking"].includes(finding.severity) &&
     typeof finding.category === "string" && finding.category.length <= 120 &&

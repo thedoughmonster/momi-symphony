@@ -14,6 +14,8 @@ import { sendTerminalCallback } from "../src/send_terminal_callback.ts"
 import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostDispatch, HostRecord } from "../src/types.ts"
 import { REVIEW_FINDING_ID_PATTERN } from "../../agent-control/src/independent_review.ts"
+import { parseDispatchInput } from
+  "../../agent-control/functions/momi-agent-control-dispatch-v1/src/parse_dispatch_input.ts"
 
 const dispatch: HostDispatch = { schema_version: 4,
   work_id: "00000000-0000-4000-8000-000000000001",
@@ -373,6 +375,8 @@ test("review result fixtures agree across App Server, extraction, and callback s
       artifact_ref: "review://accepted-blocking" } },
     { expected: false, value: { result: "changes_requested",
       findings: [{ ...blocking, id: "bad id" }], artifact_ref: "review://bad-id" } },
+    { expected: false, value: { result: "changes_requested",
+      findings: [{ ...blocking, id: 123 }], artifact_ref: "review://non-string-id" } },
     { expected: true, value: { result: "changes_requested", findings: [blocking],
       artifact_ref: "review://changes" } },
   ] as const
@@ -388,6 +392,7 @@ test("review result fixtures agree across App Server, extraction, and callback s
       telemetry }
     assert.equal(matchesSchema(outputSchema, fixture.value, outputSchema), fixture.expected)
     assert.equal(extracted !== null, fixture.expected)
+    assert.equal(parseDispatchInput(callback) !== null, fixture.expected)
     assert.equal(matchesSchema(callbackInputSchema, callback, callbackInputSchema),
       fixture.expected)
   }
