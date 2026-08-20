@@ -1,4 +1,5 @@
 import type { AgentAction } from "../../../src/actions.ts"
+import { buildActionContextEnvelope, stableFingerprint, stableJson } from "../../../src/execution_efficiency.ts"
 import type { ClaimedDispatch } from "./types.ts"
 
 const actionInstructions: Record<AgentAction, string[]> = {
@@ -47,15 +48,19 @@ const actionInstructions: Record<AgentAction, string[]> = {
   ],
 }
 
-export function buildCodexInstruction(work: ClaimedDispatch): string {
-  return [
-    `Perform Linear action ${work.action} for issue ${work.issue_identifier} in this visible task.`,
-    `Durable dispatch: ${work.work_id}.`,
-    `Canonical issue: ${work.issue_url}`,
-    `Mapped repository: ${work.repository}; base branch: ${work.base_branch}.`,
+export type CodexPrompt = {
+  stablePrefix: string
+  volatileContext: string
+  stablePrefixFingerprint: string
+  contextFingerprint: string
+}
+
+export function buildCodexPrompt(work: ClaimedDispatch): CodexPrompt {
+  const stablePrefix = [
+    `Perform Linear action ${work.action} in this visible task.`,
     "Before acting, fetch the current Linear issue and relations.",
-    `Proceed only when project ${work.project_id} (${work.project_name}) still maps exactly`,
-    `to that repository/base and state is one of ${(work.active_states ?? []).join(", ")}.`,
+    "Proceed only when the volatile context's project still maps exactly to its",
+    "repository/base and state remains in the declared active states.",
     `This dispatch is durable proof that ${work.action} was added; the action label is`,
     "consumed after task creation, so its absence must not make the issue unready.",
     "Otherwise report an actionable unready result.",
@@ -66,4 +71,21 @@ export function buildCodexInstruction(work: ClaimedDispatch): string {
       ? "Respond conversationally; the task remains open for the user's next message."
       : "Return only the requested structured readiness/disposition summary when finished.",
   ].join("\n")
+  const envelope = buildActionContextEnvelope({ ...work,
+    project_id: work.project_id!, project_name: work.project_name!,
+    repository: work.repository!, base_branch: work.base_branch!,
+    active_states: work.active_states ?? [] })
+  const volatileContext = [
+    "Volatile action context (authoritative for this attempt):",
+    `Durable dispatch: ${work.work_id}.`,
+    stableJson(envelope),
+  ].join("\n")
+  return { stablePrefix, volatileContext,
+    stablePrefixFingerprint: stableFingerprint(stablePrefix),
+    contextFingerprint: stableFingerprint(envelope) }
+}
+
+export function buildCodexInstruction(work: ClaimedDispatch): string {
+  const prompt = buildCodexPrompt(work)
+  return `${prompt.stablePrefix}\n${prompt.volatileContext}`
 }

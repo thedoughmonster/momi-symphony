@@ -1,4 +1,5 @@
 import { recoveryFingerprint } from "./recovery_fingerprint.ts"
+import { buildAttemptTelemetry, buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostRecord, HostRecovery,
   HostRecoveryResult, TurnShape } from "./types.ts"
@@ -51,8 +52,12 @@ export async function recoverDiscoveryWork(
     }
   }
   await client.request("thread/archive", { threadId: target.threadId })
+  const disposition = interrupted ? "interrupted" : "completed"
+  await ledger.recordTelemetry(target.workId, storedTurn
+    ? buildAttemptTelemetry(target, storedTurn, disposition)
+    : buildSyntheticTelemetry(target, disposition))
   const terminal = await ledger.terminal(target.workId, { readiness_result: "ready",
-    terminal_disposition: interrupted ? "interrupted" : "completed",
+    terminal_disposition: disposition,
     summary: "Interactive discovery task recovered and archived." },
   new Date().toISOString())
   await callback(terminal); await ledger.callbackSent(target.workId)

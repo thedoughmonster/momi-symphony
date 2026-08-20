@@ -5,10 +5,11 @@ export async function recordTerminal(input: TerminalInput): Promise<TerminalCont
   const sql = getDatabase()
   const rows = await sql<TerminalContext[]>`
     select issue_id::text, issue_identifier, action, linear_comment_id::text
-    from momi_agent_ops.record_terminal_v2(
+    from momi_agent_ops.record_terminal_v3(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id}, ${input.readiness_result},
-      ${input.terminal_disposition}, ${input.summary}, ${input.archived_at}::timestamptz
+      ${input.terminal_disposition}, ${input.summary}, ${input.archived_at}::timestamptz,
+      ${JSON.stringify(input.telemetry)}::jsonb
     )
   `
   return rows[0] ?? null

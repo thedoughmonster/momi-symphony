@@ -15,9 +15,15 @@ export async function startHostTask(
   const turnInput: Record<string, unknown> = {
     threadId: started.thread.id, clientUserMessageId: input.work_id,
     approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
-    input: [{ type: "text", text: input.instruction, text_elements: [] }],
+    input: input.schema_version === 3
+      ? [{ type: "text", text: input.stable_instruction, text_elements: [] },
+        { type: "text", text: input.volatile_context, text_elements: [] }]
+      : [{ type: "text", text: input.instruction, text_elements: [] }],
     responsesapiClientMetadata: { work_id: input.work_id,
-      issue_identifier: input.issue_identifier },
+      issue_identifier: input.issue_identifier,
+      policy_version: input.policy_version,
+      stable_prefix_fingerprint: input.stable_prefix_fingerprint,
+      context_fingerprint: input.context_fingerprint },
   }
   if (input.interaction_mode === "one_shot") {
     turnInput.outputSchema = { type: "object", additionalProperties: false,

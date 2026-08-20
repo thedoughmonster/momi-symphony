@@ -33,15 +33,38 @@ export function parseDispatchInput(
     !["completed", "failed", "interrupted"].includes(String(body.terminal_disposition)) ||
     Number.isNaN(Date.parse(body.archived_at)) ||
     (body.summary !== undefined && typeof body.summary !== "string") ||
-    String(body.summary ?? "").length > 1000) return null
+    String(body.summary ?? "").length > 1000 || !validTelemetry(body.telemetry)) return null
   const expected = ["archived_at", "capability_token", "event", "readiness_result",
     "terminal_disposition", "thread_id", "turn_id", "work_id",
-    ...(body.summary === undefined ? [] : ["summary"])].sort().join(",")
+    "telemetry", ...(body.summary === undefined ? [] : ["summary"])].sort().join(",")
   if (Object.keys(body).sort().join(",") !== expected) return null
   return { event: "terminal", work_id: body.work_id as string,
     capability_token: body.capability_token as string,
     thread_id: body.thread_id, turn_id: body.turn_id,
     readiness_result: body.readiness_result as TerminalInput["readiness_result"],
     terminal_disposition: body.terminal_disposition as TerminalInput["terminal_disposition"],
-    archived_at: body.archived_at, summary: String(body.summary ?? "") }
+    archived_at: body.archived_at, summary: String(body.summary ?? ""),
+    telemetry: body.telemetry as TerminalInput["telemetry"] }
+}
+
+function validTelemetry(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  const keys = ["cached_input_tokens", "context_fingerprint", "disposition", "elapsed_ms",
+    "input_tokens", "max_subagent_depth", "model_turns", "model_visible_tool_bytes",
+    "no_progress_cycles", "output_tokens",
+    "policy_version", "repeated_failure_fingerprints", "retries", "stable_prefix_fingerprint",
+    "subagents"]
+  if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
+    !["completed", "failed", "interrupted"].includes(String(body.disposition))) return false
+  for (const key of ["model_turns", "model_visible_tool_bytes", "no_progress_cycles",
+    "subagents", "max_subagent_depth", "retries",
+    "repeated_failure_fingerprints", "elapsed_ms"]) {
+    if (!Number.isSafeInteger(body[key]) || Number(body[key]) < 0) return false
+  }
+  for (const key of ["input_tokens", "cached_input_tokens", "output_tokens"]) {
+    if (body[key] !== null && (!Number.isSafeInteger(body[key]) || Number(body[key]) < 0)) return false
+  }
+  return ["policy_version", "stable_prefix_fingerprint", "context_fingerprint"]
+    .every((key) => typeof body[key] === "string" && String(body[key]).length <= 160)
 }
