@@ -215,11 +215,15 @@ begin
     where attempt.implementation_dispatch_id = p_dispatch_id
       and attempt.state = 'superseded' and attempt.reviewer_thread_id is not null
       and attempt.interruption_confirmed_at is null) then
+    review_attempt_id := null; reviewer_dispatch_id := null;
+    reviewer_capability_token := null; generation := null; reviewer_thread_id := null;
     disposition := 'reviewer_interruption_pending'; return next; return;
   end if;
   select count(*) into active_reviews from momi_agent_ops.review_attempts attempt
   where attempt.state in ('reserved', 'running');
   if active_reviews >= p_review_limit then
+    review_attempt_id := null; reviewer_dispatch_id := null;
+    reviewer_capability_token := null; generation := null; reviewer_thread_id := null;
     disposition := 'capacity_wait'; return next; return;
   end if;
   select coalesce(max(attempt.generation), 0) + 1 into next_generation
@@ -237,7 +241,11 @@ begin
       and source.base_sha = p_base_sha
       and source.rules_fingerprint = p_rules_fingerprint
       and source.head_sha <> p_head_sha;
-    if not found then disposition := 'reverification_refused'; return next; return; end if;
+    if not found then
+      review_attempt_id := null; reviewer_dispatch_id := null;
+      reviewer_capability_token := null; generation := null; reviewer_thread_id := null;
+      disposition := 'reverification_refused'; return next; return;
+    end if;
     reviewer_thread_id := prior_reviewer.reviewer_thread_id;
   end if;
   token := gen_random_uuid();

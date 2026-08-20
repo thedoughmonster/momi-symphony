@@ -213,7 +213,7 @@
       "properties": {
         "ok": {"type": "boolean"},
         "disposition": {
-          "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
+          "enum": ["active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
         },
         "thread_id": {"type": "string"}
       },

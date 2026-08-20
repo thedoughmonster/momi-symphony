@@ -226,6 +226,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
 })
 
 test("strict output contract covers every current review response family", async () => {
+  assertOutput({ ok: true, disposition: "active", thread_id: "implementation-thread" })
+  assertOutput({ ok: false, disposition: "retrying" })
   const requestWithoutIdentity = (disposition: string) => ({ ok: true, disposition,
     review_attempt_id: null, reviewer_dispatch_id: null, generation: null })
   for (const disposition of ["implementation_identity_refused", "focused_validation_required",
@@ -329,6 +331,11 @@ test("strict output contract covers every current review response family", async
   assert.equal(matchesSchema(outputSchema, { ok: true,
     disposition: "already_failed", review_attempt_id: null,
     reviewer_dispatch_id: null, generation: null, profile: null }, outputSchema), false)
+  assert.equal(matchesSchema(outputSchema,
+    { ok: false, disposition: "accepted" }, outputSchema), false)
+  assert.equal(matchesSchema(outputSchema,
+    { ok: true, disposition: "accepted", thread_id: "implementation-thread" },
+    outputSchema), false)
 })
 
 test("merge preflight persists its exact receipt before projecting the required success check", async () => {
