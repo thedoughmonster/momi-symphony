@@ -115,14 +115,14 @@ begin
     else current_run.release_state end;
   if prior_state in ('succeeded', 'failed') and prior_state <> p_status then return false; end if;
   if prior_state = 'running' and p_status = 'pending' then return false; end if;
-  if p_workflow_run_id is not null and case p_phase
+  if p_workflow_run_id is not null and (case p_phase
       when 'validating' then current_run.validation_workflow_run_id
       when 'reviewing' then current_run.review_workflow_run_id
-      else current_run.release_workflow_run_id end is not null
-    and p_workflow_run_id is distinct from case p_phase
+      else current_run.release_workflow_run_id end) is not null
+    and p_workflow_run_id is distinct from (case p_phase
       when 'validating' then current_run.validation_workflow_run_id
       when 'reviewing' then current_run.review_workflow_run_id
-      else current_run.release_workflow_run_id end then return false; end if;
+      else current_run.release_workflow_run_id end) then return false; end if;
 
   update momi_agent_ops.run_records run set
     branch_name = coalesce(run.branch_name, p_branch_name),
