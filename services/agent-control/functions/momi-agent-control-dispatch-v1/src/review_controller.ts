@@ -5,7 +5,9 @@ import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSI
   requiresFreshReviewer, selectReviewProfile, type ReviewReceipt } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
+import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
 import { GitHubReviewGateway } from "./github_review_gateway.ts"
+import { loadLinearIssue } from "./load_linear_issue.ts"
 import type { MergePreflightInput, ReviewRequestInput, ReviewStatusInput,
   ReviewTerminalInput } from "./types.ts"
 
@@ -24,9 +26,17 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if (subject.state !== "open" || subject.repository !== input.repository ||
     subject.baseBranch !== input.base_branch) throw new Error("review_subject_mapping_refused")
   const route = await reviewRoute(sql, input.work_id)
+  const issue = await loadLinearIssue(route.issueId, createLinearAdapterProfile({
+    projectId: route.projectId, repository: input.repository, baseBranch: input.base_branch,
+  }))
+  if (issue.identifier !== route.issueIdentifier ||
+    issue.native_ref.project_id !== route.projectId ||
+    !route.activeStates.includes(issue.state)) throw new Error("review_issue_context_refused")
   const profile = selectReviewProfile(subject.changedPaths)
-  const applicableRules = await github.loadApplicableRules(input.repository,
-    subject.headSha, subject.changedPaths)
+  const [applicableRules, headCi] = await Promise.all([
+    github.loadApplicableRules(input.repository, subject.headSha, subject.changedPaths),
+    github.loadHeadChecks(input.repository, subject.headSha),
+  ])
   const prior = await priorChangesRequestedReview(sql, input.work_id)
   let reverificationOf: string | null = null
   let reviewChangedPaths = subject.changedPaths
@@ -57,10 +67,10 @@ export async function processReviewRequest(input: ReviewRequestInput,
     repository: subject.repository, pull_request_number: subject.pullRequestNumber,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
     profile, policy_version: REVIEW_POLICY_VERSION,
-  }, issue: { identifier: route.issueIdentifier, title: "Bounded Linear implementation issue",
-    required_outcome: "Read only the named Linear issue and applicable AGENTS.md rules; perform substantive review of the exact PR subject." },
+  }, issue: { identifier: issue.identifier, title: issue.title,
+    required_outcome: issue.description ?? "" },
   applicable_rules: applicableRules,
-  changed_paths: reviewChangedPaths, diff_artifact_ref: reviewDiffArtifactRef, ci: [],
+  changed_paths: reviewChangedPaths, diff_artifact_ref: reviewDiffArtifactRef, ci: headCi,
   unresolved_findings: unresolvedFindings })
   const packetFingerprint = stableFingerprint(packet)
   if (reviewerPrompt(packet, profile, false).volatile.length > 7_500) {

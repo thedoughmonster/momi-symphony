@@ -24,7 +24,7 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     await run("git", ["add", "subject.txt"], { cwd: repository })
     await run("git", ["commit", "-m", "first"], { cwd: repository })
     const first = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
-    const dispatch = { schema_version: 4, review_subject: {
+    const dispatch = { schema_version: 4, work_id: randomUUID(), review_subject: {
       implementation_dispatch_id: implementationId, head_sha: first,
     } } as HostDispatch
     workspace = await prepareReviewWorkspace({ workspaceRoot: repository,
@@ -35,10 +35,13 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     await run("git", ["add", "subject.txt"], { cwd: repository })
     await run("git", ["commit", "-m", "second"], { cwd: repository })
     const second = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
-    const updated = { ...dispatch, review_subject: { ...dispatch.review_subject!, head_sha: second } }
-    assert.equal(await prepareReviewWorkspace({ workspaceRoot: repository,
-      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, updated), workspace)
-    assert.equal(await readFile(join(workspace, "subject.txt"), "utf8"), "second\n")
+    const updated = { ...dispatch, work_id: randomUUID(),
+      review_subject: { ...dispatch.review_subject!, head_sha: second, generation: 2 } }
+    const nextWorkspace = await prepareReviewWorkspace({ workspaceRoot: repository,
+      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, updated)
+    assert.notEqual(nextWorkspace, workspace)
+    assert.equal(await readFile(join(nextWorkspace, "subject.txt"), "utf8"), "second\n")
+    await run("git", ["worktree", "remove", "--force", nextWorkspace], { cwd: repository })
   } finally {
     if (workspace) await run("git", ["worktree", "remove", "--force", workspace],
       { cwd: repository }).catch(() => undefined)

@@ -32,6 +32,7 @@ export async function handleRequestWithDependencies(
 ): Promise<Response> {
   if (request.method === "GET") {
     const ready = Boolean(Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() &&
+      Deno.env.get("MOMI_GITHUB_REVIEW_TOKEN")?.trim() &&
       readLinearAccessToken())
     return Response.json({ ok: ready, function_key: "momi.agent_control.dispatch.v1" })
   }

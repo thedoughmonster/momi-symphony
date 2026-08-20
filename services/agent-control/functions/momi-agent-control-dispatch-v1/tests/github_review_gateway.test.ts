@@ -36,6 +36,7 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
     if (url.endsWith("/graphql")) return response({ data: { repository: { pullRequest: {
       reviewThreads: { nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false } },
     } } } })
+    if (url.includes("/rulesets?")) return response([])
     if (url.endsWith(`/statuses/${head}`)) return response({ id: 1 })
     if (url.includes(`/compare/${base}...${head}`)) return response({ files: [
       { filename: "services/agent-control/src/independent_review.ts" }] })
@@ -64,6 +65,8 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
   assert.equal(facts.bypassPossible, false)
   assert.equal(facts.authoritativeBlockingThreads, 0)
   assert.equal(facts.authoritativeChangesRequested, false)
+  assert.equal((await gateway.loadHeadChecks(subject.repository, head))
+    .some((check) => check.name === "CI" && check.conclusion === "success"), true)
   assert.deepEqual(await gateway.compareChangedPaths(subject.repository, base, head),
     ["services/agent-control/src/independent_review.ts"])
   await gateway.publishReviewCheck(subject.repository, head, true, "accepted")
@@ -109,9 +112,43 @@ test("missing required CI and enabled bypasses fail closed", async () => {
     if (url.endsWith("/graphql")) return response({ data: { repository: { pullRequest: {
       reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
     } } } })
+    if (url.includes("/rulesets?")) return response([])
     return new Response("missing", { status: 404 })
   }, "review-token")
   const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
   assert.equal(facts.requiredCi.conclusion, "unknown")
+  assert.equal(facts.bypassPossible, true)
+})
+
+test("latest same-context success replaces stale failure and bypass actors are authoritative", async () => {
+  const gateway = new GitHubReviewGateway(async (input) => {
+    const url = String(input)
+    if (url.endsWith(`/commits/${head}/check-runs`)) return response({ check_runs: [
+      { id: 1, name: "CI", conclusion: "failure", completed_at: "2026-08-20T10:00:00Z" },
+      { id: 2, name: "CI", conclusion: "success", completed_at: "2026-08-20T11:00:00Z" },
+    ] })
+    if (url.endsWith(`/commits/${head}/statuses`)) return response([
+      { id: 3, context: "Symphony Independent Review", state: "failure",
+        created_at: "2026-08-20T10:00:00Z" },
+      { id: 4, context: "Symphony Independent Review", state: "success",
+        created_at: "2026-08-20T11:00:00Z" },
+    ])
+    if (url.endsWith("/branches/main/protection")) return response({
+      required_status_checks: { contexts: ["CI", "Symphony Independent Review"] },
+      required_pull_request_reviews: { bypass_pull_request_allowances: {
+        users: [{ login: "implementation" }], teams: [], apps: [],
+      } }, enforce_admins: { enabled: true },
+      allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false },
+    })
+    if (url.includes("/pulls/16/reviews?")) return response([])
+    if (url.endsWith("/graphql")) return response({ data: { repository: { pullRequest: {
+      reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+    } } } })
+    if (url.includes("/rulesets?")) return response([])
+    return new Response("missing", { status: 404 })
+  }, "review-token")
+  const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
+  assert.equal(facts.requiredCi.conclusion, "success")
+  assert.equal(facts.reviewCheck.conclusion, "success")
   assert.equal(facts.bypassPossible, true)
 })

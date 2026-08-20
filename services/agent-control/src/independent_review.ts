@@ -168,7 +168,8 @@ export function buildBoundedReviewerPacket(input: {
 }): Record<string, unknown> {
   if (input.changed_paths.length === 0 || input.changed_paths.length > 500 ||
     input.changed_paths.some((path) => !validRepositoryPath(path)) ||
-    !input.diff_artifact_ref || input.issue.required_outcome.length > 8_000) {
+    !input.diff_artifact_ref || !input.issue.title || !input.issue.required_outcome ||
+    input.issue.required_outcome.length > 8_000) {
     throw new Error("review_packet_invalid")
   }
   const packet = { schema_version: 1, subject: input.subject, issue: input.issue,

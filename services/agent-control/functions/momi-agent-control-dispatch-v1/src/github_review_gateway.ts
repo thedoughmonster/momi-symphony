@@ -58,13 +58,14 @@ export class GitHubReviewGateway {
 
   async loadMergeFacts(repository: string, baseBranch: string,
     pullRequestNumber: number, headSha: string): Promise<GitHubMergeFacts> {
-    const [checks, statuses, protection, reviews, threads] = await Promise.all([
+    const [checks, statuses, protection, reviews, threads, rulesetBypass] = await Promise.all([
       this.request<Record<string, unknown>>(`/repos/${repository}/commits/${headSha}/check-runs`),
       this.request<Array<Record<string, unknown>>>(`/repos/${repository}/commits/${headSha}/statuses`),
       this.request<Record<string, unknown>>(
         `/repos/${repository}/branches/${encodeURIComponent(baseBranch)}/protection`),
       this.loadReviews(repository, pullRequestNumber),
       this.loadReviewThreads(repository, pullRequestNumber).catch(() => null),
+      this.loadRulesetBypass(repository).catch(() => null),
     ])
     const runs = Array.isArray(checks.check_runs) ? checks.check_runs as Array<Record<string, unknown>> : []
     const reviewStatuses = statuses.filter((status) => status.context === REVIEW_CHECK_NAME)
@@ -79,6 +80,8 @@ export class GitHubReviewGateway {
     const requiredCiNames = [...new Set(requiredNames.map(String))]
       .filter((name) => name !== REVIEW_CHECK_NAME)
     const enforceAdmins = object(protection.enforce_admins)
+    const pullRequestReviews = object(protection.required_pull_request_reviews)
+    const bypassAllowances = object(pullRequestReviews.bypass_pull_request_allowances)
     const latestReviewByAuthor = new Map<string, string>()
     for (const review of reviews.sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))) {
       const login = text(object(review.user).login)
@@ -89,7 +92,8 @@ export class GitHubReviewGateway {
       reviewCheck: { name: REVIEW_CHECK_NAME, headSha, conclusion: reviewCheck },
       reviewCheckRequired: requiredNames.includes(REVIEW_CHECK_NAME),
       bypassPossible: object(protection.allow_force_pushes).enabled === true ||
-        object(protection.allow_deletions).enabled === true || enforceAdmins.enabled !== true,
+        object(protection.allow_deletions).enabled === true || enforceAdmins.enabled !== true ||
+        hasBypassActors(bypassAllowances) || rulesetBypass !== false,
       authoritativeBlockingThreads: threads === null ? -1 : threads,
       authoritativeChangesRequested: [...latestReviewByAuthor.values()]
         .some((state) => state === "CHANGES_REQUESTED") }
@@ -109,6 +113,25 @@ export class GitHubReviewGateway {
       throw new Error("review_compare_unbounded_or_empty")
     }
     return paths
+  }
+
+  async loadHeadChecks(repository: string, headSha: string): Promise<Array<{
+    name: string; conclusion: string; head_sha: string }>> {
+    const [checks, statuses] = await Promise.all([
+      this.request<Record<string, unknown>>(`/repos/${repository}/commits/${headSha}/check-runs`),
+      this.request<Array<Record<string, unknown>>>(`/repos/${repository}/commits/${headSha}/statuses`),
+    ])
+    const runs = Array.isArray(checks.check_runs)
+      ? checks.check_runs as Array<Record<string, unknown>> : []
+    const names = new Set([
+      ...runs.map((run) => text(run.name)), ...statuses.map((status) => text(status.context)),
+    ].filter(Boolean))
+    if (names.size === 0 || names.size > 100) throw new Error("github_head_checks_unbounded")
+    return [...names].sort().map((name) => ({ name,
+      conclusion: conclusion([
+        ...runs.filter((run) => run.name === name),
+        ...statuses.filter((status) => status.context === name),
+      ]), head_sha: headSha }))
   }
 
   async loadApplicableRules(repository: string, headSha: string,
@@ -156,6 +179,22 @@ export class GitHubReviewGateway {
     throw new Error("github_reviews_unbounded")
   }
 
+  private async loadRulesetBypass(repository: string): Promise<boolean> {
+    const summaries = await this.request<Array<Record<string, unknown>>>(
+      `/repos/${repository}/rulesets?includes_parents=true&per_page=100`)
+    if (summaries.length >= 100) throw new Error("github_rulesets_unbounded")
+    for (const summary of summaries) {
+      if (summary.enforcement !== "active") continue
+      const id = Number(summary.id)
+      if (!Number.isSafeInteger(id) || id < 1) throw new Error("github_ruleset_malformed")
+      const ruleset = await this.request<Record<string, unknown>>(
+        `/repos/${repository}/rulesets/${id}`)
+      if (!Array.isArray(ruleset.bypass_actors)) throw new Error("github_ruleset_malformed")
+      if (ruleset.bypass_actors.length > 0) return true
+    }
+    return false
+  }
+
   private async loadReviewThreads(repository: string, pullRequestNumber: number): Promise<number> {
     const [owner, name] = repository.split("/")
     const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}}}}`
@@ -194,13 +233,39 @@ function object(value: unknown): Record<string, unknown> {
 function text(value: unknown): string { return typeof value === "string" ? value : "" }
 function conclusion(values: Array<Record<string, unknown>>): "success" | "pending" | "failure" | "unknown" {
   if (values.length === 0) return "unknown"
-  const states = values.map((value) => String(value.conclusion ?? value.state ?? value.status))
+  const value = latestEvidence(values)
+  const states = [String(value.conclusion ?? value.state ?? value.status)]
   if (states.some((state) => ["failure", "failed", "error", "cancelled", "timed_out"].includes(state))) {
     return "failure"
   }
   if (states.some((state) => ["queued", "pending", "in_progress"].includes(state))) return "pending"
   return states.every((state) => ["success", "completed", "neutral", "skipped"].includes(state))
     ? "success" : "unknown"
+}
+
+function latestEvidence(values: Array<Record<string, unknown>>): Record<string, unknown> {
+  let latest = values[0]
+  let latestScore = evidenceScore(latest, 0)
+  for (let index = 1; index < values.length; index += 1) {
+    const value = values[index]
+    const score = evidenceScore(value, index)
+    if (score >= latestScore) { latest = value; latestScore = score }
+  }
+  return latest
+}
+
+function evidenceScore(value: Record<string, unknown>, index: number): number {
+  for (const key of ["completed_at", "updated_at", "created_at", "started_at"]) {
+    const parsed = Date.parse(text(value[key]))
+    if (!Number.isNaN(parsed)) return parsed
+  }
+  const id = Number(value.id)
+  return Number.isFinite(id) ? id : index
+}
+
+function hasBypassActors(allowances: Record<string, unknown>): boolean {
+  return ["users", "teams", "apps"].some((key) =>
+    Array.isArray(allowances[key]) && allowances[key].length > 0)
 }
 
 function requiredConclusion(requiredNames: string[], runs: Array<Record<string, unknown>>,
