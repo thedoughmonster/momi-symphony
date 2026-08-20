@@ -33,6 +33,8 @@ create table momi_agent_ops.review_attempts (
   implementation_dispatch_id uuid not null references momi_agent_ops.dispatches(dispatch_id),
   reviewer_dispatch_id uuid not null unique default gen_random_uuid(),
   reverification_of uuid references momi_agent_ops.review_attempts(review_attempt_id),
+  escalation_of uuid references momi_agent_ops.review_attempts(review_attempt_id),
+  escalation_depth integer not null default 0 check (escalation_depth between 0 and 2),
   generation integer not null check (generation > 0),
   repository text not null check (repository ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'),
   base_branch text not null check (base_branch ~ '^[A-Za-z0-9._/-]+$'),
@@ -96,6 +98,8 @@ create unique index review_attempts_one_active_idx
   where state in ('reserved', 'running');
 create index review_attempts_capacity_idx on momi_agent_ops.review_attempts (state, created_at)
   where state in ('reserved', 'running');
+create unique index review_attempts_one_escalation_idx
+  on momi_agent_ops.review_attempts (escalation_of) where escalation_of is not null;
 
 alter table momi_agent_ops.review_attempts enable row level security;
 revoke all on table momi_agent_ops.review_attempts
@@ -249,6 +253,111 @@ begin
   where record.dispatch_id = p_dispatch_id;
   disposition := 'created'; reviewer_capability_token := token;
   generation := next_generation; return next;
+end;
+$$;
+
+create function momi_agent_ops.create_escalated_review_attempt_v1(
+  p_reviewer_dispatch_id uuid,
+  p_capability_token uuid,
+  p_thread_id text,
+  p_turn_id text,
+  p_packet_fingerprint text,
+  p_packet_artifact_ref text,
+  p_rules_fingerprint text,
+  p_risk_dimensions text[],
+  p_review_limit integer
+) returns table (
+  disposition text, review_attempt_id uuid, reviewer_dispatch_id uuid,
+  reviewer_capability_token uuid, generation integer, profile text
+) language plpgsql security invoker set search_path = '' as $$
+declare
+  source momi_agent_ops.review_attempts%rowtype;
+  child momi_agent_ops.review_attempts%rowtype;
+  token uuid;
+  next_generation integer;
+  next_profile text;
+  active_reviews integer;
+begin
+  if p_packet_fingerprint !~ '^fnv1a64:[0-9a-f]{16}$'
+    or length(p_packet_artifact_ref) not between 1 and 500
+    or p_rules_fingerprint !~ '^fnv1a64:[0-9a-f]{16}$'
+    or cardinality(p_risk_dimensions) not between 1 and 16
+    or p_review_limit not between 1 and 32 then
+    raise exception 'review_escalation_invalid' using errcode = '22023';
+  end if;
+  select attempt.* into source from momi_agent_ops.review_attempts attempt
+  where attempt.reviewer_dispatch_id = p_reviewer_dispatch_id
+    and attempt.reviewer_capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and attempt.runtime_role = 'independent_reviewer'
+    and attempt.reviewer_thread_id = p_thread_id and attempt.reviewer_turn_id = p_turn_id
+    and (attempt.state = 'escalated' or
+      (attempt.state = 'failed' and attempt.profile = 'high'))
+    and attempt.result = 'escalate'
+  for update;
+  if not found then disposition := 'escalation_identity_refused'; return next; return; end if;
+  select attempt.* into child from momi_agent_ops.review_attempts attempt
+  where attempt.escalation_of = source.review_attempt_id;
+  if found then
+    review_attempt_id := child.review_attempt_id;
+    reviewer_dispatch_id := child.reviewer_dispatch_id;
+    generation := child.generation;
+    profile := child.profile;
+    if child.state = 'reserved' then
+      token := gen_random_uuid();
+      update momi_agent_ops.review_attempts attempt set
+        reviewer_capability_token_hash = encode(extensions.digest(
+          convert_to(token::text, 'UTF8'), 'sha256'), 'hex'), updated_at = now()
+      where attempt.review_attempt_id = child.review_attempt_id;
+      disposition := 'created'; reviewer_capability_token := token;
+    else
+      disposition := 'already_' || child.state;
+    end if;
+    return next; return;
+  end if;
+  next_profile := case source.profile when 'low' then 'standard'
+    when 'standard' then 'high' else null end;
+  if next_profile is null or source.escalation_depth >= 2 then
+    update momi_agent_ops.review_attempts attempt set state = 'failed', updated_at = now()
+    where attempt.review_attempt_id = source.review_attempt_id;
+    update momi_agent_ops.run_records run set review_state = 'failed',
+      review_receipt_id = null, review_check_sha = null, updated_at = now()
+    where run.dispatch_id = source.implementation_dispatch_id;
+    disposition := 'escalation_exhausted'; review_attempt_id := source.review_attempt_id;
+    reviewer_dispatch_id := source.reviewer_dispatch_id;
+    generation := source.generation; profile := source.profile;
+    return next; return;
+  end if;
+  select count(*) into active_reviews from momi_agent_ops.review_attempts attempt
+  where attempt.state in ('reserved', 'running');
+  if active_reviews >= p_review_limit then
+    disposition := 'capacity_wait'; profile := next_profile; return next; return;
+  end if;
+  select coalesce(max(attempt.generation), 0) + 1 into next_generation
+  from momi_agent_ops.review_attempts attempt
+  where attempt.implementation_dispatch_id = source.implementation_dispatch_id;
+  token := gen_random_uuid();
+  insert into momi_agent_ops.review_attempts (
+    implementation_dispatch_id, escalation_of, escalation_depth, generation,
+    repository, base_branch, pull_request_number, head_sha, base_sha, profile,
+    policy_version, reviewer_capability_token_hash, packet_fingerprint,
+    packet_artifact_ref, rules_fingerprint, risk_dimensions, correction_risk_dimensions
+  ) values (
+    source.implementation_dispatch_id, source.review_attempt_id, source.escalation_depth + 1,
+    next_generation, source.repository, source.base_branch, source.pull_request_number,
+    source.head_sha, source.base_sha, next_profile, source.policy_version,
+    encode(extensions.digest(convert_to(token::text, 'UTF8'), 'sha256'), 'hex'),
+    p_packet_fingerprint, p_packet_artifact_ref, p_rules_fingerprint,
+    p_risk_dimensions, p_risk_dimensions
+  ) returning review_attempts.review_attempt_id, review_attempts.reviewer_dispatch_id
+    into review_attempt_id, reviewer_dispatch_id;
+  update momi_agent_ops.run_records run set review_state = 'pending',
+    review_sha = source.head_sha, review_base_sha = source.base_sha,
+    review_policy_version = source.policy_version, review_profile = next_profile,
+    review_receipt_id = null, review_check_sha = null, updated_at = now()
+  where run.dispatch_id = source.implementation_dispatch_id;
+  disposition := 'created'; reviewer_capability_token := token;
+  generation := next_generation; profile := next_profile; return next;
 end;
 $$;
 
@@ -752,7 +861,9 @@ $$;
 revoke all on function momi_agent_ops.create_review_attempt_v1(
   uuid, uuid, text, text, text, text, bigint, text, text, text, text, text, text,
   text, text[], text[], uuid, integer
-), momi_agent_ops.record_reviewer_start_v1(uuid, uuid, text, text, text),
+), momi_agent_ops.create_escalated_review_attempt_v1(
+    uuid, uuid, text, text, text, text, text, text[], integer
+  ), momi_agent_ops.record_reviewer_start_v1(uuid, uuid, text, text, text),
   momi_agent_ops.record_review_start_ambiguous_v1(uuid, uuid),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, integer, text, text,

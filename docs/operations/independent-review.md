@@ -12,6 +12,9 @@ ambiguous surfaces promote to `high`; there is no no-review profile. A bounded p
 named issue, applicable `AGENTS.md` references, exact changed paths, an exact diff reference,
 current-subject CI metadata, and unresolved finding identities when applicable. Implementation
 transcripts, author reasoning, sibling-review prose, and unrelated history are excluded.
+Applicable rules are loaded only from the protected base revision. Reviewer threads start in the
+host-owned workspace harness, outside the candidate checkout; the exact candidate worktree is
+mounted as read-only review data, and candidate-head `AGENTS.md` files never govern the reviewer.
 
 The host's v4 review transport creates a new thread and turn on a reviewer-only App Server with the attested
 `independent_reviewer` role. Its typed output is one of `accepted`, `changes_requested`,
@@ -38,6 +41,10 @@ base, policy, or profile change makes it stale. A bounded fix may be reverified 
 independent reviewer only when the controller proves every changed path is covered by the active
 finding set and no material risk dimension changed; ambiguity requires a fresh reviewer. Accepted
 results cannot contain blocking findings.
+An `escalate` result creates a fresh reviewer attempt through a durable reviewer-authenticated
+transition. Profiles promote only `low → standard → high`; each promotion has a new dispatch,
+thread, turn, capability, and generation. Escalation at `high` records explicit exhaustion and
+fails the review obligation instead of silently waiting or repeating the same profile.
 
 The control plane projects accepted canonical evidence to the exact head as
 `Symphony Independent Review` using the reviewer-only GitHub credential. Protect `main` with both

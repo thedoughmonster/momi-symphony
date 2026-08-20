@@ -173,9 +173,11 @@ export class GitHubReviewGateway {
       ]), head_sha: headSha }))
   }
 
-  async loadApplicableRules(repository: string, headSha: string,
+  async loadApplicableRules(repository: string, protectedRevisionSha: string,
     changedPaths: string[]): Promise<Array<{ path: string; fingerprint: string }>> {
-    if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error("review_rules_revision_invalid")
+    if (!/^[0-9a-f]{40}$/.test(protectedRevisionSha)) {
+      throw new Error("review_rules_revision_invalid")
+    }
     const candidates = new Set(["AGENTS.md"])
     for (const changedPath of changedPaths) {
       const parts = changedPath.split("/").slice(0, -1)
@@ -189,7 +191,7 @@ export class GitHubReviewGateway {
       let payload: Record<string, unknown>
       try {
         payload = await this.request<Record<string, unknown>>(
-          `/repos/${repository}/contents/${encodedPath}?ref=${headSha}`)
+          `/repos/${repository}/contents/${encodedPath}?ref=${protectedRevisionSha}`)
       } catch (error) {
         if (error instanceof Error && error.message.endsWith(":404")) continue
         throw error
