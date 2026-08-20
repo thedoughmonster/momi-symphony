@@ -132,8 +132,8 @@ function validReviewResult(value: unknown): boolean {
 
 function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenceInput | null {
   const required = ["base_branch", "branch_name", "capability_token", "event", "phase",
-    "pull_request_number", "repository", "revision_sha", "status", "thread_id", "turn_id",
-    "work_id"]
+    "previous_revision_sha", "pull_request_number", "repository", "revision_sha", "status",
+    "thread_id", "turn_id", "work_id"]
   const optional = ["merge_sha", "workflow_run_id"].filter((key) => body[key] !== undefined)
   if (Object.keys(body).sort().join(",") !== [...required, ...optional].sort().join(",") ||
     !["validating", "releasing"].includes(String(body.phase)) ||
@@ -144,6 +144,8 @@ function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenc
     typeof body.base_branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.base_branch) ||
     typeof body.branch_name !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.branch_name) ||
     !Number.isSafeInteger(body.pull_request_number) || Number(body.pull_request_number) < 1 ||
+    (body.previous_revision_sha !== null &&
+      !/^[0-9a-f]{40}$/.test(String(body.previous_revision_sha))) ||
     !/^[0-9a-f]{40}$/.test(String(body.revision_sha)) ||
     (body.merge_sha !== undefined && !/^[0-9a-f]{40}$/.test(String(body.merge_sha))) ||
     (body.workflow_run_id !== undefined &&

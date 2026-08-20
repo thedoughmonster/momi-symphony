@@ -29,7 +29,7 @@
     },
     {
       "type": "object",
-      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "repository", "base_branch", "branch_name", "pull_request_number", "phase", "status", "revision_sha"],
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "repository", "base_branch", "branch_name", "pull_request_number", "phase", "status", "previous_revision_sha", "revision_sha"],
       "properties": {
         "event": {"const": "lifecycle_evidence"},
         "work_id": {"type": "string", "format": "uuid"},
@@ -40,6 +40,9 @@
         "pull_request_number": {"type": "integer", "minimum": 1},
         "phase": {"enum": ["validating", "releasing"]},
         "status": {"enum": ["pending", "running", "succeeded", "failed"]},
+        "previous_revision_sha": {"oneOf": [
+          {"type": "string", "pattern": "^[0-9a-f]{40}$"}, {"type": "null"}
+        ]},
         "revision_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "merge_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "workflow_run_id": {"type": "string", "maxLength": 160}

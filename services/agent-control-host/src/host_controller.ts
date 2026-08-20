@@ -19,19 +19,31 @@ export class HostController {
   private budgetTimers = new Map<string, NodeJS.Timeout>()
   private budgetExhausted = new Set<string>()
   private readonly client: AppServerClient
+  private readonly reviewClient?: AppServerClient
   private readonly ledger: HostLedger
   private readonly config: HostConfiguration
   private readonly callback: (record: HostRecord) => Promise<void>
   constructor(client: AppServerClient, ledger: HostLedger, config: HostConfiguration,
-    callback: (record: HostRecord) => Promise<void> = sendTerminalCallback) {
-    this.client = client; this.ledger = ledger; this.config = config; this.callback = callback
+    callback: (record: HostRecord) => Promise<void> = sendTerminalCallback,
+    reviewClient?: AppServerClient) {
+    if (reviewClient === client) throw new Error("review_app_server_boundary_invalid")
+    this.client = client; this.reviewClient = reviewClient
+    this.ledger = ledger; this.config = config; this.callback = callback
   }
   async start(): Promise<void> {
     await this.ledger.load(); await this.client.connect()
     this.client.onNotification((notification) => {
       this.notifications = this.notifications.then(
-        () => this.handleNotification(notification)).catch(() => undefined)
+        () => this.handleNotification(notification, "implementation")).catch(() => undefined)
     })
+    if (this.reviewClient) {
+      await this.reviewClient.connect()
+      this.reviewClient.onNotification((notification) => {
+        this.notifications = this.notifications.then(
+          () => this.handleNotification(notification, "independent_reviewer"))
+          .catch(() => undefined)
+      })
+    }
     for (const record of this.ledger.recoverable()) {
       try {
         if (record.state === "terminal") await this.deliverCallback(record)
@@ -40,7 +52,7 @@ export class HostController {
             ? await this.ledger.accept(record.workId, record.threadId!, record.turnId!) : record
           this.scheduleBudget(accepted)
           await this.recover(accepted, true)
-          if (accepted.state === "interactive") await this.client.request(
+          if (accepted.state === "interactive") await this.clientFor(accepted).request(
             "thread/unsubscribe", { threadId: accepted.threadId })
         }
       } catch {
@@ -51,6 +63,7 @@ export class HostController {
   async dispatch(input: HostDispatch): Promise<HostAcceptance> {
     if (input.repository !== this.config.repository ||
       input.base_branch !== this.config.baseBranch) throw new Error("host_mapping_refused")
+    const client = this.clientFor(input)
     const prior = this.ledger.get(input.work_id)
     const record = await this.ledger.reserve(input.work_id,
       dispatchFingerprint(input), input.capability_token, input.interaction_mode, input)
@@ -81,7 +94,7 @@ export class HostController {
           }
         }
       }
-      const started = await startHostTask(this.client, this.config, input, undefined, {
+      const started = await startHostTask(client, this.config, input, undefined, {
         threadStarted: (threadId) => this.ledger.threadStarted(input.work_id, threadId),
         turnStarted: (threadId, turnId) =>
           this.ledger.turnStarted(input.work_id, threadId, turnId),
@@ -89,7 +102,7 @@ export class HostController {
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
       if (accepted.cancellationRequestedAt) {
-        await this.client.request("turn/interrupt", {
+        await client.request("turn/interrupt", {
           threadId: started.thread_id, turnId: started.turn_id,
         })
       }
@@ -107,7 +120,8 @@ export class HostController {
     }
   }
   async cancel(input: HostCancellation): Promise<HostCancellationResult> {
-    const result = await cancelHostWork(this.client, this.ledger, this.config, input)
+    const result = await cancelHostWork((record) => this.clientFor(record),
+      this.ledger, this.config, input)
     for (const targetWorkId of input.target_work_ids) {
       const target = this.ledger.get(targetWorkId)
       if (target?.state === "terminal" && !target.callbackSent) await this.deliverCallback(target)
@@ -116,12 +130,13 @@ export class HostController {
   }
   recoverDiscovery(input: HostRecovery): Promise<HostRecoveryResult> {
     return recoverDiscoveryWork(this.client, this.ledger, input, this.callback) }
-  private handleNotification(notification: Record<string, unknown>): Promise<void> {
+  private handleNotification(notification: Record<string, unknown>,
+    runtimeRole: "implementation" | "independent_reviewer"): Promise<void> {
     return handleHostNotification(notification, this.ledger, this.callback,
-      (record, turn) => this.finalize(record, turn))
+      (record, turn) => this.finalize(record, turn), runtimeRole)
   }
   private async recover(record: HostRecord, subscribe = false): Promise<void> {
-    const turn = await recoverHostTurn(this.client, record, subscribe)
+    const turn = await recoverHostTurn(this.clientFor(record), record, subscribe)
     if (turn && turn.status !== "inProgress") await this.finalize(record, turn)
   }
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
@@ -132,11 +147,12 @@ export class HostController {
     if (timer) clearTimeout(timer)
     this.budgetTimers.delete(record.workId)
     try {
+      const client = this.clientFor(record)
       if (record.interactionMode === "interactive" && !record.cancellationRequestedAt) {
-        await this.client.request("thread/unsubscribe", { threadId: record.threadId })
+        await client.request("thread/unsubscribe", { threadId: record.threadId })
         await this.ledger.retainInteractive(record.workId); return
       }
-      await this.client.request("thread/archive", { threadId: record.threadId })
+      await client.request("thread/archive", { threadId: record.threadId })
       const archivedAt = new Date().toISOString()
       let reviewResult = record.runtimeRole === "independent_reviewer"
         ? extractReviewResult(turn) : null
@@ -203,11 +219,20 @@ export class HostController {
     const timer = setTimeout(() => {
       this.budgetTimers.delete(record.workId)
       this.budgetExhausted.add(record.workId)
-      void this.client.request("turn/interrupt", {
+      void this.clientFor(record).request("turn/interrupt", {
         threadId: record.threadId, turnId: record.turnId,
       }).catch(() => undefined)
     }, remaining)
     timer.unref()
     this.budgetTimers.set(record.workId, timer)
+  }
+  private clientFor(record: Pick<HostRecord, "runtimeRole"> |
+    Pick<HostDispatch, "runtime_role">): AppServerClient {
+    const runtimeRole = "runtimeRole" in record ? record.runtimeRole : record.runtime_role
+    if (runtimeRole === "independent_reviewer") {
+      if (!this.reviewClient) throw new Error("review_app_server_boundary_missing")
+      return this.reviewClient
+    }
+    return this.client
   }
 }

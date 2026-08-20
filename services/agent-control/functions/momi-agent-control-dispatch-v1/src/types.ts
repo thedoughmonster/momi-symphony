@@ -40,6 +40,7 @@ export type LifecycleEvidenceInput = DispatchInput & {
   pull_request_number: number
   phase: "validating" | "releasing"
   status: "pending" | "running" | "succeeded" | "failed"
+  previous_revision_sha: string | null
   revision_sha: string
   merge_sha?: string
   workflow_run_id?: string

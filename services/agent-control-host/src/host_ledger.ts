@@ -34,8 +34,10 @@ export class HostLedger {
   getCancellation(workId: string): HostCancellationRecord | null {
     return this.cancellations.get(workId) ?? null }
   getRecovery(workId: string): HostRecoveryRecord | null { return this.recoveries.get(workId) ?? null }
-  findByThread(threadId: string): HostRecord | null {
-    return [...this.records.values()].find((record) => record.threadId === threadId) ?? null }
+  findByThread(threadId: string,
+    runtimeRole?: "implementation" | "independent_reviewer"): HostRecord | null {
+    return [...this.records.values()].find((record) => record.threadId === threadId &&
+      (!runtimeRole || (record.runtimeRole ?? "implementation") === runtimeRole)) ?? null }
   recordsForImplementation(implementationDispatchId: string): HostRecord[] {
     return [...this.records.values()].filter((record) =>
       record.reviewSubject?.implementation_dispatch_id === implementationDispatchId)

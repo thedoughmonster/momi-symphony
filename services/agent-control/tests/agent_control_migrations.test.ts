@@ -262,6 +262,10 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /if p_phase = 'reviewing' then return false/)
   assert.match(migration, /current_dispatch_id is distinct from selected\.dispatch_id/)
   assert.match(migration, /work\.action = \('exec' \|\| 'ute-run'\)/)
+  assert.match(migration, /serialize_dispatch_generation_v1/)
+  assert.match(migration, /pg_advisory_xact_lock\(pg_catalog\.hashtextextended/)
+  assert.match(migration,
+    /current_run\.head_sha is distinct from p_previous_revision_sha then return false/)
   assert.match(migration, /current_run\.branch_name is distinct from p_branch_name/)
   assert.match(migration, /current_run\.pull_request_number is distinct from p_pull_request_number/)
   assert.match(migration, /record_terminal_v5/)

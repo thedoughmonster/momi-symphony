@@ -2,10 +2,12 @@ import { cancellationFingerprint } from "./cancellation_fingerprint.ts"
 import { buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostCancellation, HostCancellationResult,
-  HostConfiguration } from "./types.ts"
+  HostConfiguration, HostRecord } from "./types.ts"
+
+export type HostClientResolver = AppServerClient | ((record: HostRecord) => AppServerClient)
 
 export async function cancelHostWork(
-  client: AppServerClient,
+  client: HostClientResolver,
   ledger: HostLedger,
   config: HostConfiguration,
   input: HostCancellation,
@@ -24,6 +26,7 @@ export async function cancelHostWork(
     if (!target) throw new Error("host_cancel_target_missing")
     if (target.state === "terminal") continue
     requested = true
+    const targetClient = typeof client === "function" ? client(target) : client
     if (target.state === "reserved" && !target.threadId && !target.turnId) {
       await ledger.cancellationRequested(target.workId)
       continue
@@ -32,7 +35,7 @@ export async function cancelHostWork(
       if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
       if (!target.cancellationRequestedAt) {
         await ledger.cancellationRequested(target.workId)
-        await client.request("thread/archive", { threadId: target.threadId })
+        await targetClient.request("thread/archive", { threadId: target.threadId })
         await ledger.recordTelemetry(target.workId,
           buildSyntheticTelemetry(target, "interrupted"))
         await ledger.terminal(target.workId, { readiness_result: "ready",
@@ -44,7 +47,7 @@ export async function cancelHostWork(
     }
     if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
     if (target.cancellationRequestedAt) continue
-    await client.request("turn/interrupt", {
+    await targetClient.request("turn/interrupt", {
       threadId: target.threadId, turnId: target.turnId,
     })
     await ledger.cancellationRequested(target.workId)

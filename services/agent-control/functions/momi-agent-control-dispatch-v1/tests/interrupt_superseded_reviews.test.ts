@@ -11,7 +11,8 @@ const input: LifecycleEvidenceInput = { event: "lifecycle_evidence",
   thread_id: "implementation-thread", turn_id: "implementation-turn",
   repository: "thedoughmonster/momi-symphony", base_branch: "main",
   branch_name: "mox-260-independent-pr-review", pull_request_number: 16,
-  phase: "validating", status: "succeeded", revision_sha: "a".repeat(40),
+  phase: "validating", status: "succeeded", previous_revision_sha: null,
+  revision_sha: "a".repeat(40),
   workflow_run_id: "123" }
 
 test("superseded reviewer interruption request waits for an exact terminal callback", async () => {

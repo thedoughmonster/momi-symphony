@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process"
 import { stat } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
@@ -16,7 +15,11 @@ export async function cleanupReviewWorkspace(
 ): Promise<void> {
   if (record.runtimeRole !== "independent_reviewer" || !record.reviewWorkspaceId) return
   if (!uuid.test(record.reviewWorkspaceId)) throw new Error("review_workspace_identity_invalid")
-  const workspace = join(tmpdir(), "momi-agent-control-reviews", record.reviewWorkspaceId)
+  if (!config.reviewWorkspaceRoot || !config.reviewRepositoryRoot) {
+    throw new Error("review_workspace_boundary_missing")
+  }
+  const workspace = join(config.reviewWorkspaceRoot, record.reviewWorkspaceId)
   if (!await stat(workspace).then(() => true, () => false)) return
-  await run("git", ["-C", config.workspaceRoot, "worktree", "remove", "--force", workspace])
+  await run("git", ["-C", config.reviewRepositoryRoot,
+    "worktree", "remove", "--force", workspace])
 }

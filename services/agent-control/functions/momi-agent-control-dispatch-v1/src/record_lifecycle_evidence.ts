@@ -10,7 +10,7 @@ export async function recordLifecycleEvidence(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
       ${input.branch_name}, ${input.pull_request_number}, ${input.phase}, ${input.status},
-      ${input.revision_sha}, ${input.merge_sha ?? null},
+      ${input.previous_revision_sha}, ${input.revision_sha}, ${input.merge_sha ?? null},
       ${input.workflow_run_id ?? null}
     ) as recorded
   `

@@ -13,17 +13,25 @@ named issue, applicable `AGENTS.md` references, exact changed paths, an exact di
 current-subject CI metadata, and unresolved finding identities when applicable. Implementation
 transcripts, author reasoning, sibling-review prose, and unrelated history are excluded.
 
-The host's v4 review transport creates a new App Server thread and turn with the attested
+The host's v4 review transport creates a new thread and turn on a reviewer-only App Server with the attested
 `independent_reviewer` role. Its typed output is one of `accepted`, `changes_requested`,
 `inconclusive`, or `escalate` plus compact findings. The reviewer cannot edit, push, merge,
 release, change policy, or invoke Symphony. A reviewer capability is generated inside the private
 ledger and is not available to the implementation task. The implementation callback credential
 cannot record an accepted receipt or publish the dedicated GitHub status.
-The host runs under the distinct `momi-agent-control` operating-system identity. Its root-owned
-systemd credential AES-GCM seals reviewer callback capability, thread, turn, and exact-subject
-fields before the durable ledger is written; the key and plaintext fields are never passed to
-full-access implementation turns running under the App Server identity. Missing or unreadable
-credential material fails host startup and reviewer reservation closed.
+The host and reviewer App Server run under distinct `momi-agent-control` and
+`momi-agent-reviewer` operating-system identities. The implementation App Server remains under a
+third implementation identity. The
+reviewer's `CODEX_HOME`, socket, session storage, ledger, and detached review workspaces live under
+the reviewer state directory, accessible only to the reviewer identity and the host's narrow
+`momi-agent-review` group. Exact review objects and worktree metadata come from a separate private
+repository there and are never exposed to implementation turns. Both services
+use `PrivateTmp=true`, so review workspaces intentionally do not use `/tmp`. The root-owned host
+environment and AES-GCM credential are unreadable by the implementation identity. Missing,
+overlapping, or non-private reviewer paths and missing credential material fail host startup closed.
+Restart recovery reconnects reviewer records only through the reviewer daemon; implementation-side
+App Server enumeration cannot address that daemon's thread namespace. Both services execute only
+root-owned release binaries, never code or tools from the implementation user's writable checkout.
 
 Canonical acceptance is the exact-generation `momi_agent_ops.review_attempts` receipt. Any head,
 base, policy, or profile change makes it stale. A bounded fix may be reverified by the same

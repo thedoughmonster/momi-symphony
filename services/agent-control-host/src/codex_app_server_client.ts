@@ -10,10 +10,14 @@ export class CodexAppServerClient implements AppServerClient {
   private pending = new Map<number, { resolve: (value: unknown) => void;
     reject: (error: Error) => void; timeout: NodeJS.Timeout }>()
   private listener: (notification: Record<string, unknown>) => void = () => undefined
+  private readonly configuredCodexHome?: string
+
+  constructor(configuredCodexHome?: string) { this.configuredCodexHome = configuredCodexHome }
 
   async connect(): Promise<void> {
     if (this.socket) return
-    const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")
+    const codexHome = this.configuredCodexHome ??
+      (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"))
     if (!isAbsolute(codexHome)) throw new Error("codex_proxy_path_invalid")
     const path = join(codexHome, "app-server-control", "app-server-control.sock")
     const socket = new WebSocket(`ws+unix://${path}:/`, { perMessageDeflate: false })

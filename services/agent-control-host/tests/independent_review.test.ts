@@ -4,7 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
+import { readAppServerBoundary } from "../src/app_server_boundary.ts"
 import { extractReviewResult } from "../src/extract_review_result.ts"
+import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
 import { parseHostDispatch } from "../src/parse_host_dispatch.ts"
 import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
@@ -219,10 +221,112 @@ test("full-access implementation execution cannot obtain sealed reviewer credent
     const unit = await readFile(new URL("../../../ops/systemd/momi-agent-control-host.service",
       import.meta.url), "utf8")
     assert.match(unit, /^User=momi-agent-control$/m)
+    assert.match(unit, /^SupplementaryGroups=momi-agent-review$/m)
     assert.match(unit,
       /^LoadCredential=momi-review-ledger-key:\/etc\/momi-agent-control\/review-ledger-key$/m)
     assert.match(unit, /^StateDirectory=momi-agent-control$/m)
-    assert.match(unit, /^UMask=0077$/m)
+    assert.match(unit, /^StateDirectoryMode=0700$/m)
+    assert.match(unit, /^EnvironmentFile=\/etc\/momi-agent-control\/host.env$/m)
+    assert.match(unit, /^WorkingDirectory=\/opt\/momi-symphony\/current$/m)
+    assert.match(unit,
+      /^ExecStart=\/usr\/bin\/node \/opt\/momi-symphony\/current\/services\/agent-control-host\/main\.ts$/m)
+    assert.match(unit, /^PrivateTmp=true$/m)
+    assert.match(unit, /^UMask=0007$/m)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("reviewer App Server identity and restart recovery stay outside implementation access", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-review-app-server-boundary-"))
+  const ledgerPath = join(directory, "ledger.json")
+  const reviewThread = "reviewer-thread-only"
+  const reviewTurn = "reviewer-turn-only"
+  const implementationRequests: Array<{ method: string; params: unknown }> = []
+  const reviewRequests: Array<{ method: string; params: unknown }> = []
+  const implementationClient = { connect: async () => undefined,
+    onNotification: () => undefined,
+    request: async <T>(method: string, params: unknown): Promise<T> => {
+      implementationRequests.push({ method, params })
+      return (method === "thread/list" ? { data: [{ id: "implementation-thread" }] }
+        : { thread: { turns: [] } }) as T
+    } } as AppServerClient
+  const reviewClient = { connect: async () => undefined,
+    onNotification: () => undefined,
+    request: async <T>(method: string, params: unknown): Promise<T> => {
+      reviewRequests.push({ method, params })
+      return { thread: { turns: [{ id: reviewTurn, status: "inProgress", items: [] }] } } as T
+    } } as AppServerClient
+  try {
+    const credentials = new ReviewCredentialBoundary(Buffer.alloc(32, 13))
+    const ledger = new HostLedger(ledgerPath, credentials)
+    await ledger.reserve(dispatch.work_id, "review-fingerprint",
+      "reviewer-callback-only", "one_shot", { runtime_role: "independent_reviewer",
+        review_subject: dispatch.review_subject,
+        review_workspace_id: dispatch.review_workspace_id })
+    await ledger.accept(dispatch.work_id, reviewThread, reviewTurn)
+
+    const restarted = new HostLedger(ledgerPath, credentials)
+    await new HostController(implementationClient, restarted, {
+      workspaceRoot: "/workspace", repository: dispatch.repository, baseBranch: "main",
+      reviewRepositoryRoot: "/var/lib/momi-agent-reviewer/repository",
+      reviewWorkspaceRoot: "/var/lib/momi-agent-reviewer/workspaces",
+    }, async () => undefined, reviewClient).start()
+    const implementationEnumeration = await implementationClient.request<unknown>(
+      "thread/list", { archived: true })
+
+    assert.deepEqual(reviewRequests, [{ method: "thread/resume",
+      params: { threadId: reviewThread } }])
+    assert.deepEqual(implementationRequests, [{ method: "thread/list",
+      params: { archived: true } }])
+    for (const secret of [reviewThread, reviewTurn, "reviewer-callback-only",
+      dispatch.review_subject!.head_sha, dispatch.review_subject!.base_sha]) {
+      assert.equal(JSON.stringify(implementationEnumeration).includes(secret), false)
+      assert.equal(JSON.stringify(implementationRequests).includes(secret), false)
+    }
+
+    assert.deepEqual(readAppServerBoundary({
+      CODEX_HOME: "/home/codex-dev/.codex",
+      MOMI_REVIEW_CODEX_HOME: "/var/lib/momi-agent-reviewer/codex-home",
+      MOMI_REVIEW_REPOSITORY_ROOT: "/var/lib/momi-agent-reviewer/repository",
+      MOMI_REVIEW_WORKSPACE_ROOT: "/var/lib/momi-agent-reviewer/workspaces",
+    }), {
+      implementationCodexHome: "/home/codex-dev/.codex",
+      reviewCodexHome: "/var/lib/momi-agent-reviewer/codex-home",
+      reviewRepositoryRoot: "/var/lib/momi-agent-reviewer/repository",
+      reviewWorkspaceRoot: "/var/lib/momi-agent-reviewer/workspaces",
+    })
+    for (const invalid of [
+      { CODEX_HOME: "/var/lib/momi-agent-reviewer", MOMI_REVIEW_CODEX_HOME:
+        "/var/lib/momi-agent-reviewer/codex-home",
+        MOMI_REVIEW_REPOSITORY_ROOT: "/var/lib/momi-agent-reviewer/repository",
+        MOMI_REVIEW_WORKSPACE_ROOT: "/var/lib/momi-agent-reviewer/workspaces" },
+      { CODEX_HOME: "/var/lib/momi-agent-reviewer/implementation-codex-home",
+        MOMI_REVIEW_CODEX_HOME: "/var/lib/momi-agent-reviewer/codex-home",
+        MOMI_REVIEW_REPOSITORY_ROOT: "/var/lib/momi-agent-reviewer/repository",
+        MOMI_REVIEW_WORKSPACE_ROOT: "/var/lib/momi-agent-reviewer/workspaces" },
+      { CODEX_HOME: "/home/codex-dev/.codex", MOMI_REVIEW_CODEX_HOME:
+        "/home/codex-dev/.codex/reviewer",
+        MOMI_REVIEW_REPOSITORY_ROOT: "/var/lib/momi-agent-reviewer/repository",
+        MOMI_REVIEW_WORKSPACE_ROOT: "/var/lib/momi-agent-reviewer/workspaces" },
+      { CODEX_HOME: "/home/codex-dev/.codex", MOMI_REVIEW_CODEX_HOME:
+        "/var/lib/momi-agent-reviewer/codex-home",
+        MOMI_REVIEW_REPOSITORY_ROOT: "/var/lib/momi-agent-reviewer/repository",
+        MOMI_REVIEW_WORKSPACE_ROOT: "/tmp/reviews" },
+    ]) assert.throws(() => readAppServerBoundary(invalid),
+      /review_app_server_boundary_invalid/)
+
+    const reviewUnit = await readFile(new URL(
+      "../../../ops/systemd/momi-agent-control-review-app-server.service", import.meta.url),
+    "utf8")
+    assert.match(reviewUnit, /^User=momi-agent-reviewer$/m)
+    assert.match(reviewUnit, /^Group=momi-agent-review$/m)
+    assert.match(reviewUnit,
+      /^Environment=CODEX_HOME=\/var\/lib\/momi-agent-reviewer\/codex-home$/m)
+    assert.match(reviewUnit, /^ExecStart=\/usr\/local\/bin\/codex /m)
+    assert.doesNotMatch(reviewUnit, /\/home\/codex-dev/)
+    assert.match(reviewUnit, /^StateDirectoryMode=0750$/m)
+    assert.match(reviewUnit, /^PrivateTmp=true$/m)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

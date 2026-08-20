@@ -29,9 +29,10 @@ same work identity promotes known thread/turn IDs and resumes terminal recovery
 without starting a second task. Startup recovery also resumes subscriptions for
 interactive tasks retained across a host restart. Immediate race recovery uses a
 non-resuming `thread/read` so it cannot interrupt the turn it just started.
-The adapter connects to the managed App Server daemon through its private Unix
-WebSocket. After an interactive turn ends, it unsubscribes its connection so the
-Codex sidebar can own later turns.
+The adapter connects implementation work to the operator's managed App Server
+and independent-review work to a reviewer-only App Server through two distinct
+private Unix WebSockets. After an interactive implementation turn ends, it
+unsubscribes its connection so the Codex sidebar can own later turns.
 Because this headless boundary has no approval UI, accepted turns explicitly use
 non-interactive approval and full host access. Keep it behind bearer auth, exact
 repository/base mapping, and a dedicated operator-controlled workspace.
@@ -39,16 +40,23 @@ repository/base mapping, and a dedicated operator-controlled workspace.
 Run with `pnpm agent-control:host` only after configuring the callback, host
 secret, workspace root, repository/base, ledger path, the root-owned systemd
 credential `/etc/momi-agent-control/review-ledger-key` (exactly 32 random bytes),
-and an installed
-Codex App Server daemon. Reviewer callback capability, thread, turn, and subject
-identities are authenticated-encrypted in the durable ledger with this
-service-private credential; implementation turns never receive the credential
-or plaintext fields. Put any public TLS/reverse-proxy boundary outside this
-process. The adapter never logs request bodies, prompts, or capability tokens.
-Run the unit as the dedicated `momi-agent-control` operating-system identity,
-not the implementation/App Server identity. Keep its credential root-owned and
-its ledger under the systemd-managed state directory; grant only the narrowly
-required repository and private App Server socket access to that service user.
+and both App Server daemons. Set `CODEX_HOME` to the implementation daemon's
+state, `MOMI_REVIEW_CODEX_HOME` to
+`/var/lib/momi-agent-reviewer/codex-home`, and
+`MOMI_REVIEW_REPOSITORY_ROOT` to
+`/var/lib/momi-agent-reviewer/repository`, and
+`MOMI_REVIEW_WORKSPACE_ROOT` to `/var/lib/momi-agent-reviewer/workspaces`.
+Reviewer callback capability, thread, turn, subject, App Server storage, and
+workspaces stay under the dedicated `momi-agent-reviewer` identity; the trusted
+host uses a narrow `momi-agent-review` supplementary group while the
+implementation daemon identity cannot traverse the group-restricted state directory.
+The root-owned host environment and ledger credential must not be readable by
+the implementation identity. Put any public TLS/reverse-proxy boundary outside
+this process. The adapter never logs request bodies, prompts, or capability
+tokens. Install both repository-owned systemd units and grant the host service
+only the narrowly required repository and implementation-socket access. The
+units execute root-owned release binaries under `/opt` and `/usr/local/bin`;
+never execute trusted host or reviewer code from the implementation checkout.
 
 New dispatches use the v3 compact transport: stable action rules and volatile
 attempt context are separate input items with durable fingerprints and a typed
@@ -67,9 +75,10 @@ process owns the sole scheduler timer. `MOMI_AGENT_CONTROL_RELEASE_SHA` must be
 the exact protected 40-character commit under acceptance. The pump posts only
 that release identity, a random scheduler owner UUID, and at most 128 active
 durable work IDs to the existing authenticated agent-control callback. It never
-receives or interprets Linear/provider data, never decides readiness, and never
-creates a second App Server path. The database policy remains the final
-enabled/observe/disabled authority.
+receives or interprets Linear/provider data or decides readiness. The
+reviewer-only App Server is an execution-isolation boundary, not a scheduler or
+dispatch path. The database policy remains the final enabled/observe/disabled
+authority.
 
 The deterministic smoke test substitutes an in-memory App Server transport.
 PR handoff also requires one no-side-effect acceptance event against the

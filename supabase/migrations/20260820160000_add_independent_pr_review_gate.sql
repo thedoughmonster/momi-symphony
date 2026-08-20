@@ -534,6 +534,20 @@ create function momi_agent_ops.get_review_status_v1(
   order by review.generation desc limit 1;
 $$;
 
+create function momi_agent_ops.serialize_dispatch_generation_v1()
+returns trigger language plpgsql security invoker set search_path = '' as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || new.linear_issue_id::text, 0));
+  return new;
+end;
+$$;
+
+create trigger serialize_dispatch_generation_v1
+before insert on momi_agent_ops.dispatches
+for each row when (new.action not in ('cancel-run', 'recover-discovery'))
+execute function momi_agent_ops.serialize_dispatch_generation_v1();
+
 create function momi_agent_ops.record_lifecycle_evidence_v3(
   p_dispatch_id uuid,
   p_capability_token uuid,
@@ -545,6 +559,7 @@ create function momi_agent_ops.record_lifecycle_evidence_v3(
   p_pull_request_number bigint,
   p_phase text,
   p_status text,
+  p_previous_revision_sha text,
   p_revision_sha text,
   p_merge_sha text,
   p_workflow_run_id text
@@ -557,6 +572,10 @@ begin
   if p_phase not in ('validating', 'releasing') then
     raise exception 'lifecycle_evidence_invalid' using errcode = '22023';
   end if;
+  if p_previous_revision_sha is not null
+    and p_previous_revision_sha !~ '^[0-9a-f]{40}$' then
+    raise exception 'lifecycle_evidence_invalid' using errcode = '22023';
+  end if;
   select work.* into selected from momi_agent_ops.dispatches work
   where work.dispatch_id = p_dispatch_id
     and work.host_callback_token_hash = encode(extensions.digest(
@@ -567,6 +586,8 @@ begin
     and work.cancellation_requested_at is null and work.cancelled_at is null
   for update;
   if not found then return false; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || selected.linear_issue_id::text, 0));
   select newest.dispatch_id into current_dispatch_id
   from momi_agent_ops.dispatches newest
   where newest.linear_issue_id = selected.linear_issue_id
@@ -579,8 +600,9 @@ begin
     and current_run.branch_name is not null then return false; end if;
   if current_run.pull_request_number is distinct from p_pull_request_number
     and current_run.pull_request_number is not null then return false; end if;
-  if p_phase = 'validating' and current_run.head_sha is not null
-    and current_run.head_sha <> p_revision_sha then
+  if p_phase = 'validating'
+    and current_run.head_sha is distinct from p_revision_sha then
+    if current_run.head_sha is distinct from p_previous_revision_sha then return false; end if;
     if p_status not in ('pending', 'running', 'succeeded', 'failed')
       or p_revision_sha !~ '^[0-9a-f]{40}$' then
       raise exception 'lifecycle_evidence_invalid' using errcode = '22023';
@@ -741,8 +763,9 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, text, text
   ),
   momi_agent_ops.get_review_status_v1(uuid, uuid, text, text),
+  momi_agent_ops.serialize_dispatch_generation_v1(),
   momi_agent_ops.record_lifecycle_evidence_v3(
-    uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text
+    uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text, text
   ),
   momi_agent_ops.fence_cancellation_v1(uuid, uuid),
   momi_agent_ops.record_cancellation_v3(uuid, uuid, text),

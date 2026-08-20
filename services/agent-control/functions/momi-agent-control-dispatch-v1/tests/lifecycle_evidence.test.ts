@@ -12,7 +12,8 @@ const input: LifecycleEvidenceInput = {
   thread_id: "thread-1", turn_id: "turn-1",
   repository: "thedoughmonster/momi-symphony", base_branch: "main",
   branch_name: "mox-258-agent-state-lifecycle", pull_request_number: 14,
-  phase: "validating", status: "running", revision_sha: "a".repeat(40),
+  phase: "validating", status: "running", previous_revision_sha: null,
+  revision_sha: "a".repeat(40),
   workflow_run_id: "1234",
 }
 
@@ -20,6 +21,7 @@ test("lifecycle receipts are strict and exact-revision shaped", () => {
   assert.deepEqual(parseDispatchInput(input), input)
   assert.equal(parseDispatchInput({ ...input, unrelated: true }), null)
   assert.equal(parseDispatchInput({ ...input, revision_sha: "b".repeat(39) }), null)
+  assert.equal(parseDispatchInput({ ...input, previous_revision_sha: "b".repeat(39) }), null)
   assert.equal(parseDispatchInput({ ...input, phase: "releasing",
     merge_sha: "b".repeat(40) }), null)
   const release = { ...input, phase: "releasing" as const,

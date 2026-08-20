@@ -182,6 +182,8 @@ export type HostConfiguration = {
   workspaceRoot: string
   repository: string
   baseBranch: string
+  reviewRepositoryRoot?: string
+  reviewWorkspaceRoot?: string
 }
 
 export type HostAcceptance = { thread_id: string; turn_id: string }

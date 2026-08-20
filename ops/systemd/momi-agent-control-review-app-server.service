@@ -1,0 +1,25 @@
+[Unit]
+Description=Symphony isolated independent-review Codex App Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=momi-agent-reviewer
+Group=momi-agent-review
+Environment=HOME=/var/lib/momi-agent-reviewer
+Environment=CODEX_HOME=/var/lib/momi-agent-reviewer/codex-home
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/var/lib/momi-agent-reviewer
+ExecStartPre=/usr/bin/install -d -m 0770 /var/lib/momi-agent-reviewer/codex-home/app-server-control /var/lib/momi-agent-reviewer/repository /var/lib/momi-agent-reviewer/workspaces
+ExecStart=/usr/local/bin/codex -c features.code_mode_host=true app-server --listen unix://
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+StateDirectory=momi-agent-reviewer
+StateDirectoryMode=0750
+UMask=0007
+
+[Install]
+WantedBy=default.target

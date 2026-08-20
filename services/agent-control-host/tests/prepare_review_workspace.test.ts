@@ -18,6 +18,7 @@ const run = promisify(execFile)
 
 test("review workspace is a detached exact-head snapshot reused only after a clean checkout", async () => {
   const repository = await mkdtemp(join(tmpdir(), "momi-review-source-"))
+  const reviewWorkspaceRoot = await mkdtemp(join(tmpdir(), "momi-review-workspaces-"))
   const implementationId = randomUUID()
   let workspace = ""
   try {
@@ -33,7 +34,8 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
       implementation_dispatch_id: implementationId, head_sha: first,
     } } as HostDispatch
     workspace = await prepareReviewWorkspace({ workspaceRoot: repository,
-      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, dispatch)
+      repository: "thedoughmonster/momi-symphony", baseBranch: "main",
+      reviewRepositoryRoot: repository, reviewWorkspaceRoot }, dispatch)
     assert.equal(await readFile(join(workspace, "subject.txt"), "utf8"), "first\n")
 
     await writeFile(join(repository, "subject.txt"), "second\n")
@@ -43,11 +45,13 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     const updated = { ...dispatch, work_id: randomUUID(),
       review_subject: { ...dispatch.review_subject!, head_sha: second, generation: 2 } }
     const nextWorkspace = await prepareReviewWorkspace({ workspaceRoot: repository,
-      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, updated)
+      repository: "thedoughmonster/momi-symphony", baseBranch: "main",
+      reviewRepositoryRoot: repository, reviewWorkspaceRoot }, updated)
     assert.equal(nextWorkspace, workspace)
     assert.equal(await readFile(join(nextWorkspace, "subject.txt"), "utf8"), "second\n")
     await cleanupReviewWorkspace({ workspaceRoot: repository,
-      repository: "thedoughmonster/momi-symphony", baseBranch: "main" }, {
+      repository: "thedoughmonster/momi-symphony", baseBranch: "main",
+      reviewRepositoryRoot: repository, reviewWorkspaceRoot }, {
       runtimeRole: "independent_reviewer", reviewWorkspaceId: dispatch.review_workspace_id,
     })
     assert.equal(await stat(nextWorkspace).then(() => true, () => false), false)
@@ -55,12 +59,14 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     if (workspace) await run("git", ["worktree", "remove", "--force", workspace],
       { cwd: repository }).catch(() => undefined)
     await rm(repository, { recursive: true, force: true })
+    await rm(reviewWorkspaceRoot, { recursive: true, force: true })
   }
 })
 
 test("terminal implementation cleanup removes an abandoned changes-requested workspace", async () => {
   const repository = await mkdtemp(join(tmpdir(), "momi-review-cleanup-source-"))
   const ledgerDirectory = await mkdtemp(join(tmpdir(), "momi-review-cleanup-ledger-"))
+  const reviewWorkspaceRoot = await mkdtemp(join(tmpdir(), "momi-review-workspaces-"))
   const implementationId = randomUUID(); const reviewerId = randomUUID()
   let workspace = ""
   try {
@@ -77,7 +83,7 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
     const reviewDispatch = { schema_version: 4, work_id: reviewerId,
       review_workspace_id: reviewerId, review_subject: subject } as HostDispatch
     const config = { workspaceRoot: repository, repository: "thedoughmonster/momi-symphony",
-      baseBranch: "main" }
+      baseBranch: "main", reviewRepositoryRoot: repository, reviewWorkspaceRoot }
     workspace = await prepareReviewWorkspace(config, reviewDispatch)
     const ledger = new HostLedger(join(ledgerDirectory, "ledger.json"),
       new ReviewCredentialBoundary(Buffer.alloc(32, 7)))
@@ -105,5 +111,6 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
       { cwd: repository }).catch(() => undefined)
     await rm(repository, { recursive: true, force: true })
     await rm(ledgerDirectory, { recursive: true, force: true })
+    await rm(reviewWorkspaceRoot, { recursive: true, force: true })
   }
 })
