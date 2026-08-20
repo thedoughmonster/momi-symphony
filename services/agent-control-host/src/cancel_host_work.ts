@@ -27,14 +27,17 @@ export async function cancelHostWork(
     if (target.state === "terminal") continue
     requested = true
     const targetClient = typeof client === "function" ? client(target) : client
+    if (target.runtimeRole === "independent_reviewer" && target.state !== "interactive") {
+      const fenced = await ledger.fenceCanceledStart(target.workId)
+      await interruptClaimed(targetClient, ledger, fenced.record, fenced.interruptionClaimed)
+      continue
+    }
     if (target.state === "reserved" && !target.threadId && !target.turnId) {
-      await ledger.cancellationRequested(target.workId)
-      await ledger.retireCanceledStart(target.workId)
+      await ledger.fenceCanceledStart(target.workId)
       continue
     }
     if (target.state === "ambiguous" && (!target.threadId || !target.turnId)) {
-      await ledger.cancellationRequested(target.workId)
-      await ledger.retireCanceledStart(target.workId)
+      await ledger.fenceCanceledStart(target.workId)
       continue
     }
     if (target.state === "interactive") {
@@ -51,17 +54,30 @@ export async function cancelHostWork(
       }
       continue
     }
-    const ambiguousStart = target.state === "ambiguous"
     if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
     if (target.cancellationRequestedAt) continue
     await targetClient.request("turn/interrupt", {
       threadId: target.threadId, turnId: target.turnId,
     })
     await ledger.interruptionRequested(target.workId)
+    await ledger.interruptionConfirmed(target.workId)
     await ledger.cancellationRequested(target.workId)
-    if (ambiguousStart) await ledger.retireCanceledStart(target.workId)
   }
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)
   return { cancellation_state: state }
+}
+
+async function interruptClaimed(client: AppServerClient, ledger: HostLedger,
+  record: HostRecord, claimed: boolean): Promise<void> {
+  if (!claimed || !record.threadId || !record.turnId) return
+  try {
+    await client.request("turn/interrupt", {
+      threadId: record.threadId, turnId: record.turnId,
+    })
+    await ledger.interruptionConfirmed(record.workId)
+  } catch (error) {
+    await ledger.interruptionFailed(record.workId)
+    throw error
+  }
 }

@@ -144,6 +144,7 @@ export type HostRecord = {
   callbackSent: boolean
   cancellationRequestedAt: string | null
   interruptionRequestedAt?: string | null
+  interruptionConfirmedAt?: string | null
   recoveryRequestedAt?: string | null
   budget?: HostExecutionBudget
   telemetry?: AttemptTelemetry | null

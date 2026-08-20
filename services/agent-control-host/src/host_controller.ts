@@ -46,6 +46,17 @@ export class HostController {
           .catch(() => undefined)
       })
     }
+    for (const record of this.ledger.pendingInterruptions()) {
+      try {
+        await this.ledger.interruptionRequested(record.workId)
+        await this.clientFor(record).request("turn/interrupt", {
+          threadId: record.threadId, turnId: record.turnId,
+        })
+        await this.ledger.interruptionConfirmed(record.workId)
+      } catch {
+        await this.ledger.interruptionFailed(record.workId).catch(() => undefined)
+      }
+    }
     for (const record of this.ledger.recoverable()) {
       try {
         if (record.state === "terminal") await this.deliverCallback(record)
@@ -128,7 +139,12 @@ export class HostController {
       this.ledger, this.config, input)
     for (const targetWorkId of input.target_work_ids) {
       const target = this.ledger.get(targetWorkId)
-      if (target?.state === "terminal" && !target.callbackSent) await this.deliverCallback(target)
+      if (target?.state === "canceled") {
+        const timer = this.budgetTimers.get(target.workId)
+        if (timer) clearTimeout(timer)
+        this.budgetTimers.delete(target.workId); this.budgetExhausted.delete(target.workId)
+      } else if (target?.state === "terminal" && !target.callbackSent &&
+        !this.isCanceledReview(target)) await this.deliverCallback(target)
     }
     return result
   }
@@ -146,6 +162,7 @@ export class HostController {
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
     if (!record.threadId || this.finalizing.has(record.workId)) return
     if (record.recoveryRequestedAt) return
+    if (this.isCanceledReview(record)) return
     this.finalizing.add(record.workId)
     const timer = this.budgetTimers.get(record.workId)
     if (timer) clearTimeout(timer)
@@ -157,6 +174,7 @@ export class HostController {
         await this.ledger.retainInteractive(record.workId); return
       }
       await client.request("thread/archive", { threadId: record.threadId })
+      if (this.isCanceledReview(this.ledger.get(record.workId))) return
       const archivedAt = new Date().toISOString()
       let reviewResult = record.runtimeRole === "independent_reviewer"
         ? extractReviewResult(turn) : null
@@ -179,12 +197,15 @@ export class HostController {
       telemetry.disposition = summary.terminal_disposition
       await this.ledger.recordTelemetry(record.workId, telemetry)
       const terminal = await this.ledger.terminal(record.workId, summary, archivedAt, reviewResult)
+      if (this.isCanceledReview(terminal)) return
       await this.deliverCallback(terminal)
     } finally {
       this.finalizing.delete(record.workId)
     }
   }
   private async deliverCallback(record: HostRecord): Promise<void> {
+    record = this.ledger.get(record.workId) ?? record
+    if (this.isCanceledReview(record)) return
     if (record.runtimeRole !== "independent_reviewer") {
       await this.cleanupReviewLineage(record.workId)
     }
@@ -243,12 +264,21 @@ export class HostController {
     client: AppServerClient): Promise<void> {
     const current = this.ledger.get(record.workId)
     if (!current?.cancellationRequestedAt) return
-    if (current.threadId && current.turnId && !current.interruptionRequestedAt) {
-      await client.request("turn/interrupt", {
-        threadId: current.threadId, turnId: current.turnId,
-      })
-      await this.ledger.interruptionRequested(current.workId)
+    const fenced = await this.ledger.fenceCanceledStart(current.workId)
+    if (fenced.interruptionClaimed && fenced.record.threadId && fenced.record.turnId) {
+      try {
+        await client.request("turn/interrupt", {
+          threadId: fenced.record.threadId, turnId: fenced.record.turnId,
+        })
+        await this.ledger.interruptionConfirmed(current.workId)
+      } catch (error) {
+        await this.ledger.interruptionFailed(current.workId)
+        throw error
+      }
     }
-    await this.ledger.retireCanceledStart(current.workId)
+  }
+  private isCanceledReview(record: HostRecord | null): boolean {
+    return record?.runtimeRole === "independent_reviewer" &&
+      (record.state === "canceled" || Boolean(record.cancellationRequestedAt))
   }
 }

@@ -13,11 +13,15 @@ import type { AppServerClient, HostCancellation, HostDispatch } from "../src/typ
 
 class FakeAppServer implements AppServerClient {
   requests: Array<{ method: string; params: unknown }> = []
+  private listener: (notification: Record<string, unknown>) => void = () => undefined
   connect(): Promise<void> { return Promise.resolve() }
-  onNotification(): void {}
+  onNotification(listener: (notification: Record<string, unknown>) => void): void {
+    this.listener = listener
+  }
   request<T>(method: string, params: unknown): Promise<T> {
     this.requests.push({ method, params }); return Promise.resolve({} as T)
   }
+  emit(notification: Record<string, unknown>): void { this.listener(notification) }
 }
 
 class PausedStartAppServer extends FakeAppServer {
@@ -37,6 +41,23 @@ class PausedStartAppServer extends FakeAppServer {
   }
 }
 
+class PausedInterruptAppServer extends FakeAppServer {
+  private releaseInterrupt!: () => void
+  private markInterruptReached!: () => void
+  readonly interruptReached = new Promise<void>((resolve) => {
+    this.markInterruptReached = resolve
+  })
+  private readonly interruptGate = new Promise<void>((resolve) => {
+    this.releaseInterrupt = resolve
+  })
+  release(): void { this.releaseInterrupt() }
+  override async request<T>(method: string, params: unknown): Promise<T> {
+    if (method !== "turn/interrupt") return super.request(method, params)
+    this.requests.push({ method, params }); this.markInterruptReached()
+    await this.interruptGate; return {} as T
+  }
+}
+
 function pausedReviewResponseLoss(mode: "no_id" | "thread_only" | "exact_id") {
   let release!: () => void
   let reached!: () => void
@@ -50,6 +71,21 @@ function pausedReviewResponseLoss(mode: "no_id" | "thread_only" | "exact_id") {
     }
     reached(); await gate
     throw new Error("host_start_ambiguous")
+  }
+  return { taskStarter, startReached, release }
+}
+
+function pausedExactReviewSuccess() {
+  let release!: () => void
+  let reached!: () => void
+  const startReached = new Promise<void>((resolve) => { reached = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const taskStarter: typeof startHostTask = async (...args) => {
+    const observer = args[4] ?? {}
+    await observer.threadStarted?.("start-wins-thread")
+    await observer.turnStarted?.("start-wins-thread", "start-wins-turn")
+    reached(); await gate
+    return { thread_id: "start-wins-thread", turn_id: "start-wins-turn" }
   }
   return { taskStarter, startReached, release }
 }
@@ -304,6 +340,78 @@ test("cancellation remains monotonic across reviewer start response-loss races",
       assert.equal(restarted.recoverable().some((record) => record.workId === target), false, mode)
     } finally { await rm(directory, { recursive: true, force: true }) }
   }
+})
+
+test("exact reviewer cancellation fences start-wins before interrupt and restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-review-cancel-start-wins-"))
+  const ledgerPath = join(directory, "ledger.json")
+  const boundary = new ReviewCredentialBoundary(Buffer.alloc(32, 29))
+  const ledger = new HostLedger(ledgerPath, boundary)
+  const implementationClient = new FakeAppServer()
+  const reviewClient = new PausedInterruptAppServer()
+  const paused = pausedExactReviewSuccess()
+  let callbacks = 0
+  const controller = new HostController(implementationClient, ledger, {
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
+  }, () => { callbacks += 1; return Promise.resolve() }, reviewClient, paused.taskStarter)
+  const target = "00000000-0000-4000-8000-000000000091"
+  const cancellation: HostCancellation = { schema_version: 2,
+    work_id: "00000000-0000-4000-8000-000000000092",
+    capability_token: "00000000-0000-4000-8000-000000000093",
+    target_work_ids: [target], repository: "thedoughmonster/momi-symphony",
+    base_branch: "main" }
+  try {
+    await controller.start()
+    const starting = controller.dispatch(reviewDispatch(target))
+    await paused.startReached
+    const canceling = controller.cancel(cancellation)
+    await reviewClient.interruptReached
+    const fenced = ledger.get(target)
+    assert.equal(fenced?.state, "canceled")
+    assert.equal(typeof fenced?.cancellationRequestedAt, "string")
+    assert.equal(typeof fenced?.interruptionRequestedAt, "string")
+    assert.equal(fenced?.interruptionConfirmedAt, null)
+    assert.equal(ledger.activeWorkIds().includes(target), false)
+    assert.equal(ledger.recoverable().some((record) => record.workId === target), false)
+
+    paused.release()
+    assert.deepEqual(await starting,
+      { thread_id: "start-wins-thread", turn_id: "start-wins-turn" })
+    assert.equal(ledger.get(target)?.state, "canceled")
+    reviewClient.emit({ method: "turn/completed", params: {
+      threadId: "start-wins-thread", turn: { id: "start-wins-turn", status: "completed",
+        items: [{ type: "agentMessage", text: JSON.stringify({ result: "accepted",
+          findings: [], artifact_ref: "review://canceled/start-wins" }) }] } } })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(callbacks, 0)
+    assert.equal(ledger.get(target)?.reviewResult, null)
+    assert.equal(ledger.get(target)?.terminal, null)
+
+    const restartedLedger = new HostLedger(ledgerPath, boundary)
+    const restartedReviewClient = new FakeAppServer()
+    const restarted = new HostController(new FakeAppServer(), restartedLedger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
+    }, () => { callbacks += 1; return Promise.resolve() }, restartedReviewClient)
+    await restarted.start()
+    assert.deepEqual(restartedReviewClient.requests.filter((item) =>
+      item.method === "turn/interrupt"), [{ method: "turn/interrupt",
+      params: { threadId: "start-wins-thread", turnId: "start-wins-turn" } }])
+    assert.equal(typeof restartedLedger.get(target)?.interruptionConfirmedAt, "string")
+    assert.equal(restartedLedger.activeWorkIds().includes(target), false)
+    assert.equal(restartedLedger.recoverable().some((record) => record.workId === target), false)
+
+    reviewClient.release(); assert.deepEqual(await canceling, { cancellation_state: "requested" })
+    assert.equal(callbacks, 0)
+    assert.equal(implementationClient.requests.some((item) =>
+      item.method === "turn/interrupt"), false)
+    const finalLedger = new HostLedger(ledgerPath, boundary); await finalLedger.load()
+    assert.equal(finalLedger.get(target)?.state, "canceled")
+    assert.equal(typeof finalLedger.get(target)?.interruptionConfirmedAt, "string")
+    assert.equal(finalLedger.activeWorkIds().includes(target), false)
+    assert.equal(finalLedger.recoverable().some((record) => record.workId === target), false)
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
 test("retained discovery cancellation archives the task and delivers its terminal receipt", async () => {

@@ -95,6 +95,10 @@ export class HostLedger {
       .sort()
       .slice(0, 128)
   }
+  pendingInterruptions(): HostRecord[] {
+    return [...this.records.values()].filter((record) => record.state === "canceled" &&
+      Boolean(record.threadId && record.turnId) && !record.interruptionConfirmedAt)
+  }
   async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
     dispatch?: Pick<import("./types.ts").HostDispatch, "budget" | "policy_version" |
@@ -116,7 +120,7 @@ export class HostLedger {
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
       callbackSent: false, cancellationRequestedAt: null, interruptionRequestedAt: null,
-      recoveryRequestedAt: null,
+      interruptionConfirmedAt: null, recoveryRequestedAt: null,
       budget: dispatch?.budget, policyVersion: dispatch?.policy_version,
       stablePrefixFingerprint: dispatch?.stable_prefix_fingerprint,
       contextFingerprint: dispatch?.context_fingerprint,
@@ -172,14 +176,21 @@ export class HostLedger {
       record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
     }
     record.updatedAt = new Date().toISOString(); await this.persist(); return record }
-  async retireCanceledStart(workId: string): Promise<HostRecord> {
+  async fenceCanceledStart(workId: string): Promise<{
+    record: HostRecord; interruptionClaimed: boolean
+  }> {
     const record = this.require(workId)
-    if (!record.cancellationRequestedAt ||
-      !["reserved", "ambiguous", "canceled"].includes(record.state)) {
+    if (!["reserved", "ambiguous", "accepted", "canceled"].includes(record.state)) {
       throw new Error("host_cancel_target_not_retirable")
     }
-    record.state = "canceled"; record.updatedAt = new Date().toISOString()
-    await this.persist(); return record
+    const now = new Date().toISOString()
+    record.cancellationRequestedAt ??= now
+    record.state = "canceled"; record.reviewResult = null
+    const interruptionClaimed = Boolean(record.threadId && record.turnId) &&
+      !record.interruptionConfirmedAt && !record.interruptionRequestedAt
+    if (interruptionClaimed) record.interruptionRequestedAt = now
+    record.updatedAt = now
+    await this.persist(); return { record, interruptionClaimed }
   }
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
@@ -189,6 +200,12 @@ export class HostLedger {
   async terminal(workId: string, result: TerminalSummary, archivedAt: string,
     reviewResult?: import("./types.ts").HostReviewResult | null): Promise<HostRecord> {
     const record = this.require(workId)
+    if (record.runtimeRole === "independent_reviewer" &&
+      (record.state === "canceled" || record.cancellationRequestedAt)) {
+      record.state = "canceled"; record.terminal = null; record.reviewResult = null
+      record.callbackSent = false; record.updatedAt = new Date().toISOString()
+      await this.persist(); return record
+    }
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
     record.reviewResult = reviewResult ?? null
     record.callbackSent = false; record.updatedAt = new Date().toISOString(); await this.persist(); return record
@@ -209,6 +226,17 @@ export class HostLedger {
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async interruptionRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.interruptionRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionConfirmed(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (!record.threadId || !record.turnId || !record.interruptionRequestedAt) {
+      throw new Error("host_interruption_not_requested")
+    }
+    record.interruptionConfirmedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionFailed(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (!record.interruptionConfirmedAt) record.interruptionRequestedAt = null
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async recoveryRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.recoveryRequestedAt ??= new Date().toISOString()
