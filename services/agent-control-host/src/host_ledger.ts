@@ -156,6 +156,12 @@ export class HostLedger {
   async ambiguous(workId: string): Promise<void> {
     const record = this.require(workId); record.state = "ambiguous"
     record.updatedAt = new Date().toISOString(); await this.persist() }
+  async retireAmbiguousCancellation(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.state !== "ambiguous" || (record.threadId !== null && record.turnId !== null) ||
+      !record.cancellationRequestedAt) throw new Error("host_cancel_target_not_retirable")
+    record.state = "canceled"; record.updatedAt = new Date().toISOString(); await this.persist()
+  }
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
     if (record.interactionMode !== "interactive") throw new Error("host_interaction_mode_conflict")

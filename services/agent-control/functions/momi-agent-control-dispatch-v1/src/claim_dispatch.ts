@@ -1,8 +1,8 @@
 import { getDatabase } from "../../../src/database.ts"
 import type { ClaimedDispatch, DispatchInput } from "./types.ts"
 
-export async function claimDispatch(input: DispatchInput): Promise<ClaimedDispatch | null> {
-  const sql = getDatabase()
+export async function claimDispatch(input: DispatchInput,
+  sql = getDatabase()): Promise<ClaimedDispatch | null> {
   const rows = await sql<ClaimedDispatch[]>`
     select work_id::text, issue_id::text, issue_identifier, action, source_kind,
       validation_profile, issue_url,
@@ -27,8 +27,7 @@ export async function claimDispatch(input: DispatchInput): Promise<ClaimedDispat
     select reviewer_dispatch_id::text
     from momi_agent_ops.review_attempts
     where implementation_dispatch_id = any(${claimed.cancellation_target_ids}::uuid[])
-      and state in ('running', 'changes_requested')
-      and reviewer_thread_id is not null and reviewer_turn_id is not null
+      and state in ('running', 'changes_requested', 'ambiguous')
     order by reviewer_dispatch_id`
   claimed.cancellation_target_ids = [...new Set([
     ...claimed.cancellation_target_ids,

@@ -136,7 +136,7 @@ export type HostRecord = {
   workId: string
   fingerprint: string
   capabilityToken: string
-  state: "reserved" | "accepted" | "interactive" | "terminal" | "ambiguous"
+  state: "reserved" | "accepted" | "interactive" | "terminal" | "ambiguous" | "canceled"
   interactionMode?: "one_shot" | "interactive"
   threadId: string | null
   turnId: string | null

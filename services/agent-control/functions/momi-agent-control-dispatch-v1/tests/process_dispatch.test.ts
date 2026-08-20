@@ -1,11 +1,33 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { claimDispatch } from "../src/claim_dispatch.ts"
 import { processDispatch } from "../src/process_dispatch.ts"
 import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 
 const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
   capability_token: "00000000-0000-4000-8000-000000000002" }
+
+test("authenticated cancellation expands incomplete ambiguous reviewer targets", async () => {
+  const implementationId = "00000000-0000-4000-8000-000000000003"
+  const reviewerId = "00000000-0000-4000-8000-000000000004"
+  const queries: string[] = []
+  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const query = strings.join("?"); queries.push(query)
+    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
+      action: "cancel-run", delivery_phase: "cancel_host",
+      cancellation_target_ids: [implementationId] }]
+    if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
+    if (query.includes("from momi_agent_ops.review_attempts")) {
+      return [{ reviewer_dispatch_id: reviewerId }]
+    }
+    throw new Error("unexpected_query")
+  }
+  const claimed = await claimDispatch(input, sql as never)
+  assert.deepEqual(claimed?.cancellation_target_ids, [implementationId, reviewerId])
+  assert.match(queries[2], /state in \('running', 'changes_requested', 'ambiguous'\)/)
+  assert.doesNotMatch(queries[2], /reviewer_thread_id is not null/)
+})
 
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {
   let claimCount = 0; let hostCount = 0; let writebacks = 0

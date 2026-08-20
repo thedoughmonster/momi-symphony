@@ -987,7 +987,7 @@ begin
     updated_at = now()
   where review.implementation_dispatch_id in (
     select owned.dispatch_id from lifecycle owned
-  ) and review.state in ('reserved', 'running');
+  ) and review.state in ('reserved', 'running', 'ambiguous');
   with recursive lifecycle as (
     select selected_target as dispatch_id
     union all

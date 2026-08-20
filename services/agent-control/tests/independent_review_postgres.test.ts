@@ -745,6 +745,126 @@ async (context) => {
   assert.notEqual(replacement.reviewer_dispatch_id, created.reviewer_dispatch_id)
 })
 
+test("parent cancellation retires ambiguous review capacity without acceptance", async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  const deliveryId = "31600000-0000-4000-8000-000000000001"
+  const dispatchId = "31600000-0000-4000-8000-000000000002"
+  const issueId = "31600000-0000-4000-8000-000000000003"
+  const callback = "31600000-0000-4000-8000-000000000004"
+  const cancelDeliveryId = "31600000-0000-4000-8000-000000000005"
+  const cancelDispatchId = "31600000-0000-4000-8000-000000000006"
+  const cancelCapability = "31600000-0000-4000-8000-000000000007"
+  const capacityDeliveryId = "31600000-0000-4000-8000-000000000008"
+  const capacityDispatchId = "31600000-0000-4000-8000-000000000009"
+  const capacityIssueId = "31600000-0000-4000-8000-000000000010"
+  const capacityCallback = "31600000-0000-4000-8000-000000000011"
+  const head = "9".repeat(40)
+  await database.sql`
+    insert into momi_agent_ops.raw_webhook_envelopes (
+      delivery_id, raw_body, payload, payload_sha256, auth_result
+    ) values
+      (${deliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb, ${"1".repeat(64)}, 'verified'),
+      (${cancelDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"2".repeat(64)}, 'verified'),
+      (${capacityDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"3".repeat(64)}, 'verified')
+  `
+  await database.sql`
+    insert into momi_agent_ops.dispatches (
+      dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
+      linear_issue_identifier, linear_issue_url, action, changed_fields,
+      mapped_repository, mapped_base_branch, active_states, work_status,
+      capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id,
+      cancellation_state, target_dispatch_id
+    ) values
+      (${dispatchId}::uuid, ${deliveryId}::uuid, 'cancel-ambiguous-parent',
+        ${issueId}::uuid, 'MOX-260',
+        'https://linear.app/moxx-workboard/issue/MOX-260/cancel-ambiguous-parent',
+        ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        array['In Progress'], 'active', ${"4".repeat(64)},
+        encode(extensions.digest(convert_to(${callback}, 'UTF8'), 'sha256'), 'hex'),
+        'implementation-thread', 'implementation-turn', 'not_requested', null),
+      (${cancelDispatchId}::uuid, ${cancelDeliveryId}::uuid, 'cancel-ambiguous-request',
+        ${issueId}::uuid, 'MOX-260',
+        'https://linear.app/moxx-workboard/issue/MOX-260/cancel-ambiguous-request',
+        'cancel-run', '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        array['In Progress'], 'claimed',
+        encode(extensions.digest(convert_to(${cancelCapability}, 'UTF8'), 'sha256'), 'hex'),
+        null, null, null, 'requested', ${dispatchId}::uuid),
+      (${capacityDispatchId}::uuid, ${capacityDeliveryId}::uuid, 'capacity-after-cancel',
+        ${capacityIssueId}::uuid, 'MOX-999',
+        'https://linear.app/moxx-workboard/issue/MOX-999/capacity-after-cancel',
+        ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        array['In Progress'], 'active', ${"5".repeat(64)},
+        encode(extensions.digest(convert_to(${capacityCallback}, 'UTF8'), 'sha256'), 'hex'),
+        'capacity-thread', 'capacity-turn', 'not_requested', null)
+  `
+  await database.sql`
+    insert into momi_agent_ops.run_records (dispatch_id, head_sha, validation_state, validation_sha)
+    values (${dispatchId}::uuid, ${head}, 'succeeded', ${head}),
+      (${capacityDispatchId}::uuid, ${head}, 'succeeded', ${head})
+  `
+  await database.sql`insert into momi_agent_ops.run_records (dispatch_id)
+    values (${cancelDispatchId}::uuid)`
+  const [created] = await database.sql<{
+    review_attempt_id: string; reviewer_dispatch_id: string; reviewer_capability_token: string
+  }[]>`
+    select review_attempt_id::text, reviewer_dispatch_id::text,
+      reviewer_capability_token::text from momi_agent_ops.create_review_attempt_v1(
+      ${dispatchId}::uuid, ${callback}::uuid, 'implementation-thread', 'implementation-turn',
+      'thedoughmonster/momi-symphony', 'main', 16, ${head}, ${baseSha}, 'high',
+      'independent-review-v1', 'fnv1a64:1111111111111111',
+      'review://MOX-260/cancel-ambiguous', 'fnv1a64:2222222222222222',
+      array['scheduler_recovery_cancellation'], array['scheduler_recovery_cancellation'], null, 1)
+  `
+  await database.sql`select momi_agent_ops.record_review_start_ambiguous_v1(
+    ${created.reviewer_dispatch_id}::uuid, ${created.reviewer_capability_token}::uuid)`
+  const [fenced] = await database.sql<{ fenced: boolean }[]>`
+    select momi_agent_ops.fence_cancellation_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid) as fenced`
+  assert.equal(fenced.fenced, true)
+  const [recorded] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_cancellation_v3(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
+  assert.equal(recorded.recorded, true)
+  const [lateResult] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_result_v1(
+      ${created.reviewer_dispatch_id}::uuid, ${created.reviewer_capability_token}::uuid,
+      'independent_reviewer', 'late-thread', 'late-turn',
+      'thedoughmonster/momi-symphony', 16, ${head}, ${baseSha}, 1, 'high',
+      'gpt-5.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a',
+      'independent-review-v1', 'accepted', '[]'::jsonb,
+      ${`sha256:${"6".repeat(64)}`}, 'review://MOX-260/late-after-cancel',
+      '{}'::jsonb) as recorded`
+  assert.equal(lateResult.recorded, false)
+  const [state] = await database.sql<{
+    attempt_state: string; active_reviews: number; review_state: string;
+    review_receipt_id: string | null; review_check_sha: string | null;
+    merge_preflight_sha: string | null
+  }[]>`
+    select attempt.state as attempt_state,
+      (select count(*)::integer from momi_agent_ops.review_attempts active
+        where active.state in ('reserved', 'running', 'ambiguous')) as active_reviews,
+      run.review_state, run.review_receipt_id::text, run.review_check_sha,
+      run.merge_preflight_sha
+    from momi_agent_ops.review_attempts attempt
+    join momi_agent_ops.run_records run on run.dispatch_id = attempt.implementation_dispatch_id
+    where attempt.review_attempt_id = ${created.review_attempt_id}::uuid
+  `
+  assert.deepEqual(state, { attempt_state: "canceled", active_reviews: 0,
+    review_state: "failed", review_receipt_id: null, review_check_sha: null,
+    merge_preflight_sha: null })
+  const [replacement] = await database.sql<{ disposition: string }[]>`
+    select disposition from momi_agent_ops.create_review_attempt_v1(
+      ${capacityDispatchId}::uuid, ${capacityCallback}::uuid, 'capacity-thread', 'capacity-turn',
+      'thedoughmonster/momi-symphony', 'main', 99, ${head}, ${baseSha}, 'high',
+      'independent-review-v1', 'fnv1a64:3333333333333333',
+      'review://MOX-999/capacity-after-cancel', 'fnv1a64:4444444444444444',
+      array['general'], array['general'], null, 1)`
+  assert.equal(replacement.disposition, "created")
+})
+
 test("no-attempt review dispositions clear prior exact-subject identities", async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))
