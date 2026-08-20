@@ -8,6 +8,7 @@ import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
 import { parseHostCancellation } from "../src/parse_host_cancellation.ts"
 import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
+import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostCancellation, HostDispatch } from "../src/types.ts"
 
 class FakeAppServer implements AppServerClient {
@@ -34,6 +35,47 @@ class PausedStartAppServer extends FakeAppServer {
     if (method === "turn/start") return { turn: { id: "turn-late" } } as T
     return {} as T
   }
+}
+
+function pausedReviewResponseLoss(mode: "no_id" | "thread_only" | "exact_id") {
+  let release!: () => void
+  let reached!: () => void
+  const startReached = new Promise<void>((resolve) => { reached = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const taskStarter: typeof startHostTask = async (...args) => {
+    const observer = args[4] ?? {}
+    if (mode !== "no_id") await observer.threadStarted?.(`${mode}-thread`)
+    if (mode === "exact_id") {
+      await observer.turnStarted?.(`${mode}-thread`, `${mode}-turn`)
+    }
+    reached(); await gate
+    throw new Error("host_start_ambiguous")
+  }
+  return { taskStarter, startReached, release }
+}
+
+function reviewDispatch(workId: string): HostDispatch {
+  return { schema_version: 4, work_id: workId,
+    capability_token: "00000000-0000-4000-8000-000000000061",
+    issue_id: "00000000-0000-4000-8000-000000000062", issue_identifier: "MOX-260",
+    issue_url: "https://linear.app/x/issue/MOX-260/x",
+    project_id: "00000000-0000-4000-8000-000000000063",
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["In Progress"], interaction_mode: "one_shot",
+    thread_name: "MOX-260 · independent review", runtime_role: "independent_reviewer",
+    review_workspace_id: "00000000-0000-4000-8000-000000000064",
+    stable_instruction: "review", volatile_context: "bounded",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222",
+    policy_version: "independent-review-v1",
+    budget: { model_turns: 16, no_progress_cycles: 2, subagents: 0,
+      subagent_depth: 0, model_visible_tool_bytes: 96_000, elapsed_ms: 3_600_000 },
+    review_subject: { implementation_dispatch_id:
+      "00000000-0000-4000-8000-000000000065", pull_request_number: 16,
+      head_sha: "a".repeat(40), base_sha: "b".repeat(40), generation: 1,
+      profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+      budget_fingerprint: "fnv1a64:0b9ef0157af3f30a",
+      policy_version: "independent-review-v1" } }
 }
 
 test("cancellation transport normalizes v1 and requires sorted exact v2 targets", () => {
@@ -204,6 +246,64 @@ test("ambiguous reviewer cancellation interrupts exact starts and retires respon
     assert.equal(implementationClient.requests.some((item) => item.method === "turn/interrupt"),
       false)
   } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test("cancellation remains monotonic across reviewer start response-loss races", async () => {
+  const cases = ["no_id", "thread_only", "exact_id"] as const
+  for (const [index, mode] of cases.entries()) {
+    const directory = await mkdtemp(join(tmpdir(), `momi-review-cancel-race-${mode}-`))
+    const ledgerPath = join(directory, "ledger.json")
+    const boundary = new ReviewCredentialBoundary(Buffer.alloc(32, 20 + index))
+    const ledger = new HostLedger(ledgerPath, boundary)
+    const implementationClient = new FakeAppServer(); const reviewClient = new FakeAppServer()
+    const paused = pausedReviewResponseLoss(mode)
+    const controller = new HostController(implementationClient, ledger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
+    }, () => Promise.resolve(), reviewClient, paused.taskStarter)
+    const target = `00000000-0000-4000-8000-00000000007${index}`
+    const cancellation: HostCancellation = { schema_version: 2,
+      work_id: `00000000-0000-4000-8000-00000000008${index}`,
+      capability_token: "00000000-0000-4000-8000-000000000066",
+      target_work_ids: [target], repository: "thedoughmonster/momi-symphony",
+      base_branch: "main" }
+    try {
+      await controller.start()
+      const starting = controller.dispatch(reviewDispatch(target))
+      await paused.startReached
+      assert.deepEqual(await controller.cancel(cancellation), {
+        cancellation_state: "requested" })
+      assert.equal(ledger.get(target)?.state, "canceled", mode)
+      paused.release()
+      await assert.rejects(starting, /host_start_ambiguous/)
+      const retired = ledger.get(target)
+      assert.equal(retired?.state, "canceled", mode)
+      assert.equal(retired?.reviewResult, null, mode)
+      assert.deepEqual([retired?.threadId, retired?.turnId], mode === "no_id"
+        ? [null, null] : mode === "thread_only"
+          ? ["thread_only-thread", null] : ["exact_id-thread", "exact_id-turn"], mode)
+      assert.equal(ledger.activeWorkIds().includes(target), false, mode)
+      assert.equal(ledger.recoverable().some((record) => record.workId === target), false, mode)
+      assert.equal(implementationClient.requests.some((item) =>
+        item.method === "turn/interrupt"), false, mode)
+      const interruptions = reviewClient.requests.filter((item) =>
+        item.method === "turn/interrupt")
+      assert.equal(interruptions.length, mode === "exact_id" ? 1 : 0, mode)
+      if (mode === "exact_id") {
+        assert.deepEqual(interruptions[0], { method: "turn/interrupt",
+          params: { threadId: "exact_id-thread", turnId: "exact_id-turn" } })
+        assert.equal(typeof retired?.interruptionRequestedAt, "string")
+        assert.equal((await ledger.accept(target, "exact_id-thread", "exact_id-turn")).state,
+          "canceled")
+      }
+      const restarted = new HostLedger(ledgerPath, boundary); await restarted.load()
+      assert.equal(restarted.get(target)?.state, "canceled", mode)
+      assert.deepEqual([restarted.get(target)?.threadId, restarted.get(target)?.turnId],
+        [retired?.threadId, retired?.turnId], mode)
+      assert.equal(restarted.activeWorkIds().includes(target), false, mode)
+      assert.equal(restarted.recoverable().some((record) => record.workId === target), false, mode)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  }
 })
 
 test("retained discovery cancellation archives the task and delivers its terminal receipt", async () => {

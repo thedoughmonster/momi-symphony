@@ -143,6 +143,7 @@ export type HostRecord = {
   terminal: (TerminalSummary & { archivedAt: string }) | null
   callbackSent: boolean
   cancellationRequestedAt: string | null
+  interruptionRequestedAt?: string | null
   recoveryRequestedAt?: string | null
   budget?: HostExecutionBudget
   telemetry?: AttemptTelemetry | null

@@ -115,7 +115,8 @@ export class HostLedger {
     }
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
-      callbackSent: false, cancellationRequestedAt: null, recoveryRequestedAt: null,
+      callbackSent: false, cancellationRequestedAt: null, interruptionRequestedAt: null,
+      recoveryRequestedAt: null,
       budget: dispatch?.budget, policyVersion: dispatch?.policy_version,
       stablePrefixFingerprint: dispatch?.stable_prefix_fingerprint,
       contextFingerprint: dispatch?.context_fingerprint,
@@ -132,35 +133,53 @@ export class HostLedger {
     const record = this.require(workId)
     if ((record.threadId && record.threadId !== threadId) ||
       (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
-    record.state = "accepted"; record.threadId = threadId; record.turnId = turnId
+    record.state = record.state === "canceled" || record.cancellationRequestedAt
+      ? "canceled" : "accepted"
+    record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
   async threadStarted(workId: string, threadId: string): Promise<void> {
     const record = this.require(workId)
     if (record.threadId && record.threadId !== threadId) throw new Error("host_idempotency_conflict")
-    record.state = "ambiguous"; record.threadId = threadId
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.threadId = threadId
     record.updatedAt = new Date().toISOString(); await this.persist()
   }
   async turnStarted(workId: string, threadId: string, turnId: string): Promise<void> {
     const record = this.require(workId)
     if ((record.threadId && record.threadId !== threadId) ||
       (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
-    record.state = "ambiguous"; record.threadId = threadId; record.turnId = turnId
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist()
   }
   async releaseReserved(workId: string): Promise<void> {
     const record = this.require(workId)
     if (record.state !== "reserved" || record.threadId || record.turnId) return
+    if (record.cancellationRequestedAt) {
+      record.state = "canceled"; record.updatedAt = new Date().toISOString()
+      await this.persist(); return
+    }
     this.records.delete(workId); await this.persist()
   }
-  async ambiguous(workId: string): Promise<void> {
-    const record = this.require(workId); record.state = "ambiguous"
-    record.updatedAt = new Date().toISOString(); await this.persist() }
-  async retireAmbiguousCancellation(workId: string): Promise<void> {
+  async ambiguous(workId: string): Promise<HostRecord> {
     const record = this.require(workId)
-    if (record.state !== "ambiguous" || (record.threadId !== null && record.turnId !== null) ||
-      !record.cancellationRequestedAt) throw new Error("host_cancel_target_not_retirable")
-    record.state = "canceled"; record.updatedAt = new Date().toISOString(); await this.persist()
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.updatedAt = new Date().toISOString(); await this.persist(); return record }
+  async retireCanceledStart(workId: string): Promise<HostRecord> {
+    const record = this.require(workId)
+    if (!record.cancellationRequestedAt ||
+      !["reserved", "ambiguous", "canceled"].includes(record.state)) {
+      throw new Error("host_cancel_target_not_retirable")
+    }
+    record.state = "canceled"; record.updatedAt = new Date().toISOString()
+    await this.persist(); return record
   }
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
@@ -187,6 +206,9 @@ export class HostLedger {
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async cancellationRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.cancellationRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionRequested(workId: string): Promise<void> {
+    const record = this.require(workId); record.interruptionRequestedAt ??= new Date().toISOString()
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async recoveryRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.recoveryRequestedAt ??= new Date().toISOString()

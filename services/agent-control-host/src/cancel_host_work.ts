@@ -29,11 +29,12 @@ export async function cancelHostWork(
     const targetClient = typeof client === "function" ? client(target) : client
     if (target.state === "reserved" && !target.threadId && !target.turnId) {
       await ledger.cancellationRequested(target.workId)
+      await ledger.retireCanceledStart(target.workId)
       continue
     }
     if (target.state === "ambiguous" && (!target.threadId || !target.turnId)) {
       await ledger.cancellationRequested(target.workId)
-      await ledger.retireAmbiguousCancellation(target.workId)
+      await ledger.retireCanceledStart(target.workId)
       continue
     }
     if (target.state === "interactive") {
@@ -50,12 +51,15 @@ export async function cancelHostWork(
       }
       continue
     }
+    const ambiguousStart = target.state === "ambiguous"
     if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
     if (target.cancellationRequestedAt) continue
     await targetClient.request("turn/interrupt", {
       threadId: target.threadId, turnId: target.turnId,
     })
+    await ledger.interruptionRequested(target.workId)
     await ledger.cancellationRequested(target.workId)
+    if (ambiguousStart) await ledger.retireCanceledStart(target.workId)
   }
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)

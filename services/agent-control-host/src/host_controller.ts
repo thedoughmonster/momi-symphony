@@ -23,12 +23,14 @@ export class HostController {
   private readonly ledger: HostLedger
   private readonly config: HostConfiguration
   private readonly callback: (record: HostRecord) => Promise<void>
+  private readonly startTask: typeof startHostTask
   constructor(client: AppServerClient, ledger: HostLedger, config: HostConfiguration,
     callback: (record: HostRecord) => Promise<void> = sendTerminalCallback,
-    reviewClient?: AppServerClient) {
+    reviewClient?: AppServerClient, taskStarter: typeof startHostTask = startHostTask) {
     if (reviewClient === client) throw new Error("review_app_server_boundary_invalid")
     this.client = client; this.reviewClient = reviewClient
     this.ledger = ledger; this.config = config; this.callback = callback
+    this.startTask = taskStarter
   }
   async start(): Promise<void> {
     await this.ledger.load(); await this.client.connect()
@@ -94,7 +96,7 @@ export class HostController {
           }
         }
       }
-      const started = await startHostTask(client, this.config, input, undefined, {
+      const started = await this.startTask(client, this.config, input, undefined, {
         threadStarted: (threadId) => this.ledger.threadStarted(input.work_id, threadId),
         turnStarted: (threadId, turnId) =>
           this.ledger.turnStarted(input.work_id, threadId, turnId),
@@ -102,9 +104,8 @@ export class HostController {
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
       if (accepted.cancellationRequestedAt) {
-        await client.request("turn/interrupt", {
-          threadId: started.thread_id, turnId: started.turn_id,
-        })
+        await this.reconcileCanceledStart(accepted, client)
+        return started
       }
       this.scheduleBudget(accepted)
       void this.recover(accepted).catch(() => undefined)
@@ -112,7 +113,10 @@ export class HostController {
     } catch (error) {
       if ((error instanceof Error && error.message === "host_start_ambiguous") ||
         Boolean(this.ledger.get(input.work_id)?.threadId)) {
-        await this.ledger.ambiguous(input.work_id)
+        const ambiguous = await this.ledger.ambiguous(input.work_id)
+        if (ambiguous.cancellationRequestedAt) {
+          await this.reconcileCanceledStart(ambiguous, client)
+        }
       } else {
         await this.ledger.releaseReserved(input.work_id)
       }
@@ -234,5 +238,17 @@ export class HostController {
       return this.reviewClient
     }
     return this.client
+  }
+  private async reconcileCanceledStart(record: HostRecord,
+    client: AppServerClient): Promise<void> {
+    const current = this.ledger.get(record.workId)
+    if (!current?.cancellationRequestedAt) return
+    if (current.threadId && current.turnId && !current.interruptionRequestedAt) {
+      await client.request("turn/interrupt", {
+        threadId: current.threadId, turnId: current.turnId,
+      })
+      await this.ledger.interruptionRequested(current.workId)
+    }
+    await this.ledger.retireCanceledStart(current.workId)
   }
 }
