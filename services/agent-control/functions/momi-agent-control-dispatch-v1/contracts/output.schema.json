@@ -1,5 +1,105 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "uuid": {"type": "string", "format": "uuid"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "profile": {"enum": ["low", "standard", "high"]},
+    "model": {"enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]},
+    "reasoning_effort": {"enum": ["low", "medium", "high"]},
+    "budget_fingerprint": {
+      "type": "string",
+      "pattern": "^fnv1a64:[0-9a-f]{16}$"
+    },
+    "review_request_deferred": {
+      "type": "object",
+      "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {
+          "enum": ["implementation_identity_refused", "focused_validation_required", "already_accepted", "already_running", "changes_requested", "reviewer_interruption_pending", "capacity_wait", "reverification_refused"]
+        },
+        "review_attempt_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
+        "reviewer_dispatch_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
+        "generation": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "review_launch_accepted": {
+      "type": "object",
+      "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation", "profile"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"const": "accepted"},
+        "review_attempt_id": {"$ref": "#/$defs/uuid"},
+        "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
+        "generation": {"type": "integer", "minimum": 1},
+        "profile": {"$ref": "#/$defs/profile"}
+      },
+      "additionalProperties": false
+    },
+    "review_terminal": {
+      "type": "object",
+      "required": ["ok", "disposition"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {
+          "enum": ["accepted", "changes_requested", "inconclusive", "ambiguous", "canceled", "stale", "superseded"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "review_escalation_existing": {
+      "type": "object",
+      "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation", "profile"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {
+          "enum": ["escalation_identity_refused", "already_running", "already_accepted", "already_changes_requested", "already_inconclusive", "already_escalated", "already_failed", "already_stale", "already_superseded", "already_canceled", "already_ambiguous"]
+        },
+        "review_attempt_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
+        "reviewer_dispatch_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
+        "generation": {"type": ["integer", "null"], "minimum": 1},
+        "profile": {"anyOf": [{"$ref": "#/$defs/profile"}, {"type": "null"}]}
+      },
+      "additionalProperties": false
+    },
+    "review_escalation_exhausted": {
+      "type": "object",
+      "required": ["ok", "disposition", "generation", "profile"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"const": "escalation_exhausted"},
+        "generation": {"type": "integer", "minimum": 1},
+        "profile": {"const": "high"}
+      },
+      "additionalProperties": false
+    },
+    "review_status": {
+      "type": "object",
+      "required": ["ok", "state", "result", "findings", "reviewer_dispatch_id", "head_sha", "base_sha", "generation", "profile", "model", "reasoning_effort", "budget_fingerprint", "policy_version"],
+      "properties": {
+        "ok": {"const": true},
+        "state": {
+          "enum": ["reserved", "running", "accepted", "changes_requested", "inconclusive", "escalated", "failed", "stale", "superseded", "canceled", "ambiguous"]
+        },
+        "result": {
+          "type": ["string", "null"],
+          "enum": ["accepted", "changes_requested", "inconclusive", "escalate", null]
+        },
+        "findings": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
+        "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
+        "head_sha": {"$ref": "#/$defs/sha"},
+        "base_sha": {"$ref": "#/$defs/sha"},
+        "generation": {"type": "integer", "minimum": 1},
+        "profile": {"$ref": "#/$defs/profile"},
+        "model": {"$ref": "#/$defs/model"},
+        "reasoning_effort": {"$ref": "#/$defs/reasoning_effort"},
+        "budget_fingerprint": {"$ref": "#/$defs/budget_fingerprint"},
+        "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    }
+  },
   "anyOf": [
     {
       "type": "object",
@@ -18,14 +118,30 @@
       "required": ["ok", "disposition"],
       "properties": {
         "ok": {"const": true},
-        "disposition": {"enum": ["recorded", "created", "already_accepted", "already_reserved", "already_running", "capacity_wait", "focused_validation_required", "implementation_identity_refused", "reverification_refused", "reviewer_interruption_pending", "accepted", "changes_requested", "inconclusive", "escalate", "canceled", "stale", "superseded"]},
-        "review": {"type": "object"},
-        "review_attempt_id": {"type": ["string", "null"]},
-        "reviewer_dispatch_id": {"type": ["string", "null"]},
-        "generation": {"type": ["integer", "null"], "minimum": 1}
+        "disposition": {"const": "recorded"}
       },
       "additionalProperties": false
     },
+    {
+      "type": "object",
+      "required": ["ok", "disposition", "review"],
+      "properties": {
+        "ok": {"const": true},
+        "disposition": {"const": "recorded"},
+        "review": {
+          "anyOf": [
+            {"$ref": "#/$defs/review_request_deferred"},
+            {"$ref": "#/$defs/review_launch_accepted"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {"$ref": "#/$defs/review_request_deferred"},
+    {"$ref": "#/$defs/review_launch_accepted"},
+    {"$ref": "#/$defs/review_terminal"},
+    {"$ref": "#/$defs/review_escalation_existing"},
+    {"$ref": "#/$defs/review_escalation_exhausted"},
     {
       "type": "object",
       "required": ["ok", "eligible", "head_sha", "base_sha"],
@@ -33,24 +149,12 @@
         "ok": {"const": true},
         "eligible": {"type": "boolean"},
         "reason": {"type": "string"},
-        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+        "head_sha": {"$ref": "#/$defs/sha"},
+        "base_sha": {"$ref": "#/$defs/sha"}
       },
       "additionalProperties": false
     },
-    {
-      "type": "object",
-      "required": ["ok", "state", "findings"],
-      "properties": {
-        "ok": {"const": true},
-        "state": {"type": "string"}, "result": {"type": ["string", "null"]},
-        "findings": {"type": "array"}, "reviewer_dispatch_id": {"type": "string"},
-        "head_sha": {"type": "string"}, "base_sha": {"type": "string"},
-        "generation": {"type": "integer"}, "profile": {"type": "string"},
-        "policy_version": {"type": "string"}
-      },
-      "additionalProperties": false
-    },
+    {"$ref": "#/$defs/review_status"},
     {
       "type": "object",
       "required": ["ok", "routes", "observed", "claimed", "technical_retries"],
