@@ -342,10 +342,10 @@ test("review escalation promotes low to standard to high and then exhausts", asy
       select disposition, reviewer_dispatch_id::text, reviewer_capability_token::text,
         generation, profile from momi_agent_ops.create_escalated_review_attempt_v1(
           ${reviewerId}::uuid, ${reviewerToken}::uuid, ${reviewerThread}, ${reviewerTurn},
-          ${`fnv1a64:${expectedProfile === "standard" ? "3" : "4"}`.padEnd(25,
+          ${`fnv1a64:${expectedProfile === "standard" ? "3" : "4"}`.padEnd(24,
             expectedProfile === "standard" ? "3" : "4")},
           ${`review://MOX-260/${expectedProfile}`},
-          ${`fnv1a64:${expectedProfile === "standard" ? "5" : "6"}`.padEnd(25,
+          ${`fnv1a64:${expectedProfile === "standard" ? "5" : "6"}`.padEnd(24,
             expectedProfile === "standard" ? "5" : "6")}, array['general'], 4
         )
     `
