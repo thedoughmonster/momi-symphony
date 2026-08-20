@@ -26,8 +26,7 @@ alter table momi_agent_ops.run_records
     merge_preflight_base_sha is null or merge_preflight_base_sha ~ '^[0-9a-f]{40}$'
   ),
   add column merge_preflight_review_receipt_id uuid,
-  add column merge_preflight_at timestamptz
-  );
+  add column merge_preflight_at timestamptz;
 
 create table momi_agent_ops.review_attempts (
   review_attempt_id uuid primary key default gen_random_uuid(),
