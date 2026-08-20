@@ -1,4 +1,5 @@
 import type { ClaimedDispatch, HostCancellation } from "./types.ts"
+import { parseReviewCancellationReceipts } from "./review_cancellation_receipt.ts"
 
 export async function callCodexCancel(
   work: ClaimedDispatch,
@@ -25,8 +26,12 @@ export async function callCodexCancel(
   })
   const body = await response.json().catch(() => null) as Record<string, unknown> | null
   const state = body?.cancellation_state
+  const receipts = parseReviewCancellationReceipts(body?.review_cancellations,
+    work.cancellation_target_ids)
   if (!response.ok || !["requested", "already_terminal"].includes(String(state))) {
     throw new Error("codex_host_cancellation_failed")
   }
-  return { cancellation_state: state as HostCancellation["cancellation_state"] }
+  if (!receipts) throw new Error("codex_host_cancellation_receipt_invalid")
+  return { cancellation_state: state as HostCancellation["cancellation_state"],
+    review_cancellations: receipts }
 }

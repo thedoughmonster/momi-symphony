@@ -17,6 +17,7 @@ test("authenticated cancellation expands incomplete ambiguous reviewer targets",
     if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
       action: "cancel-run", delivery_phase: "cancel_host",
       cancellation_target_ids: [implementationId] }]
+    if (query.includes("prepare_review_check_revocations_v1")) return []
     if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
     if (query.includes("from momi_agent_ops.review_attempts")) {
       return [{ reviewer_dispatch_id: reviewerId }]
@@ -25,8 +26,59 @@ test("authenticated cancellation expands incomplete ambiguous reviewer targets",
   }
   const claimed = await claimDispatch(input, sql as never)
   assert.deepEqual(claimed?.cancellation_target_ids, [implementationId, reviewerId])
-  assert.match(queries[2], /state in \('running', 'changes_requested', 'ambiguous'\)/)
-  assert.doesNotMatch(queries[2], /reviewer_thread_id is not null/)
+  assert.match(queries[3], /state in \('running', 'changes_requested', 'ambiguous'\)/)
+  assert.doesNotMatch(queries[3], /reviewer_thread_id is not null/)
+})
+
+test("cancellation publishes and records exact-head revocation before its durable fence", async () => {
+  const implementationId = "00000000-0000-4000-8000-000000000013"
+  const head = "a".repeat(40); const timeline: string[] = []
+  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const query = strings.join("?")
+    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
+      action: "cancel-run", delivery_phase: "cancel_host",
+      cancellation_target_ids: [implementationId] }]
+    if (query.includes("prepare_review_check_revocations_v1")) {
+      timeline.push("prepare")
+      return [{ implementation_dispatch_id: implementationId,
+        repository: "thedoughmonster/momi-symphony", head_sha: head,
+        publication_pending: false, revocation_required: true }]
+    }
+    if (query.includes("record_review_check_revocation_v1")) {
+      timeline.push("record-revocation"); return [{ recorded: true }]
+    }
+    if (query.includes("fence_cancellation_v1")) {
+      timeline.push("fence"); return [{ fenced: true }]
+    }
+    if (query.includes("from momi_agent_ops.review_attempts")) return []
+    throw new Error(`unexpected_query:${query}`)
+  }
+  const github = { publishReviewCheck: async (repository: string, sha: string,
+    success: boolean) => {
+    assert.equal(repository, "thedoughmonster/momi-symphony")
+    assert.equal(sha, head); assert.equal(success, false); timeline.push("publish-failure")
+  } }
+  await claimDispatch(input, sql as never, github as never)
+  assert.deepEqual(timeline, ["prepare", "publish-failure", "record-revocation", "fence"])
+})
+
+test("cancellation waits while an exact-head success publication lease is active", async () => {
+  let published = false
+  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const query = strings.join("?")
+    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
+      action: "cancel-run", delivery_phase: "cancel_host",
+      cancellation_target_ids: ["00000000-0000-4000-8000-000000000023"] }]
+    if (query.includes("prepare_review_check_revocations_v1")) return [{
+      implementation_dispatch_id: "00000000-0000-4000-8000-000000000023",
+      repository: "thedoughmonster/momi-symphony", head_sha: "a".repeat(40),
+      publication_pending: true, revocation_required: true }]
+    throw new Error("must_not_continue_after_publication_lease")
+  }
+  await assert.rejects(claimDispatch(input, sql as never, {
+    publishReviewCheck: async () => { published = true },
+  } as never), /review_check_publication_pending/)
+  assert.equal(published, false)
 })
 
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {
@@ -103,7 +155,8 @@ test("active cancellation records the host result and projects the exact target"
     cancellation_state: "requested" } as ClaimedDispatch
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("must_not_start")),
-    callCancel: () => Promise.resolve({ cancellation_state: "requested" }),
+    callCancel: () => Promise.resolve({ cancellation_state: "requested",
+      review_cancellations: [] }),
     callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), cancellationRecorded: () => {
       recorded = true; return Promise.resolve(true) },

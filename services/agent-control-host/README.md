@@ -20,6 +20,10 @@ successful durable lookup. A retained
 interactive task is archived directly and emits its terminal receipt. Queued
 cancellation remains in the database owner, while a terminal target is an
 idempotent host success.
+Canceled reviewer work additionally returns a sealed exact-attempt receipt with its reviewer
+capability and interruption completeness. The database authenticates that receipt independently
+of reviewer output, so response-loss and superseded attempts release capacity on replay while
+canceled callbacks remain suppressed.
 The recovery contract resolves only one exact retained discovery record. It
 reads the retained thread, interrupts its sole active turn when present,
 confirms no turn remains active, and archives the thread. Archive failure leaves

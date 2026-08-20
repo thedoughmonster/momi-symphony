@@ -11,6 +11,17 @@ import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
 import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostCancellation, HostDispatch } from "../src/types.ts"
 
+const cancellationResult = (state: "requested" | "already_terminal" = "requested") =>
+  ({ cancellation_state: state, review_cancellations: [] })
+const reviewCancellationResult = (reviewerDispatchId: string, capabilityToken: string,
+  identitiesComplete: boolean, interruptionConfirmed: boolean) => ({
+  cancellation_state: "requested" as const,
+  review_cancellations: [{ reviewer_dispatch_id: reviewerDispatchId,
+    capability_token: capabilityToken, host_state: "canceled" as const,
+    identities_complete: identitiesComplete,
+    interruption_confirmed: interruptionConfirmed }],
+})
+
 class FakeAppServer implements AppServerClient {
   requests: Array<{ method: string; params: unknown }> = []
   private listener: (notification: Record<string, unknown>) => void = () => undefined
@@ -147,8 +158,8 @@ test("active, replayed, and terminal cancellation are idempotent", async () => {
     await controller.start()
     await ledger.reserve(target, "fingerprint", "token")
     await ledger.accept(target, "thread-1", "turn-1")
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
     assert.equal(client.requests.filter((item) => item.method === "turn/interrupt").length, 1)
     await assert.rejects(controller.cancel({ ...input,
       target_work_ids: ["00000000-0000-4000-8000-000000000009"] }),
@@ -157,7 +168,7 @@ test("active, replayed, and terminal cancellation are idempotent", async () => {
       terminal_disposition: "interrupted", summary: "Cancelled." }, new Date().toISOString())
     assert.deepEqual(await controller.cancel({ ...input,
       work_id: "00000000-0000-4000-8000-000000000004" }),
-    { cancellation_state: "already_terminal" })
+    cancellationResult("already_terminal"))
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -184,8 +195,8 @@ test("one exact lifecycle cancellation interrupts its owned target set once", as
       await ledger.reserve(target, `fingerprint-${index}`, "token")
       await ledger.accept(target, `thread-${index}`, `turn-${index}`)
     }
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
     assert.equal(client.requests.filter((item) => item.method === "turn/interrupt").length, 2)
     assert.deepEqual(targets.map((target) => Boolean(ledger.get(target)?.cancellationRequestedAt)),
       [true, true])
@@ -224,7 +235,7 @@ test("reserved work is durably fenced and interrupted immediately after its turn
     await controller.start()
     const starting = controller.dispatch(dispatch)
     await client.startReached
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
     assert.notEqual(ledger.get(target)?.cancellationRequestedAt, null)
     assert.equal(client.requests.some((item) => item.method === "turn/interrupt"), false)
     client.release()
@@ -266,7 +277,7 @@ test("ambiguous reviewer cancellation interrupts exact starts and retires respon
       repository: "thedoughmonster/momi-symphony", base_branch: "main" }
     assert.deepEqual(await controller.cancel({ ...common,
       work_id: "00000000-0000-4000-8000-000000000055", target_work_ids: [unknown] }),
-    { cancellation_state: "requested" })
+    reviewCancellationResult(unknown, `token-${unknown}`, false, false))
     assert.equal(ledger.get(unknown)?.state, "canceled")
     assert.notEqual(ledger.get(unknown)?.cancellationRequestedAt, null)
     assert.equal(ledger.activeWorkIds().includes(unknown), false)
@@ -276,7 +287,7 @@ test("ambiguous reviewer cancellation interrupts exact starts and retires respon
     assert.equal(restarted.recoverable().some((record) => record.workId === unknown), false)
     assert.deepEqual(await controller.cancel({ ...common,
       work_id: "00000000-0000-4000-8000-000000000056", target_work_ids: [known] }),
-    { cancellation_state: "requested" })
+    reviewCancellationResult(known, `token-${known}`, true, true))
     assert.deepEqual(reviewClient.requests.filter((item) => item.method === "turn/interrupt"),
       [{ method: "turn/interrupt", params: { threadId: "known-thread", turnId: "known-turn" } }])
     assert.equal(implementationClient.requests.some((item) => item.method === "turn/interrupt"),
@@ -307,8 +318,8 @@ test("cancellation remains monotonic across reviewer start response-loss races",
       await controller.start()
       const starting = controller.dispatch(reviewDispatch(target))
       await paused.startReached
-      assert.deepEqual(await controller.cancel(cancellation), {
-        cancellation_state: "requested" })
+      assert.deepEqual(await controller.cancel(cancellation), reviewCancellationResult(target,
+        reviewDispatch(target).capability_token, mode === "exact_id", mode === "exact_id"))
       assert.equal(ledger.get(target)?.state, "canceled", mode)
       paused.release()
       await assert.rejects(starting, /host_start_ambiguous/)
@@ -401,8 +412,11 @@ test("exact reviewer cancellation fences start-wins before interrupt and restart
     assert.equal(typeof restartedLedger.get(target)?.interruptionConfirmedAt, "string")
     assert.equal(restartedLedger.activeWorkIds().includes(target), false)
     assert.equal(restartedLedger.recoverable().some((record) => record.workId === target), false)
+    assert.deepEqual(await restarted.cancel(cancellation), reviewCancellationResult(target,
+      reviewDispatch(target).capability_token, true, true))
 
-    reviewClient.release(); assert.deepEqual(await canceling, { cancellation_state: "requested" })
+    reviewClient.release(); assert.deepEqual(await canceling, reviewCancellationResult(target,
+      reviewDispatch(target).capability_token, true, true))
     assert.equal(callbacks, 0)
     assert.equal(implementationClient.requests.some((item) =>
       item.method === "turn/interrupt"), false)
@@ -431,13 +445,13 @@ test("retained discovery cancellation archives the task and delivers its termina
     await controller.start(); await ledger.reserve(target, "fingerprint", "token", "interactive")
     await ledger.accept(target, "thread-discovery", "turn-discovery")
     await ledger.retainInteractive(target)
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
     assert.equal(client.requests.filter((item) => item.method === "thread/archive").length, 1)
     assert.equal(ledger.get(target)?.state, "terminal")
     assert.notEqual(ledger.get(target)?.cancellationRequestedAt, null)
     assert.equal(ledger.get(target)?.callbackSent, true)
     assert.equal(callbacks, 1)
-    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.deepEqual(await controller.cancel(input), cancellationResult())
     assert.equal(client.requests.filter((item) => item.method === "thread/archive").length, 1)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

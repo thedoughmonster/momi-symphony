@@ -2,7 +2,7 @@ import { cancellationFingerprint } from "./cancellation_fingerprint.ts"
 import { buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostCancellation, HostCancellationResult,
-  HostConfiguration, HostRecord } from "./types.ts"
+  HostConfiguration, HostRecord, HostReviewCancellationReceipt } from "./types.ts"
 
 export type HostClientResolver = AppServerClient | ((record: HostRecord) => AppServerClient)
 
@@ -18,7 +18,8 @@ export async function cancelHostWork(
   const prior = await ledger.reserveCancellation(
     input.work_id, cancellationFingerprint(input), input.target_work_ids)
   if (prior?.state !== undefined && prior.state !== "reserved") {
-    return { cancellation_state: prior.state }
+    return { cancellation_state: prior.state,
+      review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids) }
   }
   let requested = false
   for (const targetWorkId of input.target_work_ids) {
@@ -65,7 +66,21 @@ export async function cancelHostWork(
   }
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)
-  return { cancellation_state: state }
+  return { cancellation_state: state,
+    review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids) }
+}
+
+function reviewCancellationReceipts(ledger: HostLedger,
+  targetWorkIds: string[]): HostReviewCancellationReceipt[] {
+  return targetWorkIds.flatMap((workId) => {
+    const record = ledger.get(workId)
+    if (record?.runtimeRole !== "independent_reviewer" || record.state !== "canceled") return []
+    const identitiesComplete = Boolean(record.threadId && record.turnId)
+    return [{ reviewer_dispatch_id: record.workId,
+      capability_token: record.capabilityToken, host_state: "canceled" as const,
+      identities_complete: identitiesComplete,
+      interruption_confirmed: identitiesComplete && Boolean(record.interruptionConfirmedAt) }]
+  })
 }
 
 async function interruptClaimed(client: AppServerClient, ledger: HostLedger,

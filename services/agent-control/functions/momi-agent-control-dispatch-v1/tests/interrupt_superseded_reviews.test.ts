@@ -15,14 +15,16 @@ const input: LifecycleEvidenceInput = { event: "lifecycle_evidence",
   revision_sha: "a".repeat(40),
   workflow_run_id: "123" }
 
-test("superseded reviewer interruption request waits for an exact terminal callback", async () => {
+test("superseded reviewer interruption records an exact independent cancellation receipt", async () => {
   const originalDeno = (globalThis as Record<string, unknown>).Deno
   ;(globalThis as Record<string, unknown>).Deno = { env: { get: (name: string) =>
     name === "MOMI_CODEX_HOST_SECRET" ? "host-secret" : undefined } }
   const queries: string[] = []
   const reviewerId = "00000000-0000-4000-8000-000000000003"
+  const reviewerToken = "00000000-0000-4000-8000-000000000004"
   const sql = (async (strings: TemplateStringsArray) => {
-    queries.push(strings.join("?"))
+    const query = strings.join("?"); queries.push(query)
+    if (query.includes("record_review_cancellation_receipt_v1")) return [{ recorded: true }]
     return [{ reviewer_dispatch_id: reviewerId,
       host_dispatch_url: "https://host.example/v1/dispatch" }]
   }) as unknown as Sql
@@ -34,10 +36,14 @@ test("superseded reviewer interruption request waits for an exact terminal callb
         work_id: reviewerId, capability_token: input.capability_token,
         target_work_ids: [reviewerId], repository: input.repository,
         base_branch: input.base_branch })
-      return Response.json({ cancellation_state: "requested" })
+      return Response.json({ cancellation_state: "requested", review_cancellations: [{
+        reviewer_dispatch_id: reviewerId, capability_token: reviewerToken,
+        host_state: "canceled", identities_complete: true,
+        interruption_confirmed: true }] })
     })
-    assert.equal(queries.length, 1)
+    assert.equal(queries.length, 2)
     assert.match(queries[0], /interruption_confirmed_at is null/)
+    assert.match(queries[1], /record_review_cancellation_receipt_v1/)
   } finally {
     if (originalDeno === undefined) delete (globalThis as Record<string, unknown>).Deno
     else (globalThis as Record<string, unknown>).Deno = originalDeno

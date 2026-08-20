@@ -2,6 +2,8 @@ import type { Sql } from "postgres"
 
 import { getDatabase } from "../../../src/database.ts"
 import type { LifecycleEvidenceInput } from "./types.ts"
+import { parseReviewCancellationReceipts, recordReviewCancellationReceipt } from
+  "./review_cancellation_receipt.ts"
 
 type ReviewInterruption = { reviewer_dispatch_id: string; host_dispatch_url: string }
 
@@ -44,5 +46,9 @@ export async function interruptSupersededReviews(
     const result = await response.json().catch(() => null) as Record<string, unknown> | null
     if (!response.ok || !["requested", "already_terminal"].includes(
       String(result?.cancellation_state))) throw new Error("reviewer_interruption_failed")
+    const receipts = parseReviewCancellationReceipts(result?.review_cancellations,
+      [target.reviewer_dispatch_id])
+    if (!receipts || receipts.length !== 1 || !await recordReviewCancellationReceipt(
+      sql, receipts[0]!, "superseded")) throw new Error("reviewer_interruption_receipt_refused")
   }
 }

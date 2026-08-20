@@ -252,7 +252,9 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /create_review_attempt_v1/)
   assert.match(migration, /create_escalated_review_attempt_v1/)
   assert.match(migration, /when 'low' then 'standard'.*when 'standard' then 'high'/s)
-  assert.match(migration, /disposition := 'escalation_exhausted'/)
+  assert.match(migration, /disposition := 'review_budget_exhausted'/)
+  assert.match(migration, /subject_attempt_number between 1 and 3/)
+  assert.match(migration, /subject_attempt_limit = 3/)
   assert.match(migration, /review_attempts_one_escalation_idx/)
   assert.match(migration, /record_reviewer_start_v1/)
   assert.match(migration, /reviewer_thread_id is distinct from work\.codex_thread_id/)
@@ -260,6 +262,8 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /implementation_canceled/)
   assert.match(migration, /attempt\.state in \('canceled', 'superseded'\)/)
   assert.match(migration, /record_review_start_ambiguous_v1/)
+  assert.match(migration, /record_review_cancellation_receipt_v1/)
+  assert.match(migration, /cancellation_receipt_fingerprint/)
   assert.match(migration, /state in \('reserved', 'running', 'ambiguous'\)/)
   assert.match(migration, /disposition := 'already_ambiguous'/)
   assert.match(migration, /review\.state = 'ambiguous'.*review\.runtime_role is null/s)
@@ -269,8 +273,10 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.doesNotMatch(migration, /interruption_confirmed_at = case when review\.state = 'running'/)
   assert.match(migration, /record_review_result_v1/)
   assert.match(migration, /p_result = 'accepted' and blocking_count > 0/)
-  assert.match(migration, /record_review_check_v1/)
-  assert.match(migration, /Symphony Independent Review/)
+  assert.match(migration, /begin_review_check_publication_v1/)
+  assert.match(migration, /finish_review_check_publication_v1/)
+  assert.match(migration, /prepare_review_check_revocations_v1/)
+  assert.match(migration, /record_review_check_revocation_v1/)
   assert.match(migration, /merge_review_eligible_v1/)
   assert.match(migration, /record_merge_preflight_v1/)
   assert.match(migration, /merge_preflight_review_receipt_id/)
@@ -298,7 +304,8 @@ test("independent review receipts are private, exact-revision, and author-proof"
     assert.ok(body.indexOf("fence_current_dispatch_generation_v1") < body.indexOf("for update"),
       `${routine} must acquire the advisory fence before row locks`)
   }
-  for (const routine of ["record_review_start_ambiguous_v1", "record_review_check_v1",
+  for (const routine of ["record_review_start_ambiguous_v1",
+    "begin_review_check_publication_v1", "finish_review_check_publication_v1",
     "merge_review_eligible_v1", "record_merge_preflight_v1"]) {
     const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
     const end = migration.indexOf("\n$$;", start)
@@ -307,6 +314,13 @@ test("independent review receipts are private, exact-revision, and author-proof"
     assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
       `${routine} generation fence missing`)
   }
+  const cancellationReceipt = migration.slice(
+    migration.indexOf("create function momi_agent_ops.record_review_cancellation_receipt_v1("),
+    migration.indexOf("\n$$;", migration.indexOf(
+      "create function momi_agent_ops.record_review_cancellation_receipt_v1(")))
+  assert.ok(cancellationReceipt.indexOf("pg_advisory_xact_lock") >= 0)
+  assert.ok(cancellationReceipt.indexOf("pg_advisory_xact_lock") <
+    cancellationReceipt.indexOf("for update"))
   assert.match(migration,
     /current_run\.head_sha is distinct from p_previous_revision_sha then return false/)
   assert.match(migration, /current_run\.branch_name is distinct from p_branch_name/)

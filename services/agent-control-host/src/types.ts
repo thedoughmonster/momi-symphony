@@ -100,6 +100,15 @@ export type HostCancellation = {
 
 export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
+  review_cancellations: HostReviewCancellationReceipt[]
+}
+
+export type HostReviewCancellationReceipt = {
+  reviewer_dispatch_id: string
+  capability_token: string
+  host_state: "canceled"
+  identities_complete: boolean
+  interruption_confirmed: boolean
 }
 
 export type HostRecovery = {

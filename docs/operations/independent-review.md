@@ -43,14 +43,27 @@ finding set and no material risk dimension changed; ambiguity requires a fresh r
 results cannot contain blocking findings.
 An `escalate` result creates a fresh reviewer attempt through a durable reviewer-authenticated
 transition. Profiles promote only `low → standard → high`; each promotion has a new dispatch,
-thread, turn, capability, and generation. Escalation at `high` records explicit exhaustion and
-fails the review obligation instead of silently waiting or repeating the same profile.
+thread, turn, capability, and generation. Ordinary retries and escalations share one durable
+three-attempt budget for the exact repository/PR/head/base/policy subject. Exhaustion returns the
+same terminal `review_budget_exhausted` disposition without creating another attempt, including on
+replay, instead of resetting when the request path changes.
+
+Reviewer cancellation does not depend on a reviewer terminal result. The host returns a sealed,
+exact-attempt cancellation receipt containing its reviewer capability and whether thread/turn
+interruption was confirmed. Agent-control authenticates that receipt against the private attempt
+ledger and idempotently retires ambiguous or superseded capacity. Unknown starts remain failed
+closed; canceled result callbacks cannot create acceptance.
 
 The control plane projects accepted canonical evidence to the exact head as
 `Symphony Independent Review` using the reviewer-only GitHub credential. Protect `main` with both
 the existing CI requirement and this status, enforce protection for administrators, disallow force
 pushes/deletion, and do not give implementation credentials permission to alter protection or
 publish this context.
+Success-check publication uses a durable exact-head publication lease. Cancellation first blocks
+new success publication, waits for an in-flight lease to finish, publishes a failure check for the
+exact SHA through the trusted GitHub gateway, and records that revocation before the database may
+fence the lifecycle canceled. Replay resumes from the durable revocation state. This ordering
+prevents either an older success projection or stale merge preflight from surviving cancellation.
 
 Immediately before merge, call the authenticated `merge_preflight` event. It fresh-reads the PR,
 required CI, the dedicated status, authoritative review/request-changes state, and branch

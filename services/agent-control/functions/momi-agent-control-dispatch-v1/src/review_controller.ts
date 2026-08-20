@@ -12,6 +12,8 @@ import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
 import { GitHubReviewGateway, type GitHubMergeFacts,
   type GitHubReviewSubject } from "./github_review_gateway.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
+import { parseReviewCancellationReceipts, recordReviewCancellationReceipt } from
+  "./review_cancellation_receipt.ts"
 import type { MergePreflightInput, ReviewRequestInput, ReviewStatusInput,
   ReviewTerminalInput } from "./types.ts"
 
@@ -102,20 +104,27 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if (prompt.stable.length > 8_000 || prompt.volatile.length > 7_500) {
     throw new Error("review_packet_prompt_too_large")
   }
-  const rows = await sql<CreatedAttempt[]>`
-    select disposition, review_attempt_id::text, reviewer_dispatch_id::text,
-      reviewer_capability_token::text, generation, reviewer_thread_id
-    from momi_agent_ops.create_review_attempt_v1(
-      ${input.work_id}::uuid, ${input.capability_token}::uuid,
-      ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
-      ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha}, ${profile},
-      ${REVIEW_POLICY_VERSION}, ${packetFingerprint}, ${subject.diffArtifactRef},
-      ${rulesFingerprint}, ${subject.riskDimensions}, ${correctionRiskDimensions},
-      ${reverificationOf}::uuid, 4
-    )
-  `
-  const attempt = rows[0]
+  const createAttempt = async () => (await sql<CreatedAttempt[]>`
+      select disposition, review_attempt_id::text, reviewer_dispatch_id::text,
+        reviewer_capability_token::text, generation, reviewer_thread_id
+      from momi_agent_ops.create_review_attempt_v1(
+        ${input.work_id}::uuid, ${input.capability_token}::uuid,
+        ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
+        ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha}, ${profile},
+        ${REVIEW_POLICY_VERSION}, ${packetFingerprint}, ${subject.diffArtifactRef},
+        ${rulesFingerprint}, ${subject.riskDimensions}, ${correctionRiskDimensions},
+        ${reverificationOf}::uuid, 4
+      )`)[0]
+  let attempt = await createAttempt()
   if (!attempt) throw new Error("review_attempt_not_created")
+  if (attempt.disposition === "already_ambiguous" && attempt.reviewer_dispatch_id) {
+    const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
+    if (!secret) throw new Error("review_host_secret_unconfigured")
+    await cancelRejectedReviewer(new URL(route.url), secret, attempt.reviewer_dispatch_id,
+      input.capability_token, input.repository, input.base_branch, sql, fetchImpl)
+    attempt = await createAttempt()
+    if (!attempt) throw new Error("review_attempt_not_created")
+  }
   if (attempt.disposition !== "created") return { ok: true, disposition: attempt.disposition,
     review_attempt_id: attempt.review_attempt_id,
     reviewer_dispatch_id: attempt.reviewer_dispatch_id, generation: attempt.generation }
@@ -207,13 +216,25 @@ export async function processMergePreflight(input: MergePreflightInput,
     return { ok: true, eligible: false, reason: "merge_preflight_receipt_refused",
       head_sha: subject.headSha, base_sha: subject.baseSha }
   }
-  await github.publishReviewCheck(input.repository, subject.headSha, true,
-    "Exact-head independent review accepted after authenticated merge preflight")
-  const checked = await sql<{ recorded: boolean }[]>`
-    select momi_agent_ops.record_review_check_v1(
+  const publications = await sql<{ publication_token: string | null }[]>`
+    select momi_agent_ops.begin_review_check_publication_v1(
       ${input.work_id}::uuid, ${row.review_attempt_id}::uuid,
-      ${subject.headSha}, 'Symphony Independent Review', 'success') as recorded`
-  if (checked[0]?.recorded !== true) {
+      ${subject.headSha})::text as publication_token`
+  const publicationToken = publications[0]?.publication_token
+  if (!publicationToken) return { ok: true, eligible: false,
+    reason: "review_check_publication_refused",
+    head_sha: subject.headSha, base_sha: subject.baseSha }
+  try {
+    await github.publishReviewCheck(input.repository, subject.headSha, true,
+      "Exact-head independent review accepted after authenticated merge preflight")
+  } catch (error) {
+    await finishReviewCheckPublication(sql, input.work_id, row.review_attempt_id,
+      subject.headSha, publicationToken, false)
+    throw error
+  }
+  const checked = await finishReviewCheckPublication(sql, input.work_id,
+    row.review_attempt_id, subject.headSha, publicationToken, true)
+  if (!checked) {
     await github.publishReviewCheck(input.repository, subject.headSha, false,
       "Independent review projection could not be bound to the preflight receipt")
     return { ok: true, eligible: false, reason: "review_check_record_refused",
@@ -252,6 +273,16 @@ export async function processMergePreflight(input: MergePreflightInput,
       head_sha: subject.headSha, base_sha: subject.baseSha }
   }
   return { ok: true, eligible: true, head_sha: subject.headSha, base_sha: subject.baseSha }
+}
+
+async function finishReviewCheckPublication(sql: Sql, dispatchId: string,
+  reviewAttemptId: string, headSha: string, publicationToken: string,
+  success: boolean): Promise<boolean> {
+  const rows = await sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.finish_review_check_publication_v1(
+      ${dispatchId}::uuid, ${reviewAttemptId}::uuid, ${headSha},
+      ${publicationToken}::uuid, ${success}) as recorded`
+  return rows[0]?.recorded === true
 }
 
 export async function processReviewTerminal(input: ReviewTerminalInput,
@@ -306,11 +337,11 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
       stableFingerprint({ escalation: "exhausted", generation: input.review_subject.generation }),
       input.review_result?.artifact_ref ?? `review://terminal/${input.reviewer_dispatch_id}`,
       stableFingerprint({ policy: input.review_subject.policy_version }), ["general"])
-    if (exhausted.disposition !== "escalation_exhausted") {
+    if (exhausted.disposition !== "review_budget_exhausted") {
       throw new Error("review_escalation_exhaustion_refused")
     }
     await reconcile(input.review_subject.implementation_dispatch_id)
-    return { ok: true, disposition: "escalation_exhausted",
+    return { ok: true, disposition: "review_budget_exhausted",
       generation: exhausted.generation, profile: exhausted.profile }
   }
   const route = await reviewRoute(sql, input.review_subject.implementation_dispatch_id)
@@ -349,6 +380,11 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
   if (attempt.disposition === "capacity_wait") {
     await reconcile(input.review_subject.implementation_dispatch_id)
     throw new Error("review_escalation_capacity_wait")
+  }
+  if (attempt.disposition === "review_budget_exhausted") {
+    await reconcile(input.review_subject.implementation_dispatch_id)
+    return { ok: true, disposition: attempt.disposition,
+      generation: attempt.generation, profile: attempt.profile }
   }
   if (attempt.disposition !== "created") {
     await reconcile(input.review_subject.implementation_dispatch_id)
@@ -441,7 +477,7 @@ async function dispatchCreatedReviewAttempt(args: {
   } catch {
     await markAmbiguousReviewStart(sql, attempt)
     await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
-      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, fetchImpl)
+      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, sql, fetchImpl)
       .catch(() => undefined)
     throw new Error("review_host_delivery_ambiguous")
   }
@@ -450,7 +486,7 @@ async function dispatchCreatedReviewAttempt(args: {
     if (accepted?.disposition === "ambiguous") {
       await markAmbiguousReviewStart(sql, attempt)
       await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
-        attempt.reviewer_capability_token, launch.repository, launch.baseBranch, fetchImpl)
+        attempt.reviewer_capability_token, launch.repository, launch.baseBranch, sql, fetchImpl)
         .catch(() => undefined)
       throw new Error("review_host_delivery_ambiguous")
     }
@@ -459,7 +495,7 @@ async function dispatchCreatedReviewAttempt(args: {
   if (typeof accepted?.thread_id !== "string" || typeof accepted.turn_id !== "string") {
     await markAmbiguousReviewStart(sql, attempt)
     await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
-      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, fetchImpl)
+      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, sql, fetchImpl)
       .catch(() => undefined)
     throw new Error("review_host_delivery_ambiguous")
   }
@@ -470,7 +506,7 @@ async function dispatchCreatedReviewAttempt(args: {
     ) as recorded`
   if (started[0]?.recorded !== true) {
     await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
-      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, fetchImpl)
+      attempt.reviewer_capability_token, launch.repository, launch.baseBranch, sql, fetchImpl)
     throw new Error("reviewer_start_record_refused")
   }
   await reconcile(launch.workId)
@@ -591,7 +627,7 @@ function boundedRequiredOutcome(description: string | null): string {
 
 async function cancelRejectedReviewer(hostDispatchUrl: URL, secret: string,
   reviewerDispatchId: string, reviewerCapabilityToken: string,
-  repository: string, baseBranch: string, fetchImpl: typeof fetch): Promise<void> {
+  repository: string, baseBranch: string, sql: Sql, fetchImpl: typeof fetch): Promise<void> {
   const url = new URL(hostDispatchUrl)
   url.pathname = `${url.pathname.slice(0, -"/v1/dispatch".length)}/v1/cancel`
   const response = await fetchImpl(url, { method: "POST",
@@ -602,6 +638,14 @@ async function cancelRejectedReviewer(hostDispatchUrl: URL, secret: string,
   const result = await response.json().catch(() => null) as Record<string, unknown> | null
   if (!response.ok || !["requested", "already_terminal"].includes(
     String(result?.cancellation_state))) throw new Error("reviewer_start_interruption_failed")
+  const receipts = parseReviewCancellationReceipts(result?.review_cancellations,
+    [reviewerDispatchId])
+  if (!receipts || receipts.length !== 1) throw new Error("reviewer_cancellation_receipt_refused")
+  const states = await sql<{ state: string }[]>`
+    select state from momi_agent_ops.review_attempts
+    where reviewer_dispatch_id = ${reviewerDispatchId}::uuid`
+  if (!states[0]?.state || !await recordReviewCancellationReceipt(
+    sql, receipts[0]!, states[0].state)) throw new Error("reviewer_cancellation_receipt_refused")
 }
 
 async function markAmbiguousReviewStart(sql: Sql, attempt: CreatedAttempt): Promise<void> {

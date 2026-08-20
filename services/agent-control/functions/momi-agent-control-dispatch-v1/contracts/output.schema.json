@@ -82,7 +82,7 @@
       "required": ["ok", "disposition", "review_attempt_id", "reviewer_dispatch_id", "generation"],
       "properties": {
         "ok": {"const": true},
-        "disposition": {"enum": ["already_accepted", "already_running", "changes_requested", "already_ambiguous"]},
+        "disposition": {"enum": ["already_accepted", "already_running", "changes_requested", "already_ambiguous", "review_budget_exhausted"]},
         "review_attempt_id": {"$ref": "#/$defs/uuid"},
         "reviewer_dispatch_id": {"$ref": "#/$defs/uuid"},
         "generation": {"type": "integer", "minimum": 1}
@@ -141,14 +141,14 @@
       },
       "additionalProperties": false
     },
-    "review_escalation_exhausted": {
+    "review_budget_exhausted": {
       "type": "object",
       "required": ["ok", "disposition", "generation", "profile"],
       "properties": {
         "ok": {"const": true},
-        "disposition": {"const": "escalation_exhausted"},
+        "disposition": {"const": "review_budget_exhausted"},
         "generation": {"type": "integer", "minimum": 1},
-        "profile": {"const": "high"}
+        "profile": {"$ref": "#/$defs/profile"}
       },
       "additionalProperties": false
     },
@@ -250,7 +250,7 @@
     {"$ref": "#/$defs/review_terminal"},
     {"$ref": "#/$defs/review_escalation_identity_refused"},
     {"$ref": "#/$defs/review_escalation_existing"},
-    {"$ref": "#/$defs/review_escalation_exhausted"},
+    {"$ref": "#/$defs/review_budget_exhausted"},
     {
       "type": "object",
       "required": ["ok", "eligible", "head_sha", "base_sha"],
