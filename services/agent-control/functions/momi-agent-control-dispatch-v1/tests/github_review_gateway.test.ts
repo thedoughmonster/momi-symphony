@@ -1,12 +1,24 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { GitHubReviewGateway } from "../src/github_review_gateway.ts"
+import { GitHubReviewGateway, parseChangedHunks } from "../src/github_review_gateway.ts"
 
 const head = "a".repeat(40)
 const base = "b".repeat(40)
 
 function response(value: unknown): Response { return Response.json(value) }
+
+test("correction hunks bind every changed line to an old-revision anchor", () => {
+  assert.deepEqual(parseChangedHunks("src/a.ts", [
+    "@@ -8,5 +8,6 @@", " context", "-old", "+new", "+added", " context",
+    "@@ -80,2 +81,2 @@", "-far", "+farther",
+  ].join("\n")), [
+    { path: "src/a.ts", old_start: 8, old_end: 12, new_start: 8, new_end: 13,
+      changed_line_count: 3, changed_line_anchors: [9, 10, 10] },
+    { path: "src/a.ts", old_start: 80, old_end: 81, new_start: 81, new_end: 82,
+      changed_line_count: 2, changed_line_anchors: [80, 81] },
+  ])
+})
 
 test("GitHub review gateway freezes exact PR identity and fail-closed merge facts", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = []

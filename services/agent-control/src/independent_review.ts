@@ -1,5 +1,7 @@
 export const REVIEW_POLICY_VERSION = "independent-review-v1" as const
 export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
+export const REVIEW_FINDING_PATH_PATTERN =
+  "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).{1,500}$" as const
 
 export type ReviewProfile = "low" | "standard" | "high"
 export type ReviewResult = "accepted" | "changes_requested" | "inconclusive" | "escalate"
@@ -9,8 +11,12 @@ export type ReviewRiskDimension = "architecture" | "security_auth" | "public_con
 
 export type ReviewCorrectionContext = { previous_head_sha: string; new_head_sha: string;
   delta_artifact_ref: string; changed_paths: string[];
-  changed_hunks: Array<{ path: string; old_start: number; old_end: number }>;
+  changed_hunks: ReviewChangedHunk[];
   risk_dimensions: ReviewRiskDimension[] }
+
+export type ReviewChangedHunk = { path: string; old_start: number; old_end: number;
+  new_start: number; new_end: number; changed_line_count: number;
+  changed_line_anchors: number[] }
 
 export type ReviewFinding = {
   id: string
@@ -141,7 +147,7 @@ export function validateReviewReceipt(value: unknown, subject: ReviewSubject,
     receipt.reviewer_thread_id === implementationThreadId ||
     !["accepted", "changes_requested", "inconclusive", "escalate"].includes(receipt.result) ||
     !Array.isArray(receipt.findings) || receipt.findings.length > 100 ||
-    !receipt.findings.every(validFinding) ||
+    !receipt.findings.every(validReviewFinding) ||
     !receipt.artifact_ref || receipt.artifact_ref.length > 500 ||
     !/^sha256:[0-9a-f]{64}$/.test(receipt.result_fingerprint)) {
     throw new Error("review_result_malformed")
@@ -201,7 +207,7 @@ export function requiresFreshReviewer(input: {
   rulesChanged: boolean
   changedPaths: string[]
   findings: Array<{ path: string; line: number | null }>
-  changedHunks: Array<{ path: string; old_start: number; old_end: number }>
+  changedHunks: ReviewChangedHunk[]
   previousRiskDimensions: ReviewRiskDimension[]
   correctionRiskDimensions: ReviewRiskDimension[]
 }): boolean {
@@ -211,11 +217,18 @@ export function requiresFreshReviewer(input: {
     input.correctionRiskDimensions.some((dimension) =>
       !input.previousRiskDimensions.includes(dimension))) return true
   const findingPaths = new Set(input.findings.map((finding) => finding.path))
+  const hunkPaths = new Set(input.changedHunks.map((hunk) => hunk.path))
   if (input.changedPaths.length === 0 || input.changedHunks.length === 0 ||
-    input.changedPaths.some((path) => !findingPaths.has(path))) return true
-  return input.changedHunks.some((hunk) => !input.findings.some((finding) =>
-    finding.path === hunk.path && finding.line !== null &&
-    finding.line >= hunk.old_start - 3 && finding.line <= hunk.old_end + 3))
+    input.changedHunks.length > 12 ||
+    input.changedHunks.reduce((total, hunk) => total + hunk.changed_line_count, 0) > 24 ||
+    input.changedPaths.some((path) => !findingPaths.has(path) || !hunkPaths.has(path)) ||
+    input.changedHunks.some((hunk) => !input.changedPaths.includes(hunk.path))) return true
+  return input.changedHunks.some((hunk) => hunk.changed_line_count < 1 ||
+    hunk.changed_line_count > 12 ||
+    hunk.changed_line_anchors.length !== hunk.changed_line_count ||
+    hunk.changed_line_anchors.some((anchor) => !input.findings.some((finding) =>
+      finding.path === hunk.path && finding.line !== null &&
+      Math.abs(finding.line - anchor) <= 3)))
 }
 
 export function buildBoundedReviewerPacket(input: {
@@ -244,10 +257,13 @@ export function buildBoundedReviewerPacket(input: {
   return packet
 }
 
-function validFinding(value: unknown): boolean {
+export function validReviewFinding(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const finding = value as ReviewFinding
-  return /^[a-z0-9][a-z0-9._:-]{2,119}$/i.test(finding.id) &&
+  const keys = ["category", "contract", "evidence", "id", "line", "path",
+    "required_outcome", "severity"]
+  return Object.keys(finding).sort().join(",") === keys.join(",") &&
+    /^[a-z0-9][a-z0-9._:-]{2,119}$/i.test(finding.id) &&
     ["blocking", "nonblocking"].includes(finding.severity) &&
     typeof finding.category === "string" && finding.category.length <= 120 &&
     validRepositoryPath(finding.path) &&
@@ -258,7 +274,7 @@ function validFinding(value: unknown): boolean {
 
 function validRepositoryPath(path: string): boolean {
   return typeof path === "string" && path.length > 0 && path.length <= 500 &&
-    !path.startsWith("/") && !path.split("/").includes("..") && !path.includes("\\")
+    new RegExp(REVIEW_FINDING_PATH_PATTERN).test(path)
 }
 
 function denied(reason: string): MergeGateDecision { return { eligible: false, reason } }

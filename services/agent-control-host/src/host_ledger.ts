@@ -118,6 +118,24 @@ export class HostLedger {
     record.state = "accepted"; record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
+  async threadStarted(workId: string, threadId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.threadId && record.threadId !== threadId) throw new Error("host_idempotency_conflict")
+    record.state = "ambiguous"; record.threadId = threadId
+    record.updatedAt = new Date().toISOString(); await this.persist()
+  }
+  async turnStarted(workId: string, threadId: string, turnId: string): Promise<void> {
+    const record = this.require(workId)
+    if ((record.threadId && record.threadId !== threadId) ||
+      (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
+    record.state = "ambiguous"; record.threadId = threadId; record.turnId = turnId
+    record.updatedAt = new Date().toISOString(); await this.persist()
+  }
+  async releaseReserved(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.state !== "reserved" || record.threadId || record.turnId) return
+    this.records.delete(workId); await this.persist()
+  }
   async ambiguous(workId: string): Promise<void> {
     const record = this.require(workId); record.state = "ambiguous"
     record.updatedAt = new Date().toISOString(); await this.persist() }

@@ -84,6 +84,8 @@ test("review terminal callbacks require exact nested subject and result schemas"
     ...review.review_subject, extra: true } }), null)
   assert.equal(parseDispatchInput({ ...review, review_result: {
     ...review.review_result, artifact_ref: "" } }), null)
+  assert.equal(parseDispatchInput({ ...review, review_result: { ...review.review_result,
+    findings: [{ ...review.review_result.findings[0], path: "src\\review.ts" }] } }), null)
   assert.equal(parseDispatchInput({ ...review, terminal_disposition: "interrupted" }), null)
   assert.notEqual(parseDispatchInput({ ...review, terminal_disposition: "interrupted",
     review_result: null, telemetry: { ...telemetry, disposition: "interrupted" } }), null)

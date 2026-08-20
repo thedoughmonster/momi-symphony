@@ -7,7 +7,8 @@ import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSI
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
-import { GitHubReviewGateway } from "./github_review_gateway.ts"
+import { GitHubReviewGateway, type GitHubMergeFacts,
+  type GitHubReviewSubject } from "./github_review_gateway.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
 import type { MergePreflightInput, ReviewRequestInput, ReviewStatusInput,
   ReviewTerminalInput } from "./types.ts"
@@ -127,9 +128,11 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if ((!loopback && hostUrl.protocol !== "https:") || !hostUrl.pathname.endsWith("/v1/dispatch")) {
     throw new Error("review_host_route_refused")
   }
-  const response = await fetchImpl(hostUrl, { method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ schema_version: 4, work_id: attempt.reviewer_dispatch_id,
+  let response: Response
+  try {
+    response = await fetchImpl(hostUrl, { method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ schema_version: 4, work_id: attempt.reviewer_dispatch_id,
       capability_token: attempt.reviewer_capability_token, issue_id: route.issueId,
       issue_identifier: route.issueIdentifier, issue_url: route.issueUrl,
       project_id: route.projectId, project_name: route.projectName, repository: input.repository,
@@ -141,13 +144,36 @@ export async function processReviewRequest(input: ReviewRequestInput,
       budget: reviewBudget(profile), runtime_role: "independent_reviewer",
       ...(attempt.reviewer_thread_id ? { review_thread_id: attempt.reviewer_thread_id } : {}),
       review_workspace_id: reviewWorkspaceId ?? attempt.reviewer_dispatch_id,
-      review_subject: { implementation_dispatch_id: input.work_id,
+        review_subject: { implementation_dispatch_id: input.work_id,
         pull_request_number: subject.pullRequestNumber, head_sha: subject.headSha,
         base_sha: subject.baseSha, generation: attempt.generation, profile,
         policy_version: REVIEW_POLICY_VERSION } }), signal: AbortSignal.timeout(10_000) })
+  } catch {
+    await markAmbiguousReviewStart(sql, attempt)
+    await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
+      attempt.reviewer_capability_token, input.repository, input.base_branch, fetchImpl)
+      .catch(() => undefined)
+    throw new Error("review_host_delivery_ambiguous")
+  }
   const accepted = await response.json().catch(() => null) as Record<string, unknown> | null
-  if (!response.ok || typeof accepted?.thread_id !== "string" ||
-    typeof accepted.turn_id !== "string") throw new Error("review_host_delivery_ambiguous")
+  if (!response.ok) {
+    if (accepted?.disposition === "ambiguous") {
+      await markAmbiguousReviewStart(sql, attempt)
+      await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
+        attempt.reviewer_capability_token, input.repository, input.base_branch, fetchImpl)
+        .catch(() => undefined)
+      throw new Error("review_host_delivery_ambiguous")
+    }
+    throw new Error("review_host_delivery_refused")
+  }
+  if (typeof accepted?.thread_id !== "string" ||
+    typeof accepted.turn_id !== "string") {
+    await markAmbiguousReviewStart(sql, attempt)
+    await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
+      attempt.reviewer_capability_token, input.repository, input.base_branch, fetchImpl)
+      .catch(() => undefined)
+    throw new Error("review_host_delivery_ambiguous")
+  }
   const started = await sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_reviewer_start_v1(
       ${attempt.reviewer_dispatch_id}::uuid, ${attempt.reviewer_capability_token}::uuid,
@@ -156,11 +182,6 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if (started[0]?.recorded !== true) {
     await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
       attempt.reviewer_capability_token, input.repository, input.base_branch, fetchImpl)
-    await sql`
-      select momi_agent_ops.record_review_interruption_v1(
-        ${input.work_id}::uuid, ${input.capability_token}::uuid,
-        ${input.thread_id}, ${input.turn_id}, ${attempt.reviewer_dispatch_id}::uuid
-      )`
     throw new Error("reviewer_start_record_refused")
   }
   await reconcileAgentState(input.work_id)
@@ -190,7 +211,8 @@ export async function processMergePreflight(input: MergePreflightInput,
   const rows = await sql<Array<Record<string, unknown>>>`
     select work.work_status, work.cancellation_requested_at, work.cancelled_at,
       work.codex_thread_id as implementation_thread_id,
-      review.implementation_dispatch_id::text, review.reviewer_dispatch_id::text,
+      review.review_attempt_id::text, review.implementation_dispatch_id::text,
+      review.reviewer_dispatch_id::text,
       review.repository, review.pull_request_number, review.head_sha, review.base_sha,
       review.generation, review.profile, review.policy_version, review.reviewer_thread_id,
       review.reviewer_turn_id, review.runtime_role, review.result, review.findings,
@@ -217,21 +239,7 @@ export async function processMergePreflight(input: MergePreflightInput,
     result_fingerprint: row.result_fingerprint } as ReviewReceipt : null
   const lifecycle = row.cancellation_requested_at || row.cancelled_at ? "canceled"
     : ["writeback_pending", "active"].includes(String(row.work_status)) ? "active" : "terminal"
-  const decision = reduceMergeEligibility({ lifecycle, repository: input.repository,
-    base_branch: input.base_branch,
-    pull_request: { exists: true, open: subject.state === "open",
-      repository: subject.repository, base_branch: subject.baseBranch,
-      head_sha: subject.headSha, base_sha: subject.baseSha },
-    required_ci: { head_sha: facts.requiredCi.headSha,
-      conclusion: facts.requiredCi.conclusion }, review: receipt,
-    review_check: { name: facts.reviewCheck.name, head_sha: facts.reviewCheck.headSha,
-      conclusion: facts.reviewCheck.conclusion },
-    authoritative_blocking_threads: facts.authoritativeBlockingThreads,
-    authoritative_changes_requested: facts.authoritativeChangesRequested,
-    branch_protection: { review_check_required: facts.reviewCheckRequired,
-      bypass_possible: facts.bypassPossible }, current_policy_version: REVIEW_POLICY_VERSION,
-    expected_profile: selectReviewProfile(subject.changedPaths),
-    implementation_thread_id: String(row.implementation_thread_id ?? "") })
+  const decision = mergeDecision(input, subject, facts, row, receipt, lifecycle, true)
   if (!decision.eligible) return { ok: true, eligible: false, reason: decision.reason,
     head_sha: subject.headSha, base_sha: subject.baseSha }
   const canonical = await sql<{ eligible: boolean }[]>`
@@ -248,14 +256,59 @@ export async function processMergePreflight(input: MergePreflightInput,
       ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
       ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as recorded`
-  return persisted[0]?.recorded === true
-    ? { ok: true, eligible: true, head_sha: subject.headSha, base_sha: subject.baseSha }
-    : { ok: true, eligible: false, reason: "merge_preflight_receipt_refused",
+  if (persisted[0]?.recorded !== true || typeof row.review_attempt_id !== "string") {
+    return { ok: true, eligible: false, reason: "merge_preflight_receipt_refused",
       head_sha: subject.headSha, base_sha: subject.baseSha }
+  }
+  await github.publishReviewCheck(input.repository, subject.headSha, true,
+    "Exact-head independent review accepted after authenticated merge preflight")
+  const checked = await sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_check_v1(
+      ${input.work_id}::uuid, ${row.review_attempt_id}::uuid,
+      ${subject.headSha}, 'Symphony Independent Review', 'success') as recorded`
+  if (checked[0]?.recorded !== true) {
+    await github.publishReviewCheck(input.repository, subject.headSha, false,
+      "Independent review projection could not be bound to the preflight receipt")
+    return { ok: true, eligible: false, reason: "review_check_record_refused",
+      head_sha: subject.headSha, base_sha: subject.baseSha }
+  }
+  const [freshSubject, freshFacts] = await Promise.all([
+    github.loadSubject(input.repository, input.pull_request_number),
+    github.loadMergeFacts(input.repository, input.base_branch,
+      input.pull_request_number, subject.headSha),
+  ])
+  if (freshSubject.headSha !== subject.headSha || freshSubject.baseSha !== subject.baseSha ||
+    freshFacts.baseHeadSha !== subject.baseSha) {
+    await github.publishReviewCheck(input.repository, subject.headSha, false,
+      "Exact merge subject changed after preflight")
+    return { ok: true, eligible: false, reason: "merge_subject_changed_after_preflight",
+      head_sha: freshSubject.headSha, base_sha: freshSubject.baseSha }
+  }
+  const finalDecision = mergeDecision(input, freshSubject, freshFacts, row, receipt,
+    lifecycle, false)
+  if (!finalDecision.eligible) {
+    await github.publishReviewCheck(input.repository, subject.headSha, false,
+      `Merge preflight no longer eligible: ${finalDecision.reason}`)
+    return { ok: true, eligible: false, reason: finalDecision.reason,
+      head_sha: subject.headSha, base_sha: subject.baseSha }
+  }
+  const finalCanonical = await sql<{ eligible: boolean }[]>`
+    select momi_agent_ops.merge_review_eligible_v1(
+      ${input.work_id}::uuid, ${input.repository}, ${input.base_branch},
+      ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
+      ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as eligible`
+  if (finalCanonical[0]?.eligible !== true) {
+    await github.publishReviewCheck(input.repository, subject.headSha, false,
+      "Canonical review ledger changed after merge preflight")
+    return { ok: true, eligible: false, reason: "canonical_review_ledger_changed",
+      head_sha: subject.headSha, base_sha: subject.baseSha }
+  }
+  return { ok: true, eligible: true, head_sha: subject.headSha, base_sha: subject.baseSha }
 }
 
 export async function processReviewTerminal(input: ReviewTerminalInput,
-  sql: Sql = getDatabase(), github = new GitHubReviewGateway()): Promise<Record<string, unknown>> {
+  sql: Sql = getDatabase(), github = new GitHubReviewGateway(),
+  reconcile: typeof reconcileAgentState = reconcileAgentState): Promise<Record<string, unknown>> {
   const result = input.review_result ?? { result: "inconclusive" as const, findings: [],
     artifact_ref: `review://terminal/${input.reviewer_dispatch_id}`,
     result_fingerprint: `sha256:${"0".repeat(64)}` }
@@ -274,22 +327,16 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
   const terminal = await sql<{ state: string }[]>`
     select state from momi_agent_ops.review_attempts
     where reviewer_dispatch_id = ${input.reviewer_dispatch_id}::uuid`
-  if (["canceled", "stale", "superseded"].includes(terminal[0]?.state ?? "")) {
-    await reconcileAgentState(subject.implementation_dispatch_id)
+  if (["ambiguous", "canceled", "stale", "superseded"].includes(
+    terminal[0]?.state ?? "")) {
+    await reconcile(subject.implementation_dispatch_id)
     return { ok: true, disposition: terminal[0]!.state }
   }
-  const accepted = result.result === "accepted"
-  await github.publishReviewCheck(repository, subject.head_sha, accepted,
-    accepted ? "Exact-head independent review accepted" : `Independent review: ${result.result}`)
-  if (accepted) {
-    const receipt = await latestAcceptedReceipt(subject.implementation_dispatch_id, sql)
-    const checked = await sql<{ recorded: boolean }[]>`
-      select momi_agent_ops.record_review_check_v1(
-        ${subject.implementation_dispatch_id}::uuid, ${receipt}::uuid,
-        ${subject.head_sha}, 'Symphony Independent Review', 'success') as recorded`
-    if (checked[0]?.recorded !== true) throw new Error("review_check_record_refused")
+  if (result.result !== "accepted") {
+    await github.publishReviewCheck(repository, subject.head_sha, false,
+      `Independent review: ${result.result}`)
   }
-  await reconcileAgentState(subject.implementation_dispatch_id)
+  await reconcile(subject.implementation_dispatch_id)
   return { ok: true, disposition: result.result }
 }
 
@@ -326,15 +373,6 @@ async function routeRepository(dispatchId: string, sql: Sql): Promise<string> {
   return rows[0].repository
 }
 
-async function latestAcceptedReceipt(dispatchId: string, sql: Sql): Promise<string> {
-  const rows = await sql<{ id: string }[]>`
-    select review_attempt_id::text as id from momi_agent_ops.review_attempts
-    where implementation_dispatch_id = ${dispatchId}::uuid and state = 'accepted'
-    order by generation desc limit 1`
-  if (!rows[0]?.id) throw new Error("accepted_review_receipt_missing")
-  return rows[0].id
-}
-
 function reviewerPrompt(packet: Record<string, unknown>, profile: string,
   reverification: boolean): {
   stable: string; volatile: string } {
@@ -347,7 +385,30 @@ function reviewerPrompt(packet: Record<string, unknown>, profile: string,
     "Do not request or use the implementation transcript, author reasoning, or sibling-review prose.",
     "Return accepted, changes_requested, inconclusive, or escalate with compact typed findings.",
     "Acceptance is forbidden when any blocking finding remains.",
-  ].join("\n"), volatile: `Review mode: ${reverification ? "bounded_reverification" : "fresh"}\nReview profile: ${profile}\nExact reviewer packet:\n${JSON.stringify(packet)}` }
+  ].join("\n"), volatile: `Review mode: host_attested\nReview profile: ${profile}\nExact reviewer packet:\n${JSON.stringify(packet)}` }
+}
+
+function mergeDecision(input: MergePreflightInput, subject: GitHubReviewSubject,
+  facts: GitHubMergeFacts, row: Record<string, unknown>, receipt: ReviewReceipt | null,
+  lifecycle: "active" | "canceled" | "terminal", projectPendingCheck: boolean) {
+  return reduceMergeEligibility({ lifecycle, repository: input.repository,
+    base_branch: input.base_branch,
+    pull_request: { exists: true, open: subject.state === "open",
+      repository: subject.repository, base_branch: subject.baseBranch,
+      head_sha: subject.headSha, base_sha: subject.baseSha },
+    required_ci: { head_sha: facts.requiredCi.headSha,
+      conclusion: facts.requiredCi.conclusion }, review: receipt,
+    review_check: projectPendingCheck
+      ? { name: facts.reviewCheck.name, head_sha: subject.headSha,
+        conclusion: "success" as const }
+      : { name: facts.reviewCheck.name, head_sha: facts.reviewCheck.headSha,
+        conclusion: facts.reviewCheck.conclusion },
+    authoritative_blocking_threads: facts.authoritativeBlockingThreads,
+    authoritative_changes_requested: facts.authoritativeChangesRequested,
+    branch_protection: { review_check_required: facts.reviewCheckRequired,
+      bypass_possible: facts.bypassPossible }, current_policy_version: REVIEW_POLICY_VERSION,
+    expected_profile: selectReviewProfile(subject.changedPaths),
+    implementation_thread_id: String(row.implementation_thread_id ?? "") })
 }
 
 function reviewBudget(profile: string): Record<string, number> {
@@ -394,4 +455,12 @@ async function cancelRejectedReviewer(hostDispatchUrl: URL, secret: string,
   const result = await response.json().catch(() => null) as Record<string, unknown> | null
   if (!response.ok || !["requested", "already_terminal"].includes(
     String(result?.cancellation_state))) throw new Error("reviewer_start_interruption_failed")
+}
+
+async function markAmbiguousReviewStart(sql: Sql, attempt: CreatedAttempt): Promise<void> {
+  const failed = await sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_start_ambiguous_v1(
+      ${attempt.reviewer_dispatch_id}::uuid,
+      ${attempt.reviewer_capability_token}::uuid) as recorded`
+  if (failed[0]?.recorded !== true) throw new Error("review_start_recovery_refused")
 }

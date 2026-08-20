@@ -45,8 +45,9 @@ export async function handleHostRequest(
     writeNodeJson(response, 200, { ok: true, disposition: "accepted", ...accepted })
   } catch (error) {
     const code = error instanceof Error ? error.message : "host_dispatch_failed"
-    const status = code === "host_dispatch_in_progress" ? 409
+    const status = ["host_dispatch_in_progress", "host_start_ambiguous"].includes(code) ? 409
       : code.includes("refused") || code.includes("conflict") ? 400 : 503
-    writeNodeJson(response, status, { ok: false, disposition: "refused" })
+    writeNodeJson(response, status, { ok: false,
+      disposition: code === "host_start_ambiguous" ? "ambiguous" : "refused" })
   }
 }

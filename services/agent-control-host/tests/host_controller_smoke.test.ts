@@ -37,6 +37,23 @@ class FakeAppServer implements AppServerClient {
   emit(notification: Record<string, unknown>): void { this.listener(notification) }
 }
 
+test("review start ledger releases definite prestart work and fences ambiguous identities", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-agent-control-start-"))
+  const ledger = new HostLedger(join(directory, "ledger.json"))
+  try {
+    await ledger.reserve("prestart", "fingerprint", "token")
+    await ledger.releaseReserved("prestart")
+    assert.equal(ledger.get("prestart"), null)
+    await ledger.reserve("ambiguous", "fingerprint", "token")
+    await ledger.threadStarted("ambiguous", "thread-known")
+    await ledger.releaseReserved("ambiguous")
+    assert.equal(ledger.get("ambiguous")?.state, "ambiguous")
+    assert.equal(ledger.get("ambiguous")?.threadId, "thread-known")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("one canonical dispatch creates one App Server task and archives it once", async () => {
   const directory = await mkdtemp(join(tmpdir(), "momi-agent-control-"))
   const client = new FakeAppServer()

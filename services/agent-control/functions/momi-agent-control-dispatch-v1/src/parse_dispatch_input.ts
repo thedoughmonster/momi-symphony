@@ -1,3 +1,4 @@
+import { validReviewFinding } from "../../../src/independent_review.ts"
 import type { DispatchInput, LifecycleEvidenceInput, MergePreflightInput, SchedulerPumpInput,
   ReviewRequestInput, ReviewStatusInput, ReviewTerminalInput, TerminalInput } from "./types.ts"
 
@@ -127,23 +128,6 @@ function validReviewResult(value: unknown): boolean {
     typeof body.artifact_ref === "string" && body.artifact_ref.length > 0 &&
     body.artifact_ref.length <= 500 &&
     /^sha256:[0-9a-f]{64}$/.test(String(body.result_fingerprint))
-}
-
-function validReviewFinding(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const finding = value as Record<string, unknown>
-  const keys = ["category", "contract", "evidence", "id", "line", "path",
-    "required_outcome", "severity"]
-  return Object.keys(finding).sort().join(",") === keys.join(",") &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(String(finding.id)) &&
-    ["blocking", "nonblocking"].includes(String(finding.severity)) &&
-    typeof finding.category === "string" && finding.category.length <= 120 &&
-    typeof finding.path === "string" && finding.path.length > 0 && finding.path.length <= 500 &&
-    !finding.path.startsWith("/") && !finding.path.split("/").includes("..") &&
-    !finding.path.includes("\\") &&
-    (finding.line === null || (Number.isSafeInteger(finding.line) && Number(finding.line) > 0)) &&
-    [finding.contract, finding.required_outcome, finding.evidence].every((text) =>
-      typeof text === "string" && text.length > 0 && text.length <= 2_000)
 }
 
 function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenceInput | null {

@@ -81,7 +81,11 @@ export class HostController {
           }
         }
       }
-      const started = await startHostTask(this.client, this.config, input)
+      const started = await startHostTask(this.client, this.config, input, undefined, {
+        threadStarted: (threadId) => this.ledger.threadStarted(input.work_id, threadId),
+        turnStarted: (threadId, turnId) =>
+          this.ledger.turnStarted(input.work_id, threadId, turnId),
+      })
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
       if (accepted.cancellationRequestedAt) {
@@ -93,7 +97,13 @@ export class HostController {
       void this.recover(accepted).catch(() => undefined)
       return started
     } catch (error) {
-      await this.ledger.ambiguous(input.work_id); throw error
+      if ((error instanceof Error && error.message === "host_start_ambiguous") ||
+        Boolean(this.ledger.get(input.work_id)?.threadId)) {
+        await this.ledger.ambiguous(input.work_id)
+      } else {
+        await this.ledger.releaseReserved(input.work_id)
+      }
+      throw error
     }
   }
   async cancel(input: HostCancellation): Promise<HostCancellationResult> {

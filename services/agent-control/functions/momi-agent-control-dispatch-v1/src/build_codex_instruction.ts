@@ -6,7 +6,9 @@ const actionInstructions: Record<AgentAction, string[]> = {
   "execute-run": [
     "Follow repository AGENTS.md and the named issue's bounded scope.",
     "When the issue has no direct children, implement it with one issue branch and draft PR;",
-    "after required checks and feedback resolution, merge to the mapped base.",
+    "after required checks and feedback resolution, request authenticated merge-preflight",
+    "for the exact head. Merge only after it returns eligible; the required independent-review",
+    "success projection is withheld until that exact preflight receipt exists.",
     "When direct children exist, act as their visible parent coordinator instead of implementing",
     "the parent: inspect the bounded child graph, deterministically preflight each child, and add",
     "execute-run once to each eligible child. Never re-dispatch a child carrying this parent's",

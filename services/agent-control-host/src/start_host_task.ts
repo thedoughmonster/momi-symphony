@@ -1,11 +1,18 @@
 import type { AppServerClient, HostAcceptance, HostConfiguration, HostDispatch } from "./types.ts"
+import { REVIEW_FINDING_PATH_PATTERN } from "../../agent-control/src/independent_review.ts"
 import { prepareReviewWorkspace } from "./prepare_review_workspace.ts"
+
+export type HostStartObserver = {
+  threadStarted?: (threadId: string) => Promise<void>
+  turnStarted?: (threadId: string, turnId: string) => Promise<void>
+}
 
 export async function startHostTask(
   client: AppServerClient,
   config: HostConfiguration,
   input: HostDispatch,
   reviewWorkspace: typeof prepareReviewWorkspace = prepareReviewWorkspace,
+  observer: HostStartObserver = {},
 ): Promise<HostAcceptance> {
   const cwd = input.schema_version === 4
     ? await reviewWorkspace(config, input) : config.workspaceRoot
@@ -15,17 +22,29 @@ export async function startHostTask(
       threadId: input.review_thread_id,
     }).then(() => true, () => false)
   }
-  const threadId = input.schema_version === 4 && input.review_thread_id && reusedReviewerThread
-    ? input.review_thread_id
-    : (await client.request<{ thread: { id: string } }>("thread/start", {
-      cwd,
-      serviceName: "momi-agent-control", threadSource: "momi_agent_control",
-    })).thread.id
+  let threadId: string
+  if (input.schema_version === 4 && input.review_thread_id && reusedReviewerThread) {
+    threadId = input.review_thread_id
+  } else {
+    try {
+      threadId = (await client.request<{ thread: { id: string } }>("thread/start", {
+        cwd, serviceName: "momi-agent-control", threadSource: "momi_agent_control",
+      })).thread.id
+    } catch (error) { throw classifyStartError(error) }
+  }
+  if (!threadId) throw new Error("host_start_ambiguous")
+  try { await observer.threadStarted?.(threadId) }
+  catch { throw new Error("host_start_ambiguous") }
   if (!(input.schema_version === 4 && input.review_thread_id && reusedReviewerThread)) {
     await client.request("thread/name/set", { threadId, name: input.thread_name })
+      .catch(() => undefined)
   }
   const reviewMode = reusedReviewerThread ? "bounded_reverification" :
     input.review_thread_id ? "fresh_recovery" : "fresh"
+  const volatileContext = input.schema_version === 4
+    ? `Review mode: ${reviewMode}\n${input.volatile_context
+      .replace(/^Review mode: [^\n]*\n?/gm, "")}`
+    : input.schema_version === 3 ? input.volatile_context : ""
   const turnInput: Record<string, unknown> = {
     threadId, clientUserMessageId: input.work_id,
     approvalPolicy: "never", sandboxPolicy: input.schema_version === 4
@@ -33,7 +52,7 @@ export async function startHostTask(
     ...(input.schema_version === 4 ? { runtimeWorkspaceRoots: [cwd] } : {}),
     input: input.schema_version === 3 || input.schema_version === 4
       ? [{ type: "text", text: input.stable_instruction, text_elements: [] },
-        { type: "text", text: input.volatile_context, text_elements: [] },
+        { type: "text", text: volatileContext, text_elements: [] },
         ...(input.schema_version === 4 ? [{ type: "text",
           text: `Host-attested review mode: ${reviewMode}.`, text_elements: [] }] : [])]
       : [{ type: "text", text: input.instruction, text_elements: [] }],
@@ -61,7 +80,8 @@ export async function startHostTask(
             id: { type: "string", minLength: 3, maxLength: 120 },
             severity: { enum: ["blocking", "nonblocking"] },
             category: { type: "string", maxLength: 120 },
-            path: { type: "string", minLength: 1, maxLength: 500 },
+            path: { type: "string", minLength: 1, maxLength: 500,
+              pattern: REVIEW_FINDING_PATH_PATTERN },
             line: { type: ["integer", "null"], minimum: 1 },
             contract: { type: "string", minLength: 1, maxLength: 2000 },
             required_outcome: { type: "string", minLength: 1, maxLength: 2000 },
@@ -74,6 +94,17 @@ export async function startHostTask(
         disposition: { enum: ["completed", "failed", "interrupted"] },
         summary: { type: "string", maxLength: 1000 } } }
   }
-  const turn = await client.request<{ turn: { id: string } }>("turn/start", turnInput)
+  let turn: { turn: { id: string } }
+  try { turn = await client.request<{ turn: { id: string } }>("turn/start", turnInput) }
+  catch (error) { throw classifyStartError(error) }
+  if (!turn.turn.id) throw new Error("host_start_ambiguous")
+  try { await observer.turnStarted?.(threadId, turn.turn.id) }
+  catch { throw new Error("host_start_ambiguous") }
   return { thread_id: threadId, turn_id: turn.turn.id }
+}
+
+function classifyStartError(error: unknown): Error {
+  if (error instanceof Error && ["codex_proxy_not_connected", "codex_proxy_write_failed",
+    "codex_app_server_error"].includes(error.message)) return error
+  return new Error("host_start_ambiguous")
 }

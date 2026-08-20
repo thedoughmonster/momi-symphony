@@ -17,7 +17,7 @@ const dispatch: HostDispatch = { schema_version: 4,
   thread_name: "MOX-260 · independent review", runtime_role: "independent_reviewer",
   review_workspace_id: "00000000-0000-4000-8000-000000000006",
   stable_instruction: "Perform read-only independent semantic review of the exact subject only.",
-  volatile_context: "Exact bounded packet with repository, PR, revisions, rules, and diff evidence.",
+  volatile_context: "Review mode: host_attested\nExact bounded packet with repository, PR, revisions, rules, and diff evidence.",
   stable_prefix_fingerprint: "fnv1a64:1111111111111111",
   context_fingerprint: "fnv1a64:2222222222222222",
   policy_version: "independent-review-v1", budget: { model_turns: 8,
@@ -100,7 +100,35 @@ test("unavailable prior reviewer starts a fresh isolated recovery thread", async
     responsesapiClientMetadata: Record<string, unknown> }
   assert.equal(turn.input[2]?.text, "Host-attested review mode: fresh_recovery.")
   assert.equal(turn.responsesapiClientMetadata.review_mode, "fresh_recovery")
-  assert.match(turn.input[1]?.text ?? "", /Exact bounded packet/)
+  assert.match(turn.input[1]?.text ?? "", /^Review mode: fresh_recovery/m)
+  assert.doesNotMatch(turn.input[1]?.text ?? "", /Review mode: bounded_reverification/)
+})
+
+test("review start reports ambiguity only after persisting observed runtime identities", async () => {
+  const observed: string[] = []
+  const client = { connect: async () => undefined, onNotification: () => undefined,
+    request: async <T>(method: string): Promise<T> => {
+      if (method === "thread/start") return { thread: { id: "observed-thread" } } as T
+      if (method === "turn/start") throw new Error("connection lost")
+      return {} as T
+    } } as AppServerClient
+  await assert.rejects(() => startHostTask(client, { workspaceRoot: "/workspace",
+    repository: dispatch.repository, baseBranch: "main" }, dispatch,
+  async () => "/isolated-review", { threadStarted: async (threadId) => {
+    observed.push(threadId)
+  } }), /host_start_ambiguous/)
+  assert.deepEqual(observed, ["observed-thread"])
+})
+
+test("review start preserves definite prestart refusal for safe retry", async () => {
+  const client = { connect: async () => undefined, onNotification: () => undefined,
+    request: async <T>(method: string): Promise<T> => {
+      if (method === "thread/start") throw new Error("codex_proxy_not_connected")
+      return {} as T
+    } } as AppServerClient
+  await assert.rejects(() => startHostTask(client, { workspaceRoot: "/workspace",
+    repository: dispatch.repository, baseBranch: "main" }, dispatch,
+  async () => "/isolated-review"), /codex_proxy_not_connected/)
 })
 
 test("review result validation computes provenance and rejects blocking acceptance", () => {
@@ -118,4 +146,8 @@ test("review result validation computes provenance and rejects blocking acceptan
   assert.equal(extractReviewResult({ id: "turn", status: "completed", items: [{
     type: "agentMessage", text: JSON.stringify({ result: "changes_requested",
       findings: [finding], artifact_ref: "review://attempt/3", transcript: "forbidden" }) }] }), null)
+  assert.equal(extractReviewResult({ id: "turn", status: "completed", items: [{
+    type: "agentMessage", text: JSON.stringify({ result: "changes_requested",
+      findings: [{ ...finding, path: "src\\a.ts" }],
+      artifact_ref: "review://attempt/4" }) }] }), null)
 })

@@ -14,7 +14,7 @@ const input: LifecycleEvidenceInput = { event: "lifecycle_evidence",
   phase: "validating", status: "succeeded", revision_sha: "a".repeat(40),
   workflow_run_id: "123" }
 
-test("superseded exact-head reviewer is interrupted and durably acknowledged", async () => {
+test("superseded reviewer interruption request waits for an exact terminal callback", async () => {
   const originalDeno = (globalThis as Record<string, unknown>).Deno
   ;(globalThis as Record<string, unknown>).Deno = { env: { get: (name: string) =>
     name === "MOMI_CODEX_HOST_SECRET" ? "host-secret" : undefined } }
@@ -22,10 +22,8 @@ test("superseded exact-head reviewer is interrupted and durably acknowledged", a
   const reviewerId = "00000000-0000-4000-8000-000000000003"
   const sql = (async (strings: TemplateStringsArray) => {
     queries.push(strings.join("?"))
-    return queries.length === 1
-      ? [{ reviewer_dispatch_id: reviewerId,
-        host_dispatch_url: "https://host.example/v1/dispatch" }]
-      : [{ recorded: true }]
+    return [{ reviewer_dispatch_id: reviewerId,
+      host_dispatch_url: "https://host.example/v1/dispatch" }]
   }) as unknown as Sql
   try {
     await interruptSupersededReviews(input, sql, async (_url, init) => {
@@ -37,9 +35,8 @@ test("superseded exact-head reviewer is interrupted and durably acknowledged", a
         base_branch: input.base_branch })
       return Response.json({ cancellation_state: "requested" })
     })
-    assert.equal(queries.length, 2)
+    assert.equal(queries.length, 1)
     assert.match(queries[0], /interruption_confirmed_at is null/)
-    assert.match(queries[1], /record_review_interruption_v1/)
   } finally {
     if (originalDeno === undefined) delete (globalThis as Record<string, unknown>).Deno
     else (globalThis as Record<string, unknown>).Deno = originalDeno

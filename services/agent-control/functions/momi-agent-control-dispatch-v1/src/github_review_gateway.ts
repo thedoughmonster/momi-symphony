@@ -1,5 +1,5 @@
 import { REVIEW_CHECK_NAME, reviewRiskDimensions,
-  type ReviewRiskDimension } from "../../../src/independent_review.ts"
+  type ReviewChangedHunk, type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 
 export type GitHubReviewSubject = {
@@ -15,7 +15,7 @@ export type GitHubReviewSubject = {
 }
 
 export type GitHubCorrectionDelta = { changedPaths: string[];
-  changedHunks: Array<{ path: string; old_start: number; old_end: number }>;
+  changedHunks: ReviewChangedHunk[];
   riskDimensions: ReviewRiskDimension[] }
 
 export type GitHubMergeFacts = {
@@ -145,10 +145,7 @@ export class GitHubReviewGateway {
       const path = text(file.filename)
       if (typeof file.patch !== "string") return { changedPaths: paths, changedHunks: [],
         riskDimensions: ["ambiguous"] }
-      for (const match of file.patch.matchAll(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/gm)) {
-        const start = Number(match[1]); const count = Number(match[2] ?? 1)
-        changedHunks.push({ path, old_start: start, old_end: start + Math.max(count, 1) - 1 })
-      }
+      changedHunks.push(...parseChangedHunks(path, file.patch))
     }
     if (changedHunks.length === 0) return { changedPaths: paths, changedHunks,
       riskDimensions: ["ambiguous"] }
@@ -267,6 +264,37 @@ export class GitHubReviewGateway {
     if (!response.ok) throw new Error(`github_review_request_failed:${response.status}`)
     return await response.json() as T
   }
+}
+
+export function parseChangedHunks(path: string, patch: string): ReviewChangedHunk[] {
+  const hunks: ReviewChangedHunk[] = []
+  let current: ReviewChangedHunk | null = null
+  let oldLine = 0
+  const finish = () => { if (current) hunks.push(current); current = null }
+  for (const line of patch.split("\n")) {
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line)
+    if (header) {
+      finish()
+      const oldStart = Number(header[1]); const oldCount = Number(header[2] ?? 1)
+      const newStart = Number(header[3]); const newCount = Number(header[4] ?? 1)
+      oldLine = oldStart
+      current = { path, old_start: oldStart,
+        old_end: oldStart + Math.max(oldCount, 1) - 1, new_start: newStart,
+        new_end: newStart + Math.max(newCount, 1) - 1,
+        changed_line_count: 0, changed_line_anchors: [] }
+      continue
+    }
+    if (!current || line.startsWith("\\ No newline at end of file")) continue
+    if (line.startsWith("-")) {
+      current.changed_line_count += 1; current.changed_line_anchors.push(oldLine); oldLine += 1
+    } else if (line.startsWith("+")) {
+      current.changed_line_count += 1; current.changed_line_anchors.push(oldLine)
+    } else {
+      oldLine += 1
+    }
+  }
+  finish()
+  return hunks
 }
 
 function object(value: unknown): Record<string, unknown> {

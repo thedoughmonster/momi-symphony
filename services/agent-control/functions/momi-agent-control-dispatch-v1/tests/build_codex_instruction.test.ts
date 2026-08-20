@@ -18,6 +18,8 @@ test("execute-run owns validated merge and development release", () => {
     action: "execute-run" } as ClaimedDispatch)
   assert.match(instruction, /draft PR/)
   assert.match(instruction, /required checks and feedback resolution/)
+  assert.match(instruction, /authenticated merge-preflight/)
+  assert.match(instruction, /success projection is withheld/)
   assert.match(instruction, /repository-authorized development release/)
   assert.match(instruction, /durable proof that execute-run was selected/)
   assert.match(instruction, /When direct children exist/)

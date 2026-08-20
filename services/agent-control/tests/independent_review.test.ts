@@ -81,14 +81,20 @@ test("exact-head merge reduction fails closed for every missing authority", () =
 })
 
 test("same reviewer may verify a path-and-policy bounded correction", () => {
+  const boundedHunk = { path: "src/a.ts", old_start: 9, old_end: 11,
+    new_start: 9, new_end: 11, changed_line_count: 2,
+    changed_line_anchors: [10, 10] }
   const common = { previousProfile: "high" as const, nextProfile: "high" as const,
     priorReviewerAvailable: true, policyChanged: false, subjectChanged: false,
     rulesChanged: false, findings: [{ path: "src/a.ts", line: 10 }],
-    changedHunks: [{ path: "src/a.ts", old_start: 9, old_end: 11 }],
+    changedHunks: [boundedHunk],
     previousRiskDimensions: ["architecture" as const],
     correctionRiskDimensions: ["architecture" as const] }
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"] }), false)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts", "src/b.ts"] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    changedHunks: [{ ...boundedHunk, path: "src/b.ts" }],
+    findings: [...common.findings, { path: "src/b.ts", line: 10 }] }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
     policyChanged: true }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
@@ -104,7 +110,18 @@ test("same reviewer may verify a path-and-policy bounded correction", () => {
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
     correctionRiskDimensions: ["ambiguous"] }), true)
   assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
-    changedHunks: [{ path: "src/a.ts", old_start: 100, old_end: 101 }] }), true)
+    changedHunks: [{ ...boundedHunk, old_start: 100, old_end: 101,
+      changed_line_anchors: [100, 101] }] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    changedHunks: [{ ...boundedHunk, changed_line_count: 13,
+      changed_line_anchors: Array.from({ length: 13 }, () => 10) }] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    changedHunks: [{ ...boundedHunk, changed_line_count: 2,
+      changed_line_anchors: [10, 80] }] }), true)
+  assert.equal(requiresFreshReviewer({ ...common, changedPaths: ["src/a.ts"],
+    changedHunks: Array.from({ length: 3 }, () => ({ ...boundedHunk,
+      changed_line_count: 9, changed_line_anchors: Array.from({ length: 9 }, () => 10) }))
+  }), true)
 })
 
 test("review packets include only exact bounded sources", () => {
@@ -117,7 +134,9 @@ test("review packets include only exact bounded sources", () => {
     correction_context: { previous_head_sha: "c".repeat(40), new_head_sha: head,
       delta_artifact_ref: `github://compare/${"c".repeat(40)}...${head}`,
       changed_paths: ["src/a.ts"],
-      changed_hunks: [{ path: "src/a.ts", old_start: 9, old_end: 11 }],
+      changed_hunks: [{ path: "src/a.ts", old_start: 9, old_end: 11,
+        new_start: 9, new_end: 11, changed_line_count: 2,
+        changed_line_anchors: [10, 10] }],
       risk_dimensions: ["architecture"] } })
   assert.deepEqual(packet.changed_paths, ["src/a.ts", "src/b.ts"])
   assert.equal(packet.diff_artifact_ref, "github://pr/16.diff")

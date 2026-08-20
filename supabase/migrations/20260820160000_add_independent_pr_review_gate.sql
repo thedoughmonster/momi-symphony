@@ -267,7 +267,8 @@ begin
   where review.reviewer_dispatch_id = p_reviewer_dispatch_id
     and review.reviewer_capability_token_hash = encode(extensions.digest(
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
-    and review.state = 'reserved' for update;
+    and (review.state = 'reserved' or (review.state in ('canceled', 'superseded')
+      and review.reviewer_thread_id is null and review.reviewer_turn_id is null)) for update;
   if not found or p_runtime_role <> 'independent_reviewer'
     or p_thread_id is null or p_turn_id is null then return false; end if;
   select work.codex_thread_id,
@@ -275,14 +276,41 @@ begin
   into implementation_thread, implementation_canceled
   from momi_agent_ops.dispatches work
   where work.dispatch_id = attempt.implementation_dispatch_id for update;
-  if implementation_thread is null or implementation_thread = p_thread_id
-    or implementation_canceled then return false; end if;
+  if implementation_thread is null or implementation_thread = p_thread_id then return false; end if;
+  if implementation_canceled or attempt.state in ('canceled', 'superseded') then
+    update momi_agent_ops.review_attempts review set runtime_role = p_runtime_role,
+      reviewer_thread_id = p_thread_id, reviewer_turn_id = p_turn_id,
+      started_at = coalesce(review.started_at, now()), updated_at = now()
+    where review.review_attempt_id = attempt.review_attempt_id;
+    return false;
+  end if;
   update momi_agent_ops.review_attempts review set state = 'running',
     runtime_role = p_runtime_role, reviewer_thread_id = p_thread_id,
     reviewer_turn_id = p_turn_id, started_at = now(), updated_at = now()
   where review.review_attempt_id = attempt.review_attempt_id;
   update momi_agent_ops.run_records run set review_state = 'running', updated_at = now()
   where run.dispatch_id = attempt.implementation_dispatch_id;
+  return true;
+end;
+$$;
+
+create function momi_agent_ops.record_review_start_ambiguous_v1(
+  p_reviewer_dispatch_id uuid,
+  p_capability_token uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare implementation_id uuid;
+begin
+  update momi_agent_ops.review_attempts review set state = 'ambiguous',
+    terminal_at = coalesce(review.terminal_at, now()), updated_at = now()
+  where review.reviewer_dispatch_id = p_reviewer_dispatch_id
+    and review.reviewer_capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and review.state = 'reserved'
+  returning review.implementation_dispatch_id into implementation_id;
+  if not found then return false; end if;
+  update momi_agent_ops.run_records run set review_state = 'failed',
+    review_receipt_id = null, review_check_sha = null, updated_at = now()
+  where run.dispatch_id = implementation_id;
   return true;
 end;
 $$;
@@ -310,6 +338,7 @@ declare attempt momi_agent_ops.review_attempts%rowtype;
 declare blocking_count integer;
 declare nonblocking_count integer;
 declare canceled boolean;
+declare implementation_thread text;
 begin
   if p_runtime_role <> 'independent_reviewer'
     or p_result not in ('accepted', 'changes_requested', 'inconclusive', 'escalate')
@@ -323,18 +352,31 @@ begin
   where review.reviewer_dispatch_id = p_reviewer_dispatch_id
     and review.reviewer_capability_token_hash = encode(extensions.digest(
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
-    and review.runtime_role = p_runtime_role and review.reviewer_thread_id = p_thread_id
-    and review.reviewer_turn_id = p_turn_id
+    and ((review.runtime_role = p_runtime_role and review.reviewer_thread_id = p_thread_id
+      and review.reviewer_turn_id = p_turn_id) or (review.state = 'ambiguous'
+      and review.runtime_role is null and review.reviewer_thread_id is null
+      and review.reviewer_turn_id is null))
     and review.repository = p_repository and review.pull_request_number = p_pull_request_number
     and review.head_sha = p_head_sha and review.base_sha = p_base_sha
     and review.generation = p_generation and review.profile = p_profile
     and review.policy_version = p_policy_version for update;
   if not found then return false; end if;
-  if attempt.state in ('stale', 'superseded', 'canceled') then
+  if attempt.state = 'ambiguous' and attempt.reviewer_thread_id is null then
+    select work.codex_thread_id into implementation_thread
+    from momi_agent_ops.dispatches work
+    where work.dispatch_id = attempt.implementation_dispatch_id;
+    if implementation_thread is null or implementation_thread = p_thread_id then return false; end if;
+    update momi_agent_ops.review_attempts review set runtime_role = p_runtime_role,
+      reviewer_thread_id = p_thread_id, reviewer_turn_id = p_turn_id,
+      started_at = coalesce(review.started_at, now()), updated_at = now()
+    where review.review_attempt_id = attempt.review_attempt_id;
+  end if;
+  if attempt.state in ('ambiguous', 'stale', 'superseded', 'canceled') then
     update momi_agent_ops.review_attempts review set
       result = p_result, findings = p_findings,
       result_fingerprint = p_result_fingerprint, result_artifact_ref = p_result_artifact_ref,
       telemetry = p_telemetry, terminal_at = coalesce(review.terminal_at, now()),
+      interruption_confirmed_at = coalesce(review.interruption_confirmed_at, now()),
       updated_at = now()
     where review.review_attempt_id = attempt.review_attempt_id;
     return true;
@@ -424,7 +466,7 @@ create function momi_agent_ops.merge_review_eligible_v1(
       and run.validation_sha = p_head_sha and run.review_state = 'succeeded'
       and run.review_sha = p_head_sha and run.review_base_sha = p_base_sha
       and run.review_policy_version = p_policy_version and run.review_profile = p_profile
-      and run.review_check_sha = p_head_sha and review.state = 'accepted'
+      and review.state = 'accepted'
       and review.repository = p_repository and review.pull_request_number = p_pull_request_number
       and review.head_sha = p_head_sha and review.base_sha = p_base_sha
       and review.policy_version = p_policy_version and review.profile = p_profile
@@ -585,39 +627,6 @@ begin
 end;
 $$;
 
-create function momi_agent_ops.record_review_interruption_v1(
-  p_dispatch_id uuid,
-  p_capability_token uuid,
-  p_thread_id text,
-  p_turn_id text,
-  p_reviewer_dispatch_id uuid
-) returns boolean language plpgsql security invoker set search_path = '' as $$
-begin
-  update momi_agent_ops.review_attempts review set
-    state = case when review.state = 'reserved' then 'canceled' else review.state end,
-    canceled_at = case when review.state = 'reserved'
-      then coalesce(review.canceled_at, now()) else review.canceled_at end,
-    terminal_at = case when review.state = 'reserved'
-      then coalesce(review.terminal_at, now()) else review.terminal_at end,
-    interruption_confirmed_at = coalesce(review.interruption_confirmed_at, now()),
-    updated_at = now()
-  where review.reviewer_dispatch_id = p_reviewer_dispatch_id
-    and review.implementation_dispatch_id = p_dispatch_id
-    and (review.state in ('superseded', 'canceled') or (
-      review.state = 'reserved' and exists (
-        select 1 from momi_agent_ops.dispatches parent
-        where parent.dispatch_id = p_dispatch_id
-          and (parent.cancellation_requested_at is not null
-            or parent.cancelled_at is not null))))
-    and exists (select 1 from momi_agent_ops.dispatches work
-      where work.dispatch_id = p_dispatch_id
-        and work.host_callback_token_hash = encode(extensions.digest(
-          convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
-        and work.codex_thread_id = p_thread_id and work.codex_turn_id = p_turn_id);
-  return found;
-end;
-$$;
-
 create function momi_agent_ops.record_cancellation_v3(
   p_dispatch_id uuid, p_capability_token uuid, p_cancellation_state text
 ) returns boolean language plpgsql security invoker set search_path = '' as $$
@@ -644,8 +653,7 @@ begin
   update momi_agent_ops.review_attempts review set state = 'canceled',
     canceled_at = coalesce(review.canceled_at, now()),
     terminal_at = coalesce(review.terminal_at, now()),
-    interruption_confirmed_at = case when review.state = 'running' then now()
-      else review.interruption_confirmed_at end, updated_at = now()
+    updated_at = now()
   where review.implementation_dispatch_id in (
     select owned.dispatch_id from lifecycle owned
   ) and review.state in ('reserved', 'running');
@@ -711,6 +719,7 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
   uuid, uuid, text, text, text, text, bigint, text, text, text, text, text, text,
   text, text[], text[], uuid, integer
 ), momi_agent_ops.record_reviewer_start_v1(uuid, uuid, text, text, text),
+  momi_agent_ops.record_review_start_ambiguous_v1(uuid, uuid),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, integer, text, text,
     text, jsonb, text, text, jsonb
@@ -722,7 +731,7 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
   momi_agent_ops.get_review_status_v1(uuid, uuid, text, text),
   momi_agent_ops.record_lifecycle_evidence_v3(
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text
-  ), momi_agent_ops.record_review_interruption_v1(uuid, uuid, text, text, uuid),
+  ),
   momi_agent_ops.fence_cancellation_v1(uuid, uuid),
   momi_agent_ops.record_cancellation_v3(uuid, uuid, text),
   momi_agent_ops.record_terminal_v5(

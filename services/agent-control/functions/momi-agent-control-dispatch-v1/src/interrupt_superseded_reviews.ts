@@ -44,12 +44,5 @@ export async function interruptSupersededReviews(
     const result = await response.json().catch(() => null) as Record<string, unknown> | null
     if (!response.ok || !["requested", "already_terminal"].includes(
       String(result?.cancellation_state))) throw new Error("reviewer_interruption_failed")
-    const recorded = await sql<{ recorded: boolean }[]>`
-      select momi_agent_ops.record_review_interruption_v1(
-        ${input.work_id}::uuid, ${input.capability_token}::uuid,
-        ${input.thread_id}, ${input.turn_id},
-        ${target.reviewer_dispatch_id}::uuid
-      ) as recorded`
-    if (recorded[0]?.recorded !== true) throw new Error("reviewer_interruption_record_refused")
   }
 }
