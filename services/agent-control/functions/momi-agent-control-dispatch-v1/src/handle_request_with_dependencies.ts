@@ -53,7 +53,7 @@ export async function handleRequestWithDependencies(
         injected?.recordTerminal ?? recordTerminal,
         injected?.reconcileTerminal ?? reconcileTerminal,
         injected?.terminalWriteback ?? ((terminal, commentId) =>
-          recordLinearWriteback(terminal, commentId, true)),
+          recordLinearWriteback(terminal, commentId)),
         reconcileAgentState)
       return Response.json(result)
     }

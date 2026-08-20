@@ -80,8 +80,10 @@ export class HostController {
   }
   async cancel(input: HostCancellation): Promise<HostCancellationResult> {
     const result = await cancelHostWork(this.client, this.ledger, this.config, input)
-    const target = this.ledger.get(input.target_work_id)
-    if (target?.state === "terminal" && !target.callbackSent) await this.deliverCallback(target)
+    for (const targetWorkId of input.target_work_ids) {
+      const target = this.ledger.get(targetWorkId)
+      if (target?.state === "terminal" && !target.callbackSent) await this.deliverCallback(target)
+    }
     return result
   }
   recoverDiscovery(input: HostRecovery): Promise<HostRecoveryResult> {

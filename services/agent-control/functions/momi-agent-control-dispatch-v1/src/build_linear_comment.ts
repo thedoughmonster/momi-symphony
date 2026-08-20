@@ -25,7 +25,7 @@ export function buildLinearComment(work: ClaimedDispatch, terminal?: TerminalInp
       no_target: "No prior execute-run exists for this issue.",
       operator_intervention: "Host delivery is ambiguous; operator intervention is required.",
     }
-    return `${marker}\n## Codex run cancellation\n\n- Action: \`cancel-run\`\n` +
+    return `${marker}\n## Codex run cancellation\n\n- Source: native Linear Canceled\n` +
       `- Dispatch: \`${work.work_id}\`\n- Target dispatch: ${target}\n` +
       `- Final disposition: ${work.cancellation_state}\n` +
       `- Recorded at: ${new Date().toISOString()}\n` + summaries[work.cancellation_state]

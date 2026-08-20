@@ -38,11 +38,11 @@ export async function processDispatch(
     if (!work.rejection_code && !["cancel-run", "recover-discovery"].includes(work.action)) {
       await dependencies.project(work.work_id)
     }
-    const hasRun = !["cancel-run", "recover-discovery"].includes(work.action) &&
-      work.rejection_code === null &&
-      work.thread_id !== null
-    if (!await dependencies.writeback(input, commentId, hasRun)) {
+    if (!await dependencies.writeback(input, commentId)) {
       throw new Error("linear_writeback_record_failed")
+    }
+    if (work.action === "cancel-run" && work.target_dispatch_id) {
+      await dependencies.project(work.target_dispatch_id)
     }
     return work.rejection_code
       ? { ok: true, disposition: "rejected" }

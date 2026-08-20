@@ -6,6 +6,17 @@
 > `thedoughmonster/momi-symphony` on `main`. The original mapping below is
 > retained as historical decision context; the active mapping is Symphony
 > Control Plane to the dedicated repository.
+>
+> MOX-259 amendment (2026-08-20): the internal action catalog remains durable
+> protocol/telemetry vocabulary, but routine operator labels are no longer the
+> lifecycle authority. Ordinary finalized leaves enter internal `execute-run`
+> through the existing scheduler; `has-run` is retired; native Linear
+> `Canceled` creates the exact cancellation command; and routine validation,
+> cleanup, and decomposition labels are inert. `investigate-issue`,
+> `run-discovery`, and `recover-discovery` remain explicit requests.
+> `request escalated validation` is scheduler policy on the normal execution,
+> not a separate task. Parent coordination may still use a child `execute-run`
+> label because the active parent dispatch is the durable authorization.
 
 - Status: accepted
 - Date: 2026-08-14
@@ -29,11 +40,12 @@ the untouched request bytes, records the complete envelope, and normalizes only
 fields named by `updatedFrom`. Exactly one newly added declared action creates
 canonical dispatch and run records in the same transaction.
 
-The accepted catalog is `execute-run`, `cancel-run`, `validate-issue`, `investigate-issue`,
-`cleanup`, `decompose`, `run-discovery`, and `recover-discovery`. Events that add more than one
-catalog action are ambiguous and do not create work. Each accepted action is
-stored on the dispatch, consumed after host acceptance, and reported in the
-marker-bound Linear comment. Provider retries converge on the delivery receipt.
+The internal catalog is `execute-run`, `cancel-run`, `validate-issue`,
+`investigate-issue`, `cleanup`, `decompose`, `run-discovery`, and
+`recover-discovery`. Direct label ingress is limited to the discretionary
+requests plus parent-authorized child `execute-run`; native state ingress owns
+`cancel-run`. Each accepted action is stored on the dispatch and reported in
+the marker-bound Linear comment. Provider retries converge on the delivery receipt.
 
 Project routing is configuration owned by `momi_agent_ops.project_mappings`.
 The first mapping is the Linear Backend Stabilization project to
@@ -117,10 +129,12 @@ durable dispatch edges and child run records after task archival. The parent
 task reports deterministic eligibility, aggregate progress, partial failure,
 retry, and intervention evidence in Linear. It does not invoke Symphony.
 
-`cancel-run` creates a separate durable command targeting the newest
-`execute-run` for the same issue. Pending work is withdrawn transactionally;
-an exact active host turn receives idempotent `turn/interrupt`; terminal replay
-is successful; missing and ambiguous targets produce explicit Linear evidence.
+Native Linear `Canceled` creates a separate durable internal `cancel-run`
+command targeting the newest `execute-run` generation for the same issue and
+its exact parent-owned descendants. Pending work is withdrawn transactionally;
+exact active host turns receive idempotent `turn/interrupt`; terminal replay is
+successful; cancellation fences later merge/release evidence and dominates a
+stale completed receipt. Missing and ambiguous targets produce explicit Linear evidence.
 
 ## Material decision alerts (MOX-232 amendment)
 

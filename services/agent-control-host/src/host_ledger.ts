@@ -12,7 +12,10 @@ export class HostLedger {
   async load(): Promise<void> {
     const parsed = await readHostLedger(this.path)
     for (const record of parsed.records ?? []) this.records.set(record.workId, record)
-    for (const record of parsed.cancellations ?? []) this.cancellations.set(record.workId, record)
+    for (const record of parsed.cancellations ?? []) {
+      record.targetWorkIds ??= record.targetWorkId ? [record.targetWorkId] : []
+      this.cancellations.set(record.workId, record)
+    }
     for (const record of parsed.recoveries ?? []) this.recoveries.set(record.workId, record)
   }
   get(workId: string): HostRecord | null { return this.records.get(workId) ?? null }
@@ -22,14 +25,15 @@ export class HostLedger {
   findByThread(threadId: string): HostRecord | null {
     return [...this.records.values()].find((record) => record.threadId === threadId) ?? null }
   async reserveCancellation(workId: string, fingerprint: string,
-    targetWorkId: string): Promise<HostCancellationRecord | null> {
+    targetWorkIds: string[]): Promise<HostCancellationRecord | null> {
     const existing = this.cancellations.get(workId)
     if (existing) {
-      if (existing.fingerprint !== fingerprint || existing.targetWorkId !== targetWorkId)
+      if (existing.fingerprint !== fingerprint ||
+        existing.targetWorkIds.join("\n") !== targetWorkIds.join("\n"))
         throw new Error("host_idempotency_conflict")
       return existing
     }
-    this.cancellations.set(workId, { workId, fingerprint, targetWorkId,
+    this.cancellations.set(workId, { workId, fingerprint, targetWorkIds,
       state: "reserved", updatedAt: new Date().toISOString() })
     await this.persist(); return null
   }

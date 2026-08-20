@@ -3,6 +3,12 @@ import type { JSONValue } from "postgres"
 import type { AgentAction } from "../../../src/actions.ts"
 
 export type LabelChange = { before: string[]; after: string[] }
+export type StateChange = {
+  beforeId: string | null
+  afterId: string | null
+  afterName: string | null
+  afterType: string | null
+}
 
 export type NormalizedLinearEvent = {
   payload: Record<string, JSONValue>
@@ -18,7 +24,7 @@ export type NormalizedLinearEvent = {
   parentIssueId: string | null
   decisionIssueId: string | null
   action: AgentAction | null
-  changedFields: { labels: LabelChange } | Record<string, never>
+  changedFields: { labels?: LabelChange; state?: StateChange }
 }
 
 export type WebhookRecord = NormalizedLinearEvent & {

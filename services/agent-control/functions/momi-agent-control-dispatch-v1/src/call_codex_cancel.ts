@@ -11,15 +11,15 @@ export async function callCodexCancel(
   try { url = new URL(configured) } catch { throw new Error("codex_host_url_unconfigured") }
   const loopback = new Set(["localhost", "127.0.0.1", "::1"]).has(url.hostname)
   if ((!loopback && url.protocol !== "https:") || !secret ||
-    !url.pathname.endsWith("/v1/dispatch") || !work.target_dispatch_id) {
+    !url.pathname.endsWith("/v1/dispatch") || work.cancellation_target_ids.length === 0) {
     throw new Error("codex_host_configuration_refused")
   }
   url.pathname = `${url.pathname.slice(0, -"/v1/dispatch".length)}/v1/cancel`
   const response = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ schema_version: 1, work_id: work.work_id,
-      capability_token: capabilityToken, target_work_id: work.target_dispatch_id,
+    body: JSON.stringify({ schema_version: 2, work_id: work.work_id,
+      capability_token: capabilityToken, target_work_ids: work.cancellation_target_ids,
       repository: work.repository, base_branch: work.base_branch }),
     signal: AbortSignal.timeout(10_000),
   })

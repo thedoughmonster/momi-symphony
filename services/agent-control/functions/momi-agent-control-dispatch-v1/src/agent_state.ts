@@ -14,7 +14,7 @@ export type AgentStateEvidence = {
   dispatch_id: string
   current_dispatch_id: string
   action: string
-  source_kind: "linear_action" | "ready_leaf_scheduler"
+  source_kind: "linear_action" | "ready_leaf_scheduler" | "linear_state_cancellation"
   work_status: "pending" | "claimed" | "writeback_pending" | "active" |
     "completed" | "cancelled" | "rejected" | "dead_letter"
   attempt_count: number
@@ -48,7 +48,7 @@ export function deriveAgentState(evidence: AgentStateEvidence): AgentState {
   exactDeliveryCorrelation(evidence)
 
   if (evidence.cancelled_at || evidence.work_status === "cancelled" ||
-    evidence.terminal_disposition === "interrupted") return "stopped"
+    (evidence.terminal_at && evidence.terminal_disposition === "interrupted")) return "stopped"
   if (evidence.work_status === "dead_letter" || evidence.work_status === "rejected" ||
     evidence.terminal_disposition === "failed" || evidence.readiness_result === "failed" ||
     evidence.validation_state === "failed" || evidence.review_state === "failed" ||

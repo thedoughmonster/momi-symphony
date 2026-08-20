@@ -9,7 +9,8 @@ test("cancels only an exact claimed target through the private host", async () =
   const work = { work_id: "00000000-0000-4000-8000-000000000001",
     action: "cancel-run", repository: "thedoughmonster/momi-symphony", base_branch: "main",
     host_dispatch_url: "https://codex-host.example/v1/dispatch",
-    target_dispatch_id: "00000000-0000-4000-8000-000000000002" } as ClaimedDispatch
+    target_dispatch_id: "00000000-0000-4000-8000-000000000002",
+    cancellation_target_ids: ["00000000-0000-4000-8000-000000000002"] } as ClaimedDispatch
   let requestedUrl = ""; let requestedBody: Record<string, unknown> = {}
   try {
     Object.defineProperty(globalThis, "Deno", { configurable: true,
@@ -21,8 +22,10 @@ test("cancels only an exact claimed target through the private host", async () =
     })
     assert.deepEqual(result, { cancellation_state: "requested" })
     assert.equal(requestedUrl, "https://codex-host.example/v1/cancel")
-    assert.equal(requestedBody.target_work_id, work.target_dispatch_id)
-    await assert.rejects(callCodexCancel({ ...work, target_dispatch_id: null }, "token"),
+    assert.deepEqual(requestedBody.target_work_ids, work.cancellation_target_ids)
+    assert.equal(requestedBody.schema_version, 2)
+    await assert.rejects(callCodexCancel({ ...work, target_dispatch_id: null,
+      cancellation_target_ids: [] }, "token"),
       /codex_host_configuration_refused/)
   } finally {
     if (priorDeno) Object.defineProperty(globalThis, "Deno", priorDeno)

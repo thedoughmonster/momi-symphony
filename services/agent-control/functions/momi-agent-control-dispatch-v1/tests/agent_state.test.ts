@@ -62,6 +62,10 @@ test("retry, exhausted failure, and cancellation are exceptional states", () => 
   assert.equal(deriveAgentState(evidence({ work_status: "dead_letter" })), "failed")
   assert.equal(deriveAgentState(evidence({ work_status: "cancelled",
     cancelled_at: "2026-08-20T12:00:00Z" })), "stopped")
+  assert.equal(deriveAgentState(evidence({ work_status: "active",
+    terminal_disposition: "interrupted" })), "working")
+  assert.equal(deriveAgentState(evidence({ work_status: "completed",
+    terminal_disposition: "interrupted", terminal_at: "2026-08-20T12:00:00Z" })), "stopped")
 })
 
 test("stale generations and unrelated delivery revisions fail closed", () => {

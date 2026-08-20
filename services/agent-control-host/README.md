@@ -14,8 +14,9 @@ base-branch values must match host configuration. One-shot work issues
 Edge Function. Interactive discovery names the thread before its first turn,
 leaves it unarchived after normal turn completion, and retains its exact identity
 for later user turns.
-The separate authenticated cancellation contract resolves an exact target work
-record and calls `turn/interrupt` after a successful durable lookup. A retained
+The separate authenticated cancellation contract resolves a sorted, bounded set
+of exact work records owned by one lifecycle and calls `turn/interrupt` after
+successful durable lookup. A retained
 interactive task is archived directly and emits its terminal receipt. Queued
 cancellation remains in the database owner, while a terminal target is an
 idempotent host success.

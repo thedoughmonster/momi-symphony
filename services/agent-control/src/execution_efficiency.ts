@@ -25,6 +25,7 @@ export type ActionContextEnvelope = {
   issue: { id: string; identifier: string; url: string }
   mapping: { project_id: string; project_name: string; repository: string; base_branch: string }
   active_states: string[]
+  execution: { validation_profile: "normal" | "escalated" }
   sources: ContextSource[]
   attempt_delta: { dispatch_id: string; durable_action_evidence: true }
 }
@@ -83,6 +84,7 @@ export function buildActionContextEnvelope(input: {
   action: AgentAction; work_id: string; issue_id: string; issue_identifier: string
   issue_url: string; project_id: string; project_name: string
   repository: string; base_branch: string; active_states: string[]
+  validation_profile?: "normal" | "escalated"
 }): ActionContextEnvelope {
   const source = (identity: string, reason: string): ContextSource => ({ identity,
     fingerprint: stableFingerprint(identity), reason, required: true })
@@ -104,6 +106,7 @@ export function buildActionContextEnvelope(input: {
     issue: { id: input.issue_id, identifier: input.issue_identifier, url: input.issue_url },
     mapping: { project_id: input.project_id, project_name: input.project_name,
       repository: input.repository, base_branch: input.base_branch },
-    active_states: [...input.active_states], sources,
+    active_states: [...input.active_states],
+    execution: { validation_profile: input.validation_profile ?? "normal" }, sources,
     attempt_delta: { dispatch_id: input.work_id, durable_action_evidence: true } }
 }

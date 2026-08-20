@@ -12,18 +12,16 @@ export async function reconcileLinear(work: ClaimedDispatch): Promise<string> {
     baseBranch: work.base_branch,
   }))
   if (issue.identifier !== work.issue_identifier) throw new Error("linear_issue_identity_conflict")
-  const action = issue.teamLabels.find((label) => label.name === work.action)
-  const hasRun = issue.teamLabels.find((label) => label.name === "has-run")
-  const needsRunMarker = !["cancel-run", "recover-discovery"].includes(work.action) &&
-    !work.rejection_code
-  if (!action || (needsRunMarker && !hasRun)) {
-    throw new Error("linear_action_labels_unavailable")
+  // The durable dispatch, not a bookkeeping label, is execution evidence. A
+  // scheduler-origin run never had an execute-run label, and historical
+  // has-run assignments are removed opportunistically on every fresh read.
+  const labelIds = issue.labelRefs
+    .filter((label) => label.name !== work.action && label.name !== "has-run")
+    .map((label) => label.id).sort()
+  const currentIds = issue.labelRefs.map((label) => label.id).sort()
+  if (labelIds.join("\n") !== currentIds.join("\n")) {
+    await writeLinearLabels(issue.id, labelIds)
   }
-  const labels = issue.labelRefs.filter((label) => label.id !== action.id)
-  if (needsRunMarker && hasRun && !labels.some((label) => label.id === hasRun.id)) {
-    labels.push(hasRun)
-  }
-  await writeLinearLabels(issue.id, labels.map((label) => label.id).sort())
   const marker = `momi-agent-control:${work.work_id}`
   return writeLinearComment(issue, marker, buildLinearComment(work), work.linear_comment_id)
 }

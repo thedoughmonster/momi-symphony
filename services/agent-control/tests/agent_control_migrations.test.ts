@@ -12,6 +12,8 @@ const schedulerPath = "supabase/migrations/20260819045838_add_ready_leaf_schedul
 const decisionAlertPath = "supabase/migrations/20260819082707_add_decision_alert_lifecycle.sql"
 const efficiencyPath = "supabase/migrations/20260820070000_add_execution_efficiency_telemetry.sql"
 const lifecyclePath = "supabase/migrations/20260820130000_add_canonical_agent_state_lifecycle.sql"
+const nativeCancellationPath =
+  "supabase/migrations/20260820143000_retire_action_labels_and_native_cancellation.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -203,4 +205,21 @@ test("canonical Agent State evidence is exact-generation, private, and repairabl
   assert.match(migration, /security invoker set search_path = ''/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault)\./i)
+})
+
+test("native cancellation retires routine labels and fences the exact lifecycle", async () => {
+  const migration = await readFile(nativeCancellationPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /linear_state_cancellation/)
+  assert.match(migration, /afterType.*canceled/s)
+  assert.match(migration, /with recursive lifecycle/)
+  assert.match(migration, /parent_dispatch_id = parent\.dispatch_id/)
+  assert.match(migration, /work_status = 'cancelled'/)
+  assert.match(migration, /cancellation_requested_at is not null/)
+  assert.match(migration, /record_lifecycle_evidence_v2/)
+  assert.match(migration, /record_terminal_v4/)
+  assert.match(migration, /validation_profile/)
+  assert.match(migration, /request escalated validation/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
 })

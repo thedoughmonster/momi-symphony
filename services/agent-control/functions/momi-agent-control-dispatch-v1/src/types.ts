@@ -68,6 +68,8 @@ export type ClaimedDispatch = {
   issue_id: string
   issue_identifier: string
   action: AgentAction
+  source_kind: "linear_action" | "ready_leaf_scheduler" | "linear_state_cancellation"
+  validation_profile: "normal" | "escalated"
   issue_url: string
   project_id: string | null
   project_name: string | null
@@ -79,6 +81,7 @@ export type ClaimedDispatch = {
   delivery_phase: "host" | "cancel_host" | "recover_host" | "writeback"
   parent_dispatch_id: string | null
   target_dispatch_id: string | null
+  cancellation_target_ids: string[]
   cancellation_state: CancellationState
   recovery_state: RecoveryState
   thread_id: string | null
@@ -125,8 +128,7 @@ export type DispatchDependencies = {
   cancellationRecorded: (input: DispatchInput, result: HostCancellation) => Promise<boolean>
   recoveryRecorded: (input: DispatchInput, result: HostRecovery) => Promise<boolean>
   reconcile: (work: ClaimedDispatch) => Promise<string | null>
-  writeback: (input: DispatchInput, commentId: string | null,
-    hasRun: boolean) => Promise<boolean>
+  writeback: (input: DispatchInput, commentId: string | null) => Promise<boolean>
   retry: (input: DispatchInput, code: string) => Promise<boolean>
   project: (dispatchId: string) => Promise<unknown>
 }

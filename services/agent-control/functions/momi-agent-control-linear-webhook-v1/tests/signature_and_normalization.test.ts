@@ -14,9 +14,9 @@ test("verifies the exact raw Linear bytes", async () => {
   assert.equal(await verifyLinearSignature(raw, "00", "linear-secret"), false)
 })
 
-test("routes each newly added declared action from updatedFrom", () => {
-  for (const action of ["execute-run", "cancel-run", "validate-issue", "investigate-issue",
-    "cleanup", "decompose", "run-discovery", "recover-discovery"]) {
+test("routes only retained discretionary and coordinator labels", () => {
+  for (const action of ["execute-run", "investigate-issue",
+    "run-discovery", "recover-discovery"]) {
     const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
       updatedFrom: { labels: [{ id: "old", name: "Feature" }] }, data: {
         labels: [{ name: action }, { name: "Feature" }] } }
@@ -25,6 +25,35 @@ test("routes each newly added declared action from updatedFrom", () => {
     assert.deepEqual(event?.changedFields, { labels: {
       before: ["Feature"], after: ["Feature", action].sort() } })
   }
+})
+
+test("retired routine action labels do not create work", () => {
+  for (const action of ["cancel-run", "validate-issue", "cleanup", "decompose"]) {
+    const payload = { action: "update", type: "Issue", updatedFrom: { labels: [] },
+      data: { labels: [{ name: action }] } }
+    assert.equal(normalizeLinearEvent(new TextEncoder().encode(
+      JSON.stringify(payload)))?.action, null)
+  }
+})
+
+test("escalated validation is scheduler policy and never a direct action", () => {
+  const payload = { action: "update", type: "Issue", updatedFrom: { labels: [] },
+    data: { labels: [{ name: "request escalated validation" }] } }
+  const event = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify(payload)))
+  assert.equal(event?.action, null)
+  assert.deepEqual(event?.changedFields, { labels: {
+    before: [], after: ["request escalated validation"] } })
+})
+
+test("native Canceled is the authoritative cancellation request", () => {
+  const payload = { action: "update", type: "Issue",
+    updatedFrom: { stateId: "state-started" }, data: {
+      stateId: "state-canceled", state: { id: "state-canceled",
+        name: "Canceled", type: "canceled" }, labels: [{ name: "cancel-run" }] } }
+  const event = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify(payload)))
+  assert.equal(event?.action, "cancel-run")
+  assert.deepEqual(event?.changedFields, { state: { beforeId: "state-started",
+    afterId: "state-canceled", afterName: "Canceled", afterType: "canceled" } })
 })
 
 test("captures the direct parent identity for durable child linkage", () => {
@@ -54,12 +83,12 @@ test("normalizes Linear labelIds changes from the hosted webhook shape", () => {
   const payload = { action: "update", type: "Issue", webhookTimestamp: Date.now(),
     updatedFrom: { labelIds: ["feature-id"] }, data: {
       labelIds: ["action-id", "feature-id"],
-      labels: [{ id: "action-id", name: "decompose" },
+      labels: [{ id: "action-id", name: "investigate-issue" },
         { id: "feature-id", name: "Feature" }] } }
   const event = normalizeLinearEvent(new TextEncoder().encode(JSON.stringify(payload)))
-  assert.equal(event?.action, "decompose")
+  assert.equal(event?.action, "investigate-issue")
   assert.deepEqual(event?.changedFields, { labels: {
-    before: ["Feature"], after: ["Feature", "decompose"] } })
+    before: ["Feature"], after: ["Feature", "investigate-issue"] } })
 
   payload.updatedFrom.labelIds = ["action-id", "feature-id"]
   assert.equal(normalizeLinearEvent(new TextEncoder().encode(
@@ -68,7 +97,7 @@ test("normalizes Linear labelIds changes from the hosted webhook shape", () => {
 
 test("ignores an ambiguous update that adds multiple actions", () => {
   const payload = { action: "update", type: "Issue", updatedFrom: { labels: [] },
-    data: { labels: [{ name: "cleanup" }, { name: "run-discovery" }] } }
+    data: { labels: [{ name: "investigate-issue" }, { name: "run-discovery" }] } }
   assert.equal(normalizeLinearEvent(new TextEncoder().encode(
     JSON.stringify(payload)))?.action, null)
 })

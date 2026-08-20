@@ -4,14 +4,14 @@ import test from "node:test"
 import { processDispatch } from "../src/process_dispatch.ts"
 import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 
-test("recovery writes pending status, calls only recovery, and never adds has-run", async () => {
+test("recovery writes pending status and calls only recovery", async () => {
   const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
     capability_token: "00000000-0000-4000-8000-000000000002" }
   const work = { work_id: input.work_id, issue_id: "issue", issue_identifier: "MOX-159",
     action: "recover-discovery", rejection_code: null, delivery_phase: "recover_host",
     target_dispatch_id: "00000000-0000-4000-8000-000000000003",
     recovery_state: "requested", thread_id: null } as ClaimedDispatch
-  let reconciles = 0; let recorded = false; let marker = true
+  let reconciles = 0; let recorded = false; let writebacks = 0
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("must_not_start")),
     callCancel: () => Promise.reject(new Error("must_not_cancel")),
@@ -20,11 +20,11 @@ test("recovery writes pending status, calls only recovery, and never adds has-ru
     cancellationRecorded: () => Promise.resolve(true),
     recoveryRecorded: () => { recorded = true; return Promise.resolve(true) },
     reconcile: () => { reconciles += 1; return Promise.resolve("comment") },
-    writeback: (_input, _comment, hasRun) => {
-      marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true),
+    writeback: () => { writebacks += 1; return Promise.resolve(true) },
+    retry: () => Promise.resolve(true),
     project: () => Promise.resolve() })
   assert.deepEqual(result, { ok: true, disposition: "recovered" })
-  assert.equal(reconciles, 2); assert.equal(recorded, true); assert.equal(marker, false)
+  assert.equal(reconciles, 2); assert.equal(recorded, true); assert.equal(writebacks, 1)
 })
 
 test("mapping mismatch is written back without any host mutation", async () => {
