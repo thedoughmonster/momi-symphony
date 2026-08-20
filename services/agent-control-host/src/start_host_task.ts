@@ -1,14 +1,21 @@
 import type { AppServerClient, HostAcceptance, HostConfiguration, HostDispatch } from "./types.ts"
+import { prepareReviewWorkspace } from "./prepare_review_workspace.ts"
 
 export async function startHostTask(
   client: AppServerClient,
   config: HostConfiguration,
   input: HostDispatch,
+  reviewWorkspace: typeof prepareReviewWorkspace = prepareReviewWorkspace,
 ): Promise<HostAcceptance> {
+  const cwd = input.schema_version === 4
+    ? await reviewWorkspace(config, input) : config.workspaceRoot
+  if (input.schema_version === 4 && input.review_thread_id) {
+    await client.request("thread/unarchive", { threadId: input.review_thread_id })
+  }
   const threadId = input.schema_version === 4 && input.review_thread_id
     ? input.review_thread_id
     : (await client.request<{ thread: { id: string } }>("thread/start", {
-      cwd: config.workspaceRoot,
+      cwd,
       serviceName: "momi-agent-control", threadSource: "momi_agent_control",
     })).thread.id
   if (!(input.schema_version === 4 && input.review_thread_id)) {
@@ -16,7 +23,9 @@ export async function startHostTask(
   }
   const turnInput: Record<string, unknown> = {
     threadId, clientUserMessageId: input.work_id,
-    approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
+    approvalPolicy: "never", sandboxPolicy: input.schema_version === 4
+      ? { type: "readOnly", networkAccess: false } : { type: "dangerFullAccess" },
+    ...(input.schema_version === 4 ? { runtimeWorkspaceRoots: [cwd] } : {}),
     input: input.schema_version === 3 || input.schema_version === 4
       ? [{ type: "text", text: input.stable_instruction, text_elements: [] },
         { type: "text", text: input.volatile_context, text_elements: [] }]

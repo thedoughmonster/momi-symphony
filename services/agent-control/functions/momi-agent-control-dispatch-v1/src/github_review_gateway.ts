@@ -1,4 +1,5 @@
 import { REVIEW_CHECK_NAME } from "../../../src/independent_review.ts"
+import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 
 export type GitHubReviewSubject = {
   repository: string
@@ -52,7 +53,7 @@ export class GitHubReviewGateway {
     }
     return { repository, pullRequestNumber, state: pr.state as "open" | "closed",
       baseBranch, headSha, baseSha, changedPaths,
-      diffArtifactRef: `https://api.github.com/repos/${repository}/pulls/${pullRequestNumber}` }
+      diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${baseSha}...${headSha}` }
   }
 
   async loadMergeFacts(repository: string, baseBranch: string,
@@ -62,7 +63,7 @@ export class GitHubReviewGateway {
       this.request<Array<Record<string, unknown>>>(`/repos/${repository}/commits/${headSha}/statuses`),
       this.request<Record<string, unknown>>(
         `/repos/${repository}/branches/${encodeURIComponent(baseBranch)}/protection`),
-      this.request<Array<Record<string, unknown>>>(`/repos/${repository}/pulls/${pullRequestNumber}/reviews`),
+      this.loadReviews(repository, pullRequestNumber),
       this.loadReviewThreads(repository, pullRequestNumber).catch(() => null),
     ])
     const runs = Array.isArray(checks.check_runs) ? checks.check_runs as Array<Record<string, unknown>> : []
@@ -75,21 +76,20 @@ export class GitHubReviewGateway {
       ...(Array.isArray(required.checks) ? (required.checks as Array<Record<string, unknown>>)
         .map((check) => check.context) : []),
     ]
-    const ciRuns = runs.filter((run) => run.name !== REVIEW_CHECK_NAME &&
-      requiredNames.includes(run.name))
-    const ciStatuses = statuses.filter((status) => status.context !== REVIEW_CHECK_NAME &&
-      requiredNames.includes(status.context))
+    const requiredCiNames = [...new Set(requiredNames.map(String))]
+      .filter((name) => name !== REVIEW_CHECK_NAME)
     const enforceAdmins = object(protection.enforce_admins)
     const latestReviewByAuthor = new Map<string, string>()
     for (const review of reviews.sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))) {
       const login = text(object(review.user).login)
       if (login) latestReviewByAuthor.set(login, String(review.state ?? "").toUpperCase())
     }
-    return { requiredCi: { headSha, conclusion: conclusion([...ciRuns, ...ciStatuses]) },
+    return { requiredCi: { headSha,
+      conclusion: requiredConclusion(requiredCiNames, runs, statuses) },
       reviewCheck: { name: REVIEW_CHECK_NAME, headSha, conclusion: reviewCheck },
       reviewCheckRequired: requiredNames.includes(REVIEW_CHECK_NAME),
-      bypassPossible: protection.allow_force_pushes === true ||
-        protection.allow_deletions === true || enforceAdmins.enabled !== true,
+      bypassPossible: object(protection.allow_force_pushes).enabled === true ||
+        object(protection.allow_deletions).enabled === true || enforceAdmins.enabled !== true,
       authoritativeBlockingThreads: threads === null ? -1 : threads,
       authoritativeChangesRequested: [...latestReviewByAuthor.values()]
         .some((state) => state === "CHANGES_REQUESTED") }
@@ -109,6 +109,51 @@ export class GitHubReviewGateway {
       throw new Error("review_compare_unbounded_or_empty")
     }
     return paths
+  }
+
+  async loadApplicableRules(repository: string, headSha: string,
+    changedPaths: string[]): Promise<Array<{ path: string; fingerprint: string }>> {
+    if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error("review_rules_revision_invalid")
+    const candidates = new Set(["AGENTS.md"])
+    for (const changedPath of changedPaths) {
+      const parts = changedPath.split("/").slice(0, -1)
+      for (let depth = 1; depth <= parts.length; depth += 1) {
+        candidates.add(`${parts.slice(0, depth).join("/")}/AGENTS.md`)
+      }
+    }
+    const rules: Array<{ path: string; fingerprint: string }> = []
+    for (const path of [...candidates].sort()) {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/")
+      let payload: Record<string, unknown>
+      try {
+        payload = await this.request<Record<string, unknown>>(
+          `/repos/${repository}/contents/${encodedPath}?ref=${headSha}`)
+      } catch (error) {
+        if (error instanceof Error && error.message.endsWith(":404")) continue
+        throw error
+      }
+      const encoded = text(payload.content).replace(/\s/g, "")
+      if (payload.encoding !== "base64" || !encoded) throw new Error("review_rule_malformed")
+      let content: string
+      try { content = atob(encoded) } catch { throw new Error("review_rule_malformed") }
+      rules.push({ path, fingerprint: stableFingerprint(content) })
+    }
+    if (!rules.some((rule) => rule.path === "AGENTS.md")) {
+      throw new Error("review_root_rule_missing")
+    }
+    return rules
+  }
+
+  private async loadReviews(repository: string,
+    pullRequestNumber: number): Promise<Array<Record<string, unknown>>> {
+    const reviews: Array<Record<string, unknown>> = []
+    for (let page = 1; page <= 10; page += 1) {
+      const batch = await this.request<Array<Record<string, unknown>>>(
+        `/repos/${repository}/pulls/${pullRequestNumber}/reviews?per_page=100&page=${page}`)
+      reviews.push(...batch)
+      if (batch.length < 100) return reviews
+    }
+    throw new Error("github_reviews_unbounded")
   }
 
   private async loadReviewThreads(repository: string, pullRequestNumber: number): Promise<number> {
@@ -156,4 +201,16 @@ function conclusion(values: Array<Record<string, unknown>>): "success" | "pendin
   if (states.some((state) => ["queued", "pending", "in_progress"].includes(state))) return "pending"
   return states.every((state) => ["success", "completed", "neutral", "skipped"].includes(state))
     ? "success" : "unknown"
+}
+
+function requiredConclusion(requiredNames: string[], runs: Array<Record<string, unknown>>,
+  statuses: Array<Record<string, unknown>>): "success" | "pending" | "failure" | "unknown" {
+  if (requiredNames.length === 0) return "unknown"
+  const results = requiredNames.map((name) => conclusion([
+    ...runs.filter((run) => run.name === name),
+    ...statuses.filter((status) => status.context === name),
+  ]))
+  if (results.some((result) => result === "failure")) return "failure"
+  if (results.some((result) => result === "pending")) return "pending"
+  return results.every((result) => result === "success") ? "success" : "unknown"
 }

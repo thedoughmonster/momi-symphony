@@ -111,7 +111,7 @@ export class HostController {
       }
       await this.client.request("thread/archive", { threadId: record.threadId })
       const archivedAt = new Date().toISOString()
-      const reviewResult = record.runtimeRole === "independent_reviewer"
+      let reviewResult = record.runtimeRole === "independent_reviewer"
         ? extractReviewResult(turn) : null
       let summary = record.runtimeRole === "independent_reviewer"
         ? reviewResult
@@ -124,8 +124,11 @@ export class HostController {
       const budget = this.budgetExhausted.has(record.workId)
         ? "budget_elapsed_exhausted" : budgetDisposition(record, telemetry)
       this.budgetExhausted.delete(record.workId)
-      if (budget) summary = { readiness_result: "failed", terminal_disposition: "failed",
-        summary: `${budget}; the durable checkpoint is preserved for operator-directed resume.` }
+      if (budget) {
+        summary = { readiness_result: "failed", terminal_disposition: "failed",
+          summary: `${budget}; the durable checkpoint is preserved for operator-directed resume.` }
+        reviewResult = null
+      }
       telemetry.disposition = summary.terminal_disposition
       await this.ledger.recordTelemetry(record.workId, telemetry)
       const terminal = await this.ledger.terminal(record.workId, summary, archivedAt, reviewResult)

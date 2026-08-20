@@ -119,6 +119,7 @@
       "momi_agent_ops.record_review_check_v1",
       "momi_agent_ops.get_review_status_v1",
       "momi_agent_ops.merge_review_eligible_v1",
+      "momi_agent_ops.record_merge_preflight_v1",
       "momi_agent_ops.record_recovery_v1",
       "momi_agent_ops.record_terminal_v1",
       "momi_agent_ops.record_terminal_v2",

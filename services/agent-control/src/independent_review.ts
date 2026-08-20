@@ -171,11 +171,13 @@ export function buildBoundedReviewerPacket(input: {
     !input.diff_artifact_ref || input.issue.required_outcome.length > 8_000) {
     throw new Error("review_packet_invalid")
   }
-  return { schema_version: 1, subject: input.subject, issue: input.issue,
+  const packet = { schema_version: 1, subject: input.subject, issue: input.issue,
     applicable_rules: input.applicable_rules, changed_paths: [...input.changed_paths].sort(),
     diff_artifact_ref: input.diff_artifact_ref,
     ci: input.ci.filter((check) => check.head_sha === input.subject.head_sha),
     unresolved_findings: input.unresolved_findings ?? [] }
+  if (JSON.stringify(packet).length > 6_500) throw new Error("review_packet_prompt_too_large")
+  return packet
 }
 
 function validFinding(value: unknown): boolean {

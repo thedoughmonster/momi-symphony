@@ -25,6 +25,8 @@ export async function processReviewRequest(input: ReviewRequestInput,
     subject.baseBranch !== input.base_branch) throw new Error("review_subject_mapping_refused")
   const route = await reviewRoute(sql, input.work_id)
   const profile = selectReviewProfile(subject.changedPaths)
+  const applicableRules = await github.loadApplicableRules(input.repository,
+    subject.headSha, subject.changedPaths)
   const prior = await priorChangesRequestedReview(sql, input.work_id)
   let reverificationOf: string | null = null
   let reviewChangedPaths = subject.changedPaths
@@ -35,10 +37,12 @@ export async function processReviewRequest(input: ReviewRequestInput,
     const changedPaths = await github.compareChangedPaths(input.repository,
       prior.head_sha, subject.headSha)
     const findingPaths = prior.findings.map((finding) => String(finding.path ?? ""))
+    const materialRiskChanged = !prior.findings.every((finding) =>
+      String(finding.category ?? "").toLowerCase() === "mechanical")
     if (!requiresFreshReviewer({ previousProfile: prior.profile, nextProfile: profile,
       priorReviewerAvailable: Boolean(prior.reviewer_thread_id),
       policyChanged: prior.policy_version !== REVIEW_POLICY_VERSION,
-      changedPaths, findingPaths, materialRiskChanged: false })) {
+      changedPaths, findingPaths, materialRiskChanged })) {
       reverificationOf = prior.review_attempt_id
       reviewChangedPaths = changedPaths
       reviewDiffArtifactRef = `https://api.github.com/repos/${input.repository}/compare/${prior.head_sha}...${subject.headSha}`
@@ -55,10 +59,13 @@ export async function processReviewRequest(input: ReviewRequestInput,
     profile, policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: route.issueIdentifier, title: "Bounded Linear implementation issue",
     required_outcome: "Read only the named Linear issue and applicable AGENTS.md rules; perform substantive review of the exact PR subject." },
-  applicable_rules: applicableRules(subject.changedPaths),
+  applicable_rules: applicableRules,
   changed_paths: reviewChangedPaths, diff_artifact_ref: reviewDiffArtifactRef, ci: [],
   unresolved_findings: unresolvedFindings })
   const packetFingerprint = stableFingerprint(packet)
+  if (reviewerPrompt(packet, profile, false).volatile.length > 7_500) {
+    throw new Error("review_packet_prompt_too_large")
+  }
   const rows = await sql<CreatedAttempt[]>`
     select disposition, review_attempt_id::text, reviewer_dispatch_id::text,
       reviewer_capability_token::text, generation, reviewer_thread_id
@@ -86,6 +93,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
     packet_fingerprint = ${exactPacketFingerprint}, updated_at = now()
     where review_attempt_id = ${attempt.review_attempt_id}::uuid and state = 'reserved'`
   const prompt = reviewerPrompt(exactPacket, profile, Boolean(attempt.reviewer_thread_id))
+  if (prompt.volatile.length > 8_000) throw new Error("review_packet_prompt_too_large")
   const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
   if (!secret) throw new Error("review_host_secret_unconfigured")
   const hostUrl = new URL(route.url)
@@ -193,9 +201,18 @@ export async function processMergePreflight(input: MergePreflightInput,
       ${input.work_id}::uuid, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
       ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as eligible`
-  return canonical[0]?.eligible === true
+  if (canonical[0]?.eligible !== true) return { ok: true, eligible: false,
+    reason: "canonical_review_ledger_ineligible",
+    head_sha: subject.headSha, base_sha: subject.baseSha }
+  const persisted = await sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_merge_preflight_v1(
+      ${input.work_id}::uuid, ${input.capability_token}::uuid,
+      ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
+      ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha},
+      ${REVIEW_POLICY_VERSION}, ${selectReviewProfile(subject.changedPaths)}) as recorded`
+  return persisted[0]?.recorded === true
     ? { ok: true, eligible: true, head_sha: subject.headSha, base_sha: subject.baseSha }
-    : { ok: true, eligible: false, reason: "canonical_review_ledger_ineligible",
+    : { ok: true, eligible: false, reason: "merge_preflight_receipt_refused",
       head_sha: subject.headSha, base_sha: subject.baseSha }
 }
 
@@ -216,6 +233,13 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
       ${result.artifact_ref}, ${sql.json(input.telemetry)}::jsonb
     ) as recorded`
   if (recorded[0]?.recorded !== true) throw new Error("review_result_record_refused")
+  const terminal = await sql<{ state: string }[]>`
+    select state from momi_agent_ops.review_attempts
+    where reviewer_dispatch_id = ${input.reviewer_dispatch_id}::uuid`
+  if (terminal[0]?.state === "canceled") {
+    await reconcileAgentState(subject.implementation_dispatch_id)
+    return { ok: true, disposition: "canceled" }
+  }
   const accepted = result.result === "accepted"
   await github.publishReviewCheck(repository, subject.head_sha, accepted,
     accepted ? "Exact-head independent review accepted" : `Independent review: ${result.result}`)
@@ -295,17 +319,6 @@ function reviewBudget(profile: string): Record<string, number> {
     subagent_depth: 0, model_visible_tool_bytes: 48_000, elapsed_ms: 1_800_000 }
   return { model_turns: 16, no_progress_cycles: 2, subagents: 0,
     subagent_depth: 0, model_visible_tool_bytes: 96_000, elapsed_ms: 3_600_000 }
-}
-
-function applicableRules(paths: string[]): Array<{ path: string; fingerprint: string }> {
-  const rules = new Set(["AGENTS.md"])
-  if (paths.some((path) => path.startsWith("services/agent-control/"))) {
-    rules.add("services/agent-control/AGENTS.md")
-  }
-  if (paths.some((path) => path.startsWith("services/agent-control-host/"))) {
-    rules.add("services/agent-control-host/AGENTS.md")
-  }
-  return [...rules].sort().map((path) => ({ path, fingerprint: stableFingerprint(path) }))
 }
 
 async function priorChangesRequestedReview(sql: Sql,

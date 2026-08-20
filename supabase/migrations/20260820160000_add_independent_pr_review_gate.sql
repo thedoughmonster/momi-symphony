@@ -18,6 +18,15 @@ alter table momi_agent_ops.run_records
   add column review_receipt_id uuid,
   add column review_check_sha text check (
     review_check_sha is null or review_check_sha ~ '^[0-9a-f]{40}$'
+  ),
+  add column merge_preflight_sha text check (
+    merge_preflight_sha is null or merge_preflight_sha ~ '^[0-9a-f]{40}$'
+  ),
+  add column merge_preflight_base_sha text check (
+    merge_preflight_base_sha is null or merge_preflight_base_sha ~ '^[0-9a-f]{40}$'
+  ),
+  add column merge_preflight_review_receipt_id uuid,
+  add column merge_preflight_at timestamptz
   );
 
 create table momi_agent_ops.review_attempts (
@@ -68,13 +77,14 @@ create table momi_agent_ops.review_attempts (
   canceled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (implementation_dispatch_id, generation),
-  unique (implementation_dispatch_id, repository, pull_request_number, head_sha, base_sha,
-    profile, policy_version)
+  unique (implementation_dispatch_id, generation)
 );
 
 alter table momi_agent_ops.run_records add constraint run_records_review_receipt_fk
   foreign key (review_receipt_id) references momi_agent_ops.review_attempts(review_attempt_id);
+alter table momi_agent_ops.run_records add constraint run_records_merge_preflight_receipt_fk
+  foreign key (merge_preflight_review_receipt_id)
+  references momi_agent_ops.review_attempts(review_attempt_id);
 
 create unique index review_attempts_one_active_idx
   on momi_agent_ops.review_attempts (implementation_dispatch_id)
@@ -145,10 +155,9 @@ begin
   where attempt.implementation_dispatch_id = p_dispatch_id
     and attempt.repository = p_repository and attempt.pull_request_number = p_pull_request_number
     and attempt.head_sha = p_head_sha and attempt.base_sha = p_base_sha
-    and attempt.profile = p_profile and attempt.policy_version = p_policy_version;
+    and attempt.profile = p_profile and attempt.policy_version = p_policy_version
+  order by attempt.generation desc limit 1;
   if found then
-    disposition := case when prior.state = 'accepted' then 'already_accepted'
-      else 'already_reserved' end;
     review_attempt_id := prior.review_attempt_id;
     reviewer_dispatch_id := prior.reviewer_dispatch_id;
     generation := prior.generation;
@@ -157,8 +166,21 @@ begin
       where source.review_attempt_id = prior.reverification_of;
       reviewer_thread_id := prior_reviewer.reviewer_thread_id;
     end if;
-    reviewer_capability_token := null;
-    return next; return;
+    if prior.state = 'accepted' then
+      disposition := 'already_accepted'; return next; return;
+    elsif prior.state = 'running' then
+      disposition := 'already_running'; return next; return;
+    elsif prior.state = 'changes_requested' then
+      disposition := 'changes_requested'; return next; return;
+    elsif prior.state = 'reserved' then
+      token := gen_random_uuid();
+      update momi_agent_ops.review_attempts attempt set
+        reviewer_capability_token_hash = encode(extensions.digest(
+          convert_to(token::text, 'UTF8'), 'sha256'), 'hex'), updated_at = now()
+      where attempt.review_attempt_id = prior.review_attempt_id;
+      disposition := 'created'; reviewer_capability_token := token;
+      return next; return;
+    end if;
   end if;
   update momi_agent_ops.review_attempts attempt set state = 'stale', stale_at = now(),
     updated_at = now() where attempt.implementation_dispatch_id = p_dispatch_id
@@ -315,6 +337,8 @@ begin
       when p_result = 'inconclusive' then 'inconclusive' else 'pending' end,
     review_receipt_id = case when not canceled and p_result = 'accepted'
       then attempt.review_attempt_id else null end,
+    merge_preflight_sha = null, merge_preflight_base_sha = null,
+    merge_preflight_review_receipt_id = null, merge_preflight_at = null,
     updated_at = now()
   where run.dispatch_id = attempt.implementation_dispatch_id;
   return true;
@@ -371,6 +395,44 @@ create function momi_agent_ops.merge_review_eligible_v1(
       and review.runtime_role = 'independent_reviewer'
       and review.reviewer_thread_id is distinct from work.codex_thread_id
   );
+$$;
+
+create function momi_agent_ops.record_merge_preflight_v1(
+  p_dispatch_id uuid,
+  p_capability_token uuid,
+  p_thread_id text,
+  p_turn_id text,
+  p_repository text,
+  p_base_branch text,
+  p_pull_request_number bigint,
+  p_head_sha text,
+  p_base_sha text,
+  p_policy_version text,
+  p_profile text
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare receipt_id uuid;
+begin
+  select run.review_receipt_id into receipt_id
+  from momi_agent_ops.dispatches work
+  join momi_agent_ops.run_records run on run.dispatch_id = work.dispatch_id
+  where work.dispatch_id = p_dispatch_id
+    and work.host_callback_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.codex_thread_id = p_thread_id and work.codex_turn_id = p_turn_id
+    and work.mapped_repository = p_repository and work.mapped_base_branch = p_base_branch
+    and work.cancellation_requested_at is null and work.cancelled_at is null
+  for update of run;
+  if not found or receipt_id is null or not momi_agent_ops.merge_review_eligible_v1(
+    p_dispatch_id, p_repository, p_base_branch, p_pull_request_number,
+    p_head_sha, p_base_sha, p_policy_version, p_profile
+  ) then return false; end if;
+  update momi_agent_ops.run_records run set
+    merge_preflight_sha = p_head_sha, merge_preflight_base_sha = p_base_sha,
+    merge_preflight_review_receipt_id = receipt_id,
+    merge_preflight_at = now(), updated_at = now()
+  where run.dispatch_id = p_dispatch_id;
+  return found;
+end;
 $$;
 
 create function momi_agent_ops.get_review_status_v1(
@@ -444,7 +506,9 @@ begin
       validation_sha = p_revision_sha, validation_workflow_run_id = p_workflow_run_id,
       review_state = 'not_required', review_sha = null, review_base_sha = null,
       review_policy_version = null, review_profile = null, review_receipt_id = null,
-      review_check_sha = null, updated_at = now()
+      review_check_sha = null, merge_preflight_sha = null,
+      merge_preflight_base_sha = null, merge_preflight_review_receipt_id = null,
+      merge_preflight_at = null, updated_at = now()
     where run.dispatch_id = p_dispatch_id;
     return found;
   end if;
@@ -479,7 +543,10 @@ begin
     and p_terminal_disposition = 'completed' and run.pull_request_number is not null
     and (run.validation_state <> 'succeeded' or run.review_state <> 'succeeded'
       or run.review_receipt_id is null or run.review_check_sha is distinct from run.head_sha
-      or (run.merge_sha is not null and run.release_state <> 'succeeded')) then
+      or run.merge_preflight_sha is distinct from run.head_sha
+      or run.merge_preflight_base_sha is distinct from run.review_base_sha
+      or run.merge_preflight_review_receipt_id is distinct from run.review_receipt_id
+      or run.merge_sha is null or run.release_state <> 'succeeded') then
     raise exception 'implementation_terminal_obligations_incomplete' using errcode = '23514';
   end if;
   return query select result.issue_id, result.issue_identifier, result.action,
@@ -499,6 +566,9 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
     text, jsonb, text, text, jsonb
   ), momi_agent_ops.record_review_check_v1(uuid, uuid, text, text, text),
   momi_agent_ops.merge_review_eligible_v1(uuid, text, text, bigint, text, text, text, text),
+  momi_agent_ops.record_merge_preflight_v1(
+    uuid, uuid, text, text, text, text, bigint, text, text, text, text
+  ),
   momi_agent_ops.get_review_status_v1(uuid, uuid, text, text),
   momi_agent_ops.record_lifecycle_evidence_v3(
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text

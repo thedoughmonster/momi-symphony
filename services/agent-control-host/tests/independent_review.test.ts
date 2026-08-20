@@ -39,11 +39,17 @@ test("v4 review dispatch is strictly role-attested and starts a fresh typed turn
         : method === "turn/start" ? { turn: { id: "fresh-review-turn" } } : {}) as T
     } } as AppServerClient
   await startHostTask(client, { workspaceRoot: "/workspace",
-    repository: dispatch.repository, baseBranch: "main" }, dispatch)
+    repository: dispatch.repository, baseBranch: "main" }, dispatch,
+  async () => "/isolated-review")
   const params = requests.find((request) => request.method === "turn/start")
     ?.params as Record<string, unknown>
   assert.equal((params.responsesapiClientMetadata as Record<string, unknown>).runtime_role,
     "independent_reviewer")
+  assert.deepEqual(params.sandboxPolicy, { type: "readOnly", networkAccess: false })
+  assert.deepEqual(params.runtimeWorkspaceRoots, ["/isolated-review"])
+  assert.equal(requests.find((request) => request.method === "thread/start")
+    ?.params && (requests.find((request) => request.method === "thread/start")
+      ?.params as Record<string, unknown>).cwd, "/isolated-review")
   assert.deepEqual((params.outputSchema as Record<string, unknown>).required,
     ["result", "findings", "artifact_ref"])
 })
@@ -59,9 +65,12 @@ test("bounded correction reuses only the prior reviewer thread with a fresh turn
     review_subject: { ...dispatch.review_subject!, generation: 2 } }
   assert.deepEqual(parseHostDispatch(reverification), reverification)
   assert.deepEqual(await startHostTask(client, { workspaceRoot: "/workspace",
-    repository: dispatch.repository, baseBranch: "main" }, reverification),
+    repository: dispatch.repository, baseBranch: "main" }, reverification,
+  async () => "/isolated-review"),
   { thread_id: "prior-review-thread", turn_id: "reverification-turn" })
   assert.equal(requests.some((request) => request.method === "thread/start"), false)
+  assert.deepEqual(requests[0], { method: "thread/unarchive",
+    params: { threadId: "prior-review-thread" } })
   const metadata = (requests.find((request) => request.method === "turn/start")?.params as {
     responsesapiClientMetadata: Record<string, unknown> }).responsesapiClientMetadata
   assert.equal(metadata.review_mode, "bounded_reverification")

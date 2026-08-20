@@ -101,4 +101,10 @@ test("review packets include only exact bounded sources", () => {
   assert.equal((packet.ci as unknown[]).length, 1)
   assert.equal("implementation_transcript" in packet, false)
   assert.equal("reviewer_transcript" in packet, false)
+  assert.throws(() => buildBoundedReviewerPacket({ subject, issue: {
+    identifier: "MOX-260", title: "Independent review", required_outcome: "bounded" },
+    applicable_rules: [{ path: "AGENTS.md", fingerprint: "fnv1a64:1" }],
+    changed_paths: Array.from({ length: 200 }, (_, index) =>
+      `services/agent-control/src/very-long-review-path-${index.toString().padStart(3, "0")}.ts`),
+    diff_artifact_ref: "github://compare/exact", ci: [] }), /prompt_too_large/)
 })
