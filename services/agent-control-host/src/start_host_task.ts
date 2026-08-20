@@ -33,6 +33,8 @@ export async function startHostTask(
     try {
       threadId = (await client.request<{ thread: { id: string } }>("thread/start", {
         cwd, serviceName: "momi-agent-control", threadSource: "momi_agent_control",
+        ...(input.schema_version === 4
+          ? { developerInstructions: input.stable_instruction } : {}),
       })).thread.id
     } catch (error) { throw classifyStartError(error) }
   }
@@ -68,11 +70,15 @@ export async function startHostTask(
       context_fingerprint: input.context_fingerprint },
   }
   if (input.schema_version === 4) {
+    turnInput.model = input.review_subject!.model
+    turnInput.effort = input.review_subject!.reasoning_effort
     turnInput.responsesapiClientMetadata = {
       ...(turnInput.responsesapiClientMetadata as Record<string, unknown>),
       runtime_role: "independent_reviewer",
       implementation_dispatch_id: input.review_subject?.implementation_dispatch_id,
       review_generation: input.review_subject?.generation,
+      review_model: input.review_subject?.model,
+      review_reasoning_effort: input.review_subject?.reasoning_effort,
       review_mode: reviewMode,
     }
     turnInput.outputSchema = { type: "object", additionalProperties: false,

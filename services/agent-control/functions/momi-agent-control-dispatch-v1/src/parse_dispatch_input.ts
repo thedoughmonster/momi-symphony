@@ -1,4 +1,4 @@
-import { validReviewFinding } from "../../../src/independent_review.ts"
+import { reviewExecutionProfile, validReviewFinding } from "../../../src/independent_review.ts"
 import type { DispatchInput, LifecycleEvidenceInput, MergePreflightInput, SchedulerPumpInput,
   ReviewRequestInput, ReviewStatusInput, ReviewTerminalInput, TerminalInput } from "./types.ts"
 
@@ -105,14 +105,17 @@ function validReviewSubject(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
   const keys = ["base_sha", "generation", "head_sha", "implementation_dispatch_id",
-    "policy_version", "profile", "pull_request_number"]
+    "model", "policy_version", "profile", "pull_request_number", "reasoning_effort"]
+  const profile = String(body.profile) as "low" | "standard" | "high"
+  if (!["low", "standard", "high"].includes(profile)) return false
+  const execution = reviewExecutionProfile(profile)
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     uuid.test(String(body.implementation_dispatch_id)) &&
     Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
     /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
     /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
     Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
-    ["low", "standard", "high"].includes(String(body.profile)) &&
+    body.model === execution.model && body.reasoning_effort === execution.reasoning_effort &&
     typeof body.policy_version === "string" && body.policy_version.length > 0 &&
     body.policy_version.length <= 120
 }

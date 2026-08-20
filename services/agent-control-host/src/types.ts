@@ -32,6 +32,8 @@ export type HostReviewSubject = {
   base_sha: string
   generation: number
   profile: "low" | "standard" | "high"
+  model: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"
+  reasoning_effort: "low" | "medium" | "high"
   policy_version: string
 }
 

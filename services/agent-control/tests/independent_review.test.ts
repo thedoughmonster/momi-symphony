@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { buildBoundedReviewerPacket, reduceMergeEligibility, requiresFreshReviewer,
-  REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION, selectReviewProfile,
+  reviewExecutionBudget, reviewExecutionProfile, REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION,
+  selectReviewProfile,
   validateReviewReceipt, type MergeGateEvidence, type ReviewReceipt,
   type ReviewSubject } from "../src/independent_review.ts"
 
@@ -13,6 +14,7 @@ const subject: ReviewSubject = {
   reviewer_dispatch_id: "00000000-0000-4000-8000-000000000002",
   repository: "thedoughmonster/momi-symphony", pull_request_number: 16,
   head_sha: head, base_sha: base, generation: 1, profile: "high",
+  model: "gpt-5.6-sol", reasoning_effort: "high",
   policy_version: REVIEW_POLICY_VERSION,
 }
 const receipt: ReviewReceipt = { ...subject, reviewer_thread_id: "review-thread",
@@ -39,6 +41,12 @@ test("risk routing promotes sensitive and ambiguous surfaces", () => {
   assert.equal(selectReviewProfile(["services/agent-control/src/x.ts"]), "high")
   assert.equal(selectReviewProfile([]), "high")
   assert.equal(selectReviewProfile(["../outside"]), "high")
+  assert.deepEqual(reviewExecutionProfile("standard"),
+    { model: "gpt-5.6-terra", reasoning_effort: "medium" })
+  assert.deepEqual(reviewExecutionProfile("high"),
+    { model: "gpt-5.6-sol", reasoning_effort: "high" })
+  assert.equal(reviewExecutionBudget("standard").model_turns, 8)
+  assert.equal(reviewExecutionBudget("high").model_turns, 16)
 })
 
 test("receipt validation rejects author identity, stale subject, malformed output, and blockers", () => {
@@ -48,6 +56,8 @@ test("receipt validation rejects author identity, stale subject, malformed outpu
   /review_result_malformed/)
   assert.throws(() => validateReviewReceipt({ ...receipt, head_sha: "d".repeat(40) },
     subject, "implementation-thread"), /review_subject_mismatch:head_sha/)
+  assert.throws(() => validateReviewReceipt({ ...receipt, model: "gpt-5.6-terra" },
+    subject, "implementation-thread"), /review_subject_mismatch:model/)
   assert.throws(() => validateReviewReceipt({ ...receipt, unexpected: true }, subject,
     "implementation-thread"), /review_result_malformed/)
   assert.throws(() => validateReviewReceipt({ ...receipt, findings: [{ id: "block-1",

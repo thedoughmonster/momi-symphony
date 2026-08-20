@@ -53,13 +53,15 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
     insert into momi_agent_ops.review_attempts (
       review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
       generation, repository, base_branch, pull_request_number, head_sha, base_sha,
-      profile, policy_version, state, runtime_role, reviewer_capability_token_hash,
+      profile, review_model, reasoning_effort, policy_version, state, runtime_role,
+      reviewer_capability_token_hash,
       reviewer_thread_id, reviewer_turn_id, packet_fingerprint, packet_artifact_ref,
       rules_fingerprint, risk_dimensions, correction_risk_dimensions
     ) values (
       ${oldReviewAttemptId}::uuid, ${currentDispatchId}::uuid,
       ${oldReviewerDispatchId}::uuid, 1, 'thedoughmonster/momi-symphony', 'main', 16,
-      ${oldHead}, ${baseSha}, 'high', 'independent-review-v1', 'accepted',
+      ${oldHead}, ${baseSha}, 'high', 'gpt-5.6-sol', 'high',
+      'independent-review-v1', 'accepted',
       'independent_reviewer', ${"4".repeat(64)}, 'old-reviewer-thread',
       'old-reviewer-turn', 'fnv1a64:1111111111111111',
       'review://MOX-260/old-head', 'fnv1a64:2222222222222222',
@@ -157,13 +159,15 @@ test("head transition is CAS-bound and serialized against newer dispatch generat
     insert into momi_agent_ops.review_attempts (
       review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
       generation, repository, base_branch, pull_request_number, head_sha, base_sha,
-      profile, policy_version, state, runtime_role, reviewer_capability_token_hash,
+      profile, review_model, reasoning_effort, policy_version, state, runtime_role,
+      reviewer_capability_token_hash,
       reviewer_thread_id, reviewer_turn_id, packet_fingerprint, packet_artifact_ref,
       rules_fingerprint, risk_dimensions, correction_risk_dimensions
     ) values (
       ${currentReviewAttemptId}::uuid, ${currentDispatchId}::uuid,
       ${currentReviewerDispatchId}::uuid, 2, 'thedoughmonster/momi-symphony', 'main', 16,
-      ${newHead}, ${baseSha}, 'high', 'independent-review-v1', 'accepted',
+      ${newHead}, ${baseSha}, 'high', 'gpt-5.6-sol', 'high',
+      'independent-review-v1', 'accepted',
       'independent_reviewer', ${"5".repeat(64)}, 'current-reviewer-thread',
       'current-reviewer-turn', 'fnv1a64:3333333333333333',
       'review://MOX-260/current-head', 'fnv1a64:4444444444444444',
@@ -304,13 +308,15 @@ test("review escalation promotes low to standard to high and then exhausts", asy
     insert into momi_agent_ops.review_attempts (
       review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
       generation, repository, base_branch, pull_request_number, head_sha, base_sha,
-      profile, policy_version, state, runtime_role, reviewer_capability_token_hash,
+      profile, review_model, reasoning_effort, policy_version, state, runtime_role,
+      reviewer_capability_token_hash,
       reviewer_thread_id, reviewer_turn_id, packet_fingerprint, packet_artifact_ref,
       rules_fingerprint, risk_dimensions, correction_risk_dimensions, started_at
     ) values (
       ${sourceAttemptId}::uuid, ${dispatchId}::uuid, ${sourceReviewerId}::uuid, 1,
       'thedoughmonster/momi-symphony', 'main', 16, ${escalationHead}, ${baseSha},
-      'low', 'independent-review-v1', 'running', 'independent_reviewer',
+      'low', 'gpt-5.6-luna', 'low', 'independent-review-v1', 'running',
+      'independent_reviewer',
       encode(extensions.digest(convert_to(${sourceToken}, 'UTF8'), 'sha256'), 'hex'),
       'low-thread', 'low-turn', 'fnv1a64:1111111111111111',
       'review://MOX-260/low', 'fnv1a64:2222222222222222',
@@ -323,12 +329,15 @@ test("review escalation promotes low to standard to high and then exhausts", asy
   let reviewerThread = "low-thread"
   let reviewerTurn = "low-turn"
   let profile = "low"
+  let reviewModel = "gpt-5.6-luna"
+  let reasoningEffort = "low"
   for (const expectedProfile of ["standard", "high"] as const) {
     const [recorded] = await database.sql<{ recorded: boolean }[]>`
       select momi_agent_ops.record_review_result_v1(
         ${reviewerId}::uuid, ${reviewerToken}::uuid, 'independent_reviewer',
         ${reviewerThread}, ${reviewerTurn}, 'thedoughmonster/momi-symphony', 16,
         ${escalationHead}, ${baseSha}, ${profile === "low" ? 1 : 2}, ${profile},
+        ${reviewModel}, ${reasoningEffort},
         'independent-review-v1', 'escalate', '[]'::jsonb,
         ${`sha256:${profile === "low" ? "1" : "2"}`.padEnd(71, profile === "low" ? "1" : "2")},
         ${`review://MOX-260/${profile}-escalate`}, '{}'::jsonb
@@ -357,6 +366,8 @@ test("review escalation promotes low to standard to high and then exhausts", asy
     reviewerThread = `${expectedProfile}-thread`
     reviewerTurn = `${expectedProfile}-turn`
     profile = expectedProfile
+    reviewModel = expectedProfile === "standard" ? "gpt-5.6-terra" : "gpt-5.6-sol"
+    reasoningEffort = expectedProfile === "standard" ? "medium" : "high"
     const [started] = await database.sql<{ recorded: boolean }[]>`
       select momi_agent_ops.record_reviewer_start_v1(
         ${reviewerId}::uuid, ${reviewerToken}::uuid, 'independent_reviewer',
@@ -369,7 +380,8 @@ test("review escalation promotes low to standard to high and then exhausts", asy
     select momi_agent_ops.record_review_result_v1(
       ${reviewerId}::uuid, ${reviewerToken}::uuid, 'independent_reviewer',
       ${reviewerThread}, ${reviewerTurn}, 'thedoughmonster/momi-symphony', 16,
-      ${escalationHead}, ${baseSha}, 3, 'high', 'independent-review-v1', 'escalate',
+      ${escalationHead}, ${baseSha}, 3, 'high', 'gpt-5.6-sol', 'high',
+      'independent-review-v1', 'escalate',
       '[]'::jsonb, ${`sha256:${"7".repeat(64)}`}, 'review://MOX-260/high-escalate',
       '{}'::jsonb) as recorded
   `
@@ -385,10 +397,13 @@ test("review escalation promotes low to standard to high and then exhausts", asy
     assert.equal(exhausted.profile, "high")
   }
   const [state] = await database.sql<{
-    review_state: string; attempt_count: number; profiles: string[]; states: string[]
+    review_state: string; attempt_count: number; profiles: string[]; models: string[];
+    efforts: string[]; states: string[]
   }[]>`
     select run.review_state, count(attempt.*)::integer as attempt_count,
       array_agg(attempt.profile order by attempt.generation) as profiles,
+      array_agg(attempt.review_model order by attempt.generation) as models,
+      array_agg(attempt.reasoning_effort order by attempt.generation) as efforts,
       array_agg(attempt.state order by attempt.generation) as states
     from momi_agent_ops.run_records run
     join momi_agent_ops.review_attempts attempt
@@ -396,5 +411,7 @@ test("review escalation promotes low to standard to high and then exhausts", asy
     where run.dispatch_id = ${dispatchId}::uuid group by run.review_state
   `
   assert.deepEqual(state, { review_state: "failed", attempt_count: 3,
-    profiles: ["low", "standard", "high"], states: ["escalated", "escalated", "failed"] })
+    profiles: ["low", "standard", "high"],
+    models: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+    efforts: ["low", "medium", "high"], states: ["escalated", "escalated", "failed"] })
 })

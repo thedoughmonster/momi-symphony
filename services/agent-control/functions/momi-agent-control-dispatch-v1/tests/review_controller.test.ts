@@ -3,6 +3,7 @@ import test from "node:test"
 import type { Sql } from "postgres"
 
 import { REVIEW_CHECK_NAME, REVIEW_POLICY_VERSION } from "../../../src/independent_review.ts"
+import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { processMergePreflight, processReviewTerminal,
   promoteReviewProfile } from "../src/review_controller.ts"
 import type { MergePreflightInput, ReviewTerminalInput } from "../src/types.ts"
@@ -29,7 +30,8 @@ test("accepted review remains unprojected until authenticated merge preflight", 
     thread_id: "review-thread", turn_id: "review-turn",
     review_subject: { implementation_dispatch_id: implementationId,
       pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
-      profile: "high", policy_version: REVIEW_POLICY_VERSION },
+      profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+      policy_version: REVIEW_POLICY_VERSION },
     review_result: { result: "accepted", findings: [], artifact_ref: "review://exact",
       result_fingerprint: `sha256:${"c".repeat(64)}` }, terminal_disposition: "completed",
     archived_at: "2026-08-20T15:00:00.000Z", telemetry: {} } as ReviewTerminalInput
@@ -77,7 +79,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
   const github = { loadSubject: async () => subject,
     loadApplicableRules: async (_repository: string, revision: string) => {
       assert.equal(revision, base)
-      return [{ path: "AGENTS.md", fingerprint: "fnv1a64:1111111111111111" }]
+      const content = "Protected governance requires exact substantive review."
+      return [{ path: "AGENTS.md", fingerprint: stableFingerprint(content), content }]
     }, loadHeadChecks: async () => [{ name: "CI", conclusion: "success", head_sha: head }],
     publishReviewCheck: async (_repository: string, _head: string, success: boolean) => {
       published.push(success)
@@ -87,7 +90,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
     thread_id: "low-thread", turn_id: "low-turn",
     review_subject: { implementation_dispatch_id: implementationId,
       pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
-      profile: "low", policy_version: REVIEW_POLICY_VERSION },
+      profile: "low", model: "gpt-5.6-luna", reasoning_effort: "low",
+      policy_version: REVIEW_POLICY_VERSION },
     review_result: { result: "escalate", findings: [], artifact_ref: "review://low",
       result_fingerprint: `sha256:${"d".repeat(64)}` }, terminal_disposition: "completed",
     archived_at: "2026-08-20T15:00:00.000Z", telemetry: {} } as ReviewTerminalInput
@@ -108,6 +112,13 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
     assert.deepEqual(reconciled, [implementationId])
     assert.equal(hostBodies.length, 1)
     assert.equal((hostBodies[0]?.review_subject as Record<string, unknown>).profile, "standard")
+    assert.equal((hostBodies[0]?.review_subject as Record<string, unknown>).model,
+      "gpt-5.6-terra")
+    assert.equal((hostBodies[0]?.review_subject as Record<string, unknown>).reasoning_effort,
+      "medium")
+    assert.match(String(hostBodies[0]?.stable_instruction),
+      /Protected governance requires exact substantive review/)
+    assert.match(String(hostBodies[0]?.stable_instruction), new RegExp(base))
     assert.equal("review_thread_id" in hostBodies[0]!, false)
     assert.deepEqual((hostBodies[0]?.budget as Record<string, unknown>).model_turns, 8)
   } finally {
@@ -129,7 +140,8 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
   }) as unknown as Sql
   ;(exhaustedSql as unknown as { json: (value: unknown) => unknown }).json = (value) => value
   const exhausted = await processReviewTerminal({ ...input,
-    review_subject: { ...input.review_subject, generation: 3, profile: "high" } },
+    review_subject: { ...input.review_subject, generation: 3, profile: "high",
+      model: "gpt-5.6-sol", reasoning_effort: "high" } },
   exhaustedSql, github as never, async () => "Failed" as never)
   assert.equal(exhausted.disposition, "escalation_exhausted")
 })
@@ -156,7 +168,8 @@ test("merge preflight persists its exact receipt before projecting the required 
     implementation_thread_id: "implementation-thread", review_attempt_id: reviewAttemptId,
     implementation_dispatch_id: implementationId, reviewer_dispatch_id: reviewerId,
     repository, pull_request_number: 16, head_sha: head, base_sha: base, generation: 1,
-    profile: "high", policy_version: REVIEW_POLICY_VERSION,
+    profile: "high", model: "gpt-5.6-sol", reasoning_effort: "high",
+    policy_version: REVIEW_POLICY_VERSION,
     reviewer_thread_id: "review-thread", reviewer_turn_id: "review-turn",
     runtime_role: "independent_reviewer", result: "accepted", findings: [],
     artifact_ref: "review://exact", result_fingerprint: `sha256:${"c".repeat(64)}` }

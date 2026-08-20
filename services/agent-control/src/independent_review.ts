@@ -4,6 +4,10 @@ export const REVIEW_FINDING_PATH_PATTERN =
   "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).{1,500}$" as const
 
 export type ReviewProfile = "low" | "standard" | "high"
+export type ReviewModel = "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"
+export type ReviewReasoningEffort = "low" | "medium" | "high"
+export type ReviewExecutionBudget = { model_turns: number; no_progress_cycles: number;
+  subagents: number; subagent_depth: number; model_visible_tool_bytes: number; elapsed_ms: number }
 export type ReviewResult = "accepted" | "changes_requested" | "inconclusive" | "escalate"
 export type ReviewRiskDimension = "architecture" | "security_auth" | "public_contract" |
   "schema_migration" | "concurrency" | "scheduler_recovery_cancellation" |
@@ -38,6 +42,8 @@ export type ReviewSubject = {
   base_sha: string
   generation: number
   profile: ReviewProfile
+  model: ReviewModel
+  reasoning_effort: ReviewReasoningEffort
   policy_version: typeof REVIEW_POLICY_VERSION
 }
 
@@ -95,6 +101,24 @@ export function selectReviewProfile(paths: string[]): ReviewProfile {
   return "standard"
 }
 
+/** Reviewer execution is deterministic, increasing model capability, reasoning, and budget. */
+export function reviewExecutionProfile(profile: ReviewProfile): {
+  model: ReviewModel; reasoning_effort: ReviewReasoningEffort
+} {
+  if (profile === "low") return { model: "gpt-5.6-luna", reasoning_effort: "low" }
+  if (profile === "standard") return { model: "gpt-5.6-terra", reasoning_effort: "medium" }
+  return { model: "gpt-5.6-sol", reasoning_effort: "high" }
+}
+
+export function reviewExecutionBudget(profile: ReviewProfile): ReviewExecutionBudget {
+  if (profile === "low") return { model_turns: 4, no_progress_cycles: 1, subagents: 0,
+    subagent_depth: 0, model_visible_tool_bytes: 24_000, elapsed_ms: 900_000 }
+  if (profile === "standard") return { model_turns: 8, no_progress_cycles: 2, subagents: 0,
+    subagent_depth: 0, model_visible_tool_bytes: 48_000, elapsed_ms: 1_800_000 }
+  return { model_turns: 16, no_progress_cycles: 2, subagents: 0,
+    subagent_depth: 0, model_visible_tool_bytes: 96_000, elapsed_ms: 3_600_000 }
+}
+
 /** Deterministic material-risk dimensions; missing patch authority promotes to ambiguous. */
 export function reviewRiskDimensions(files: Array<{ path: string; patch?: string | null }> |
   string[]): ReviewRiskDimension[] {
@@ -139,7 +163,8 @@ export function validateReviewReceipt(value: unknown, subject: ReviewSubject,
   }
   const receipt = value as ReviewReceipt
   const expectedKeys = ["artifact_ref", "base_sha", "findings", "generation", "head_sha",
-    "implementation_dispatch_id", "policy_version", "profile", "pull_request_number",
+    "implementation_dispatch_id", "model", "policy_version", "profile", "pull_request_number",
+    "reasoning_effort",
     "repository", "result", "result_fingerprint", "reviewer_dispatch_id",
     "reviewer_thread_id", "reviewer_turn_id", "runtime_role"].sort().join(",")
   if (Object.keys(receipt).sort().join(",") !== expectedKeys ||
@@ -154,8 +179,12 @@ export function validateReviewReceipt(value: unknown, subject: ReviewSubject,
   }
   for (const key of ["implementation_dispatch_id", "reviewer_dispatch_id", "repository",
     "pull_request_number", "head_sha", "base_sha", "generation", "profile",
-    "policy_version"] as const) {
+    "model", "reasoning_effort", "policy_version"] as const) {
     if (receipt[key] !== subject[key]) throw new Error(`review_subject_mismatch:${key}`)
+  }
+  const execution = reviewExecutionProfile(receipt.profile)
+  if (receipt.model !== execution.model || receipt.reasoning_effort !== execution.reasoning_effort) {
+    throw new Error("review_execution_profile_mismatch")
   }
   if (receipt.result === "accepted" && receipt.findings.some((finding) =>
     finding.severity === "blocking")) throw new Error("review_acceptance_has_blockers")
@@ -176,6 +205,8 @@ export function reduceMergeEligibility(evidence: MergeGateEvidence): MergeGateDe
     receipt.head_sha !== pr.head_sha || receipt.base_sha !== pr.base_sha ||
     receipt.policy_version !== evidence.current_policy_version ||
     receipt.profile !== evidence.expected_profile ||
+    receipt.model !== reviewExecutionProfile(evidence.expected_profile).model ||
+    receipt.reasoning_effort !== reviewExecutionProfile(evidence.expected_profile).reasoning_effort ||
     receipt.runtime_role !== "independent_reviewer" ||
     receipt.reviewer_thread_id === evidence.implementation_thread_id) {
     return denied("review_subject_stale_or_invalid")

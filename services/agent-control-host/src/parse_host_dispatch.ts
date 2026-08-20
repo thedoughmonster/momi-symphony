@@ -1,4 +1,6 @@
 import type { HostDispatch } from "./types.ts"
+import { reviewExecutionBudget, reviewExecutionProfile } from
+  "../../agent-control/src/independent_review.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -55,7 +57,8 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
     (body.review_thread_id !== undefined &&
       (typeof body.review_thread_id !== "string" || body.review_thread_id.length < 1 ||
         body.review_thread_id.length > 200)) ||
-    !validReviewSubject(body.review_subject, body.policy_version))) return null
+    !validReviewSubject(body.review_subject, body.policy_version) ||
+    !validReviewBudget(body.budget, body.review_subject))) return null
   return { ...body,
     interaction_mode: body.schema_version === 1 ? "one_shot" : body.interaction_mode,
     thread_name: body.schema_version !== 1
@@ -66,14 +69,17 @@ function validReviewSubject(value: unknown, policyVersion: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
   const keys = ["base_sha", "generation", "head_sha", "implementation_dispatch_id",
-    "policy_version", "profile", "pull_request_number"]
+    "model", "policy_version", "profile", "pull_request_number", "reasoning_effort"]
+  const profile = String(body.profile) as "low" | "standard" | "high"
+  if (!["low", "standard", "high"].includes(profile)) return false
+  const execution = reviewExecutionProfile(profile)
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     uuid.test(String(body.implementation_dispatch_id)) &&
     Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
     /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
     /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
     Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
-    ["low", "standard", "high"].includes(String(body.profile)) &&
+    body.model === execution.model && body.reasoning_effort === execution.reasoning_effort &&
     typeof body.policy_version === "string" && body.policy_version === policyVersion
 }
 
@@ -96,4 +102,16 @@ function validBudget(value: unknown): boolean {
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     keys.every((key) => Number.isSafeInteger(body[key]) && Number(body[key]) >= 0 &&
       Number(body[key]) <= maximum[key])
+}
+
+function validReviewBudget(value: unknown, subject: unknown): boolean {
+  if (!subject || typeof subject !== "object" || Array.isArray(subject) ||
+    !value || typeof value !== "object" || Array.isArray(value)) return false
+  const profile = String((subject as Record<string, unknown>).profile) as
+    "low" | "standard" | "high"
+  if (!["low", "standard", "high"].includes(profile)) return false
+  const actual = value as Record<string, unknown>
+  const expected = reviewExecutionBudget(profile)
+  return Object.keys(actual).sort().join(",") === Object.keys(expected).sort().join(",") &&
+    Object.entries(expected).every(([key, expectedValue]) => actual[key] === expectedValue)
 }

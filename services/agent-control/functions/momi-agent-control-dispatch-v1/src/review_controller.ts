@@ -2,7 +2,8 @@ import type { Sql } from "postgres"
 
 import { getDatabase } from "../../../src/database.ts"
 import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSION,
-  requiresFreshReviewer, selectReviewProfile, type ReviewReceipt,
+  requiresFreshReviewer, reviewExecutionBudget, reviewExecutionProfile, selectReviewProfile,
+  type ReviewReceipt,
   type ReviewCorrectionContext, type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
@@ -26,6 +27,7 @@ type PriorReview = { review_attempt_id: string; head_sha: string; profile: "low"
   policy_version: string; reviewer_dispatch_id: string; reviewer_thread_id: string;
   repository: string; pull_request_number: number; base_sha: string; rules_fingerprint: string;
   risk_dimensions: ReviewRiskDimension[]; findings: Array<Record<string, unknown>> }
+type ApplicableRule = { path: string; fingerprint: string; content: string }
 
 export async function processReviewRequest(input: ReviewRequestInput,
   sql: Sql = getDatabase(), github = new GitHubReviewGateway(),
@@ -41,6 +43,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
     issue.native_ref.project_id !== route.projectId ||
     !route.activeStates.includes(issue.state)) throw new Error("review_issue_context_refused")
   const profile = selectReviewProfile(subject.changedPaths)
+  const execution = reviewExecutionProfile(profile)
   const [applicableRules, headCi] = await Promise.all([
     github.loadApplicableRules(input.repository, subject.baseSha, subject.changedPaths),
     github.loadHeadChecks(input.repository, subject.headSha),
@@ -86,14 +89,15 @@ export async function processReviewRequest(input: ReviewRequestInput,
     reviewer_dispatch_id: "00000000-0000-4000-8000-000000000000",
     repository: subject.repository, pull_request_number: subject.pullRequestNumber,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
-    profile, policy_version: REVIEW_POLICY_VERSION,
+    profile, ...execution, policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: issue.identifier, title: issue.title,
     required_outcome: boundedRequiredOutcome(issue.description) },
-  applicable_rules: applicableRules,
+  applicable_rules: applicableRules.map(({ path, fingerprint }) => ({ path, fingerprint })),
   changed_paths: subject.changedPaths, diff_artifact_ref: subject.diffArtifactRef, ci: headCi,
   unresolved_findings: unresolvedFindings, correction_context: correctionContext })
   const packetFingerprint = stableFingerprint(packet)
-  if (reviewerPrompt(packet, profile, false).volatile.length > 7_500) {
+  const prompt = reviewerPrompt(packet, profile, false, subject.baseSha, applicableRules)
+  if (prompt.stable.length > 8_000 || prompt.volatile.length > 7_500) {
     throw new Error("review_packet_prompt_too_large")
   }
   const rows = await sql<CreatedAttempt[]>`
@@ -120,14 +124,14 @@ export async function processReviewRequest(input: ReviewRequestInput,
   return dispatchCreatedReviewAttempt({ attempt, packet, profile, route,
     launch: { workId: input.work_id, repository: input.repository,
       baseBranch: input.base_branch, pullRequestNumber: subject.pullRequestNumber },
-    subject, reviewWorkspaceId, sql, fetchImpl, reconcile: reconcileAgentState })
+    subject, applicableRules, reviewWorkspaceId, sql, fetchImpl, reconcile: reconcileAgentState })
 }
 
 export async function processReviewStatus(input: ReviewStatusInput,
   sql: Sql = getDatabase()): Promise<Record<string, unknown>> {
   const rows = await sql<Array<Record<string, unknown>>>`
     select state, result, findings, reviewer_dispatch_id::text, head_sha, base_sha,
-      generation, profile, policy_version
+      generation, profile, review_model as model, reasoning_effort, policy_version
     from momi_agent_ops.get_review_status_v1(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id})`
@@ -148,7 +152,8 @@ export async function processMergePreflight(input: MergePreflightInput,
       review.review_attempt_id::text, review.implementation_dispatch_id::text,
       review.reviewer_dispatch_id::text,
       review.repository, review.pull_request_number, review.head_sha, review.base_sha,
-      review.generation, review.profile, review.policy_version, review.reviewer_thread_id,
+      review.generation, review.profile, review.review_model as model,
+      review.reasoning_effort, review.policy_version, review.reviewer_thread_id,
       review.reviewer_turn_id, review.runtime_role, review.result, review.findings,
       review.result_artifact_ref as artifact_ref, review.result_fingerprint
     from momi_agent_ops.dispatches work
@@ -167,6 +172,7 @@ export async function processMergePreflight(input: MergePreflightInput,
     reviewer_dispatch_id: row.reviewer_dispatch_id, repository: row.repository,
     pull_request_number: Number(row.pull_request_number), head_sha: row.head_sha,
     base_sha: row.base_sha, generation: Number(row.generation), profile: row.profile,
+    model: row.model, reasoning_effort: row.reasoning_effort,
     policy_version: row.policy_version, reviewer_thread_id: row.reviewer_thread_id,
     reviewer_turn_id: row.reviewer_turn_id, runtime_role: row.runtime_role,
     result: row.result, findings: row.findings, artifact_ref: row.artifact_ref,
@@ -255,7 +261,8 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
       ${input.reviewer_dispatch_id}::uuid, ${input.capability_token}::uuid,
       ${input.runtime_role}, ${input.thread_id}, ${input.turn_id}, ${repository},
       ${subject.pull_request_number}, ${subject.head_sha}, ${subject.base_sha},
-      ${subject.generation}, ${subject.profile}, ${subject.policy_version}, ${result.result},
+      ${subject.generation}, ${subject.profile}, ${subject.model},
+      ${subject.reasoning_effort}, ${subject.policy_version}, ${result.result},
       ${sql.json(result.findings as never)}::jsonb, ${result.result_fingerprint},
       ${result.artifact_ref}, ${sql.json(input.telemetry)}::jsonb
     ) as recorded`
@@ -315,15 +322,17 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
     github.loadHeadChecks(repository, subject.headSha),
   ])
   const rulesFingerprint = stableFingerprint(applicableRules)
+  const execution = reviewExecutionProfile(nextProfile)
   const packet = buildBoundedReviewerPacket({ subject: {
     implementation_dispatch_id: input.review_subject.implementation_dispatch_id,
     reviewer_dispatch_id: "00000000-0000-4000-8000-000000000000",
     repository, pull_request_number: subject.pullRequestNumber,
     head_sha: subject.headSha, base_sha: subject.baseSha, generation: 1,
-    profile: nextProfile, policy_version: REVIEW_POLICY_VERSION,
+    profile: nextProfile, ...execution, policy_version: REVIEW_POLICY_VERSION,
   }, issue: { identifier: issue.identifier, title: issue.title,
     required_outcome: boundedRequiredOutcome(issue.description) },
-  applicable_rules: applicableRules, changed_paths: subject.changedPaths,
+  applicable_rules: applicableRules.map(({ path, fingerprint }) => ({ path, fingerprint })),
+  changed_paths: subject.changedPaths,
   diff_artifact_ref: subject.diffArtifactRef, ci: headCi })
   const attempt = await createEscalatedAttempt(sql, input, stableFingerprint(packet),
     subject.diffArtifactRef, rulesFingerprint, subject.riskDimensions)
@@ -342,7 +351,7 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
   return dispatchCreatedReviewAttempt({ attempt, packet, profile: nextProfile, route,
     launch: { workId: input.review_subject.implementation_dispatch_id,
       repository, baseBranch: route.baseBranch, pullRequestNumber: subject.pullRequestNumber },
-    subject, reviewWorkspaceId: null, sql, fetchImpl, reconcile })
+    subject, applicableRules, reviewWorkspaceId: null, sql, fetchImpl, reconcile })
 }
 
 async function createEscalatedAttempt(sql: Sql, input: ReviewTerminalInput,
@@ -368,10 +377,11 @@ export function promoteReviewProfile(profile: "low" | "standard" | "high"):
 async function dispatchCreatedReviewAttempt(args: {
   attempt: CreatedAttempt; packet: Record<string, unknown>;
   profile: "low" | "standard" | "high"; route: ReviewRoute; launch: ReviewLaunch;
-  subject: GitHubReviewSubject; reviewWorkspaceId: string | null; sql: Sql;
+  subject: GitHubReviewSubject; applicableRules: ApplicableRule[];
+  reviewWorkspaceId: string | null; sql: Sql;
   fetchImpl: typeof fetch; reconcile: typeof reconcileAgentState
 }): Promise<Record<string, unknown>> {
-  const { attempt, packet, profile, route, launch, subject, reviewWorkspaceId,
+  const { attempt, packet, profile, route, launch, subject, applicableRules, reviewWorkspaceId,
     sql, fetchImpl, reconcile } = args
   if (!attempt.review_attempt_id || !attempt.reviewer_dispatch_id ||
     !attempt.reviewer_capability_token || !attempt.generation) {
@@ -383,8 +393,12 @@ async function dispatchCreatedReviewAttempt(args: {
   await sql`update momi_agent_ops.review_attempts set
     packet_fingerprint = ${exactPacketFingerprint}, updated_at = now()
     where review_attempt_id = ${attempt.review_attempt_id}::uuid and state = 'reserved'`
-  const prompt = reviewerPrompt(exactPacket, profile, Boolean(attempt.reviewer_thread_id))
-  if (prompt.volatile.length > 8_000) throw new Error("review_packet_prompt_too_large")
+  const execution = reviewExecutionProfile(profile)
+  const prompt = reviewerPrompt(exactPacket, profile, Boolean(attempt.reviewer_thread_id),
+    subject.baseSha, applicableRules)
+  if (prompt.stable.length > 8_000 || prompt.volatile.length > 8_000) {
+    throw new Error("review_packet_prompt_too_large")
+  }
   const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
   if (!secret) throw new Error("review_host_secret_unconfigured")
   const hostUrl = new URL(route.url)
@@ -406,12 +420,12 @@ async function dispatchCreatedReviewAttempt(args: {
       stable_instruction: prompt.stable, volatile_context: prompt.volatile,
       stable_prefix_fingerprint: stableFingerprint(prompt.stable),
       context_fingerprint: stableFingerprint(exactPacket), policy_version: REVIEW_POLICY_VERSION,
-      budget: reviewBudget(profile), runtime_role: "independent_reviewer",
+      budget: reviewExecutionBudget(profile), runtime_role: "independent_reviewer",
       ...(attempt.reviewer_thread_id ? { review_thread_id: attempt.reviewer_thread_id } : {}),
       review_workspace_id: reviewWorkspaceId ?? attempt.reviewer_dispatch_id,
         review_subject: { implementation_dispatch_id: launch.workId,
         pull_request_number: launch.pullRequestNumber, head_sha: subject.headSha,
-        base_sha: subject.baseSha, generation: attempt.generation, profile,
+        base_sha: subject.baseSha, generation: attempt.generation, profile, ...execution,
         policy_version: REVIEW_POLICY_VERSION } }), signal: AbortSignal.timeout(10_000) })
   } catch {
     await markAmbiguousReviewStart(sql, attempt)
@@ -490,8 +504,16 @@ async function routeRepository(dispatchId: string, sql: Sql): Promise<string> {
 }
 
 function reviewerPrompt(packet: Record<string, unknown>, profile: string,
-  reverification: boolean): {
+  reverification: boolean, protectedBaseSha: string, applicableRules: ApplicableRule[]): {
   stable: string; volatile: string } {
+  const protectedRules = applicableRules.map((rule) => {
+    if (stableFingerprint(rule.content) !== rule.fingerprint) {
+      throw new Error("review_rule_fingerprint_mismatch")
+    }
+    return [`Protected-base rule: ${protectedBaseSha}:${rule.path}`,
+      `Rule fingerprint: ${rule.fingerprint}`, "<protected-base-rule>", rule.content,
+      "</protected-base-rule>"].join("\n")
+  }).join("\n")
   return { stable: [
     reverification
       ? "Review the exact full subject. In bounded_reverification mode, focus on the mechanically proven finding correction; in fresh_recovery mode, perform a fresh full substantive review."
@@ -503,6 +525,7 @@ function reviewerPrompt(packet: Record<string, unknown>, profile: string,
     "Do not request or use the implementation transcript, author reasoning, or sibling-review prose.",
     "Return accepted, changes_requested, inconclusive, or escalate with compact typed findings.",
     "Acceptance is forbidden when any blocking finding remains.",
+    protectedRules,
   ].join("\n"), volatile: `Review mode: host_attested\nReview profile: ${profile}\nExact reviewer packet:\n${JSON.stringify(packet)}` }
 }
 
@@ -527,15 +550,6 @@ function mergeDecision(input: MergePreflightInput, subject: GitHubReviewSubject,
       bypass_possible: facts.bypassPossible }, current_policy_version: REVIEW_POLICY_VERSION,
     expected_profile: selectReviewProfile(subject.changedPaths),
     implementation_thread_id: String(row.implementation_thread_id ?? "") })
-}
-
-function reviewBudget(profile: string): Record<string, number> {
-  if (profile === "low") return { model_turns: 4, no_progress_cycles: 1, subagents: 0,
-    subagent_depth: 0, model_visible_tool_bytes: 24_000, elapsed_ms: 900_000 }
-  if (profile === "standard") return { model_turns: 8, no_progress_cycles: 2, subagents: 0,
-    subagent_depth: 0, model_visible_tool_bytes: 48_000, elapsed_ms: 1_800_000 }
-  return { model_turns: 16, no_progress_cycles: 2, subagents: 0,
-    subagent_depth: 0, model_visible_tool_bytes: 96_000, elapsed_ms: 3_600_000 }
 }
 
 async function priorChangesRequestedReview(sql: Sql,

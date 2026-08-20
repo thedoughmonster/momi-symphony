@@ -174,7 +174,7 @@ export class GitHubReviewGateway {
   }
 
   async loadApplicableRules(repository: string, protectedRevisionSha: string,
-    changedPaths: string[]): Promise<Array<{ path: string; fingerprint: string }>> {
+    changedPaths: string[]): Promise<Array<{ path: string; fingerprint: string; content: string }>> {
     if (!/^[0-9a-f]{40}$/.test(protectedRevisionSha)) {
       throw new Error("review_rules_revision_invalid")
     }
@@ -185,7 +185,9 @@ export class GitHubReviewGateway {
         candidates.add(`${parts.slice(0, depth).join("/")}/AGENTS.md`)
       }
     }
-    const rules: Array<{ path: string; fingerprint: string }> = []
+    if (candidates.size > 64) throw new Error("review_rules_unbounded")
+    const rules: Array<{ path: string; fingerprint: string; content: string }> = []
+    let totalContentLength = 0
     for (const path of [...candidates].sort()) {
       const encodedPath = path.split("/").map(encodeURIComponent).join("/")
       let payload: Record<string, unknown>
@@ -199,8 +201,16 @@ export class GitHubReviewGateway {
       const encoded = text(payload.content).replace(/\s/g, "")
       if (payload.encoding !== "base64" || !encoded) throw new Error("review_rule_malformed")
       let content: string
-      try { content = atob(encoded) } catch { throw new Error("review_rule_malformed") }
-      rules.push({ path, fingerprint: stableFingerprint(content) })
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(
+          Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)))
+      } catch { throw new Error("review_rule_malformed") }
+      if (!content.trim() || content.length > 4_000 || content.includes("\0")) {
+        throw new Error("review_rule_malformed")
+      }
+      totalContentLength += content.length
+      if (totalContentLength > 6_000) throw new Error("review_rules_unbounded")
+      rules.push({ path, fingerprint: stableFingerprint(content), content })
     }
     if (!rules.some((rule) => rule.path === "AGENTS.md")) {
       throw new Error("review_root_rule_missing")
