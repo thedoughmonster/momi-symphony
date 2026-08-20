@@ -1,10 +1,11 @@
-import type { DispatchInput, SchedulerPumpInput, TerminalInput } from "./types.ts"
+import type { DispatchInput, LifecycleEvidenceInput, SchedulerPumpInput,
+  TerminalInput } from "./types.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export function parseDispatchInput(
   value: unknown,
-): DispatchInput | SchedulerPumpInput | TerminalInput | null {
+): DispatchInput | LifecycleEvidenceInput | SchedulerPumpInput | TerminalInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const body = value as Record<string, unknown>
   if (body.event === "scheduler_pump") {
@@ -27,6 +28,7 @@ export function parseDispatchInput(
       ? { work_id: body.work_id as string, capability_token: body.capability_token as string }
       : null
   }
+  if (body.event === "lifecycle_evidence") return parseLifecycleEvidence(body)
   if (body.event !== "terminal" || typeof body.thread_id !== "string" ||
     typeof body.turn_id !== "string" || typeof body.archived_at !== "string" ||
     !["ready", "unready", "failed"].includes(String(body.readiness_result)) ||
@@ -45,6 +47,28 @@ export function parseDispatchInput(
     terminal_disposition: body.terminal_disposition as TerminalInput["terminal_disposition"],
     archived_at: body.archived_at, summary: String(body.summary ?? ""),
     telemetry: body.telemetry as TerminalInput["telemetry"] }
+}
+
+function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenceInput | null {
+  const required = ["base_branch", "branch_name", "capability_token", "event", "phase",
+    "pull_request_number", "repository", "revision_sha", "status", "thread_id", "turn_id",
+    "work_id"]
+  const optional = ["merge_sha", "workflow_run_id"].filter((key) => body[key] !== undefined)
+  if (Object.keys(body).sort().join(",") !== [...required, ...optional].sort().join(",") ||
+    !["validating", "reviewing", "releasing"].includes(String(body.phase)) ||
+    !["pending", "running", "succeeded", "failed"].includes(String(body.status)) ||
+    typeof body.thread_id !== "string" || typeof body.turn_id !== "string" ||
+    typeof body.repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repository) ||
+    typeof body.base_branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.base_branch) ||
+    typeof body.branch_name !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.branch_name) ||
+    !Number.isSafeInteger(body.pull_request_number) || Number(body.pull_request_number) < 1 ||
+    !/^[0-9a-f]{40}$/.test(String(body.revision_sha)) ||
+    (body.merge_sha !== undefined && !/^[0-9a-f]{40}$/.test(String(body.merge_sha))) ||
+    (body.workflow_run_id !== undefined &&
+      (typeof body.workflow_run_id !== "string" || body.workflow_run_id.length > 160))) return null
+  if (body.phase === "releasing" && body.merge_sha !== body.revision_sha) return null
+  return body as LifecycleEvidenceInput
 }
 
 function validTelemetry(value: unknown): boolean {

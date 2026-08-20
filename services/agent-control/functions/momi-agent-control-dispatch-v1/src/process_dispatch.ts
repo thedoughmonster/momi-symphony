@@ -8,6 +8,7 @@ export async function processDispatch(
   if (!work) return { ok: true, disposition: "duplicate" }
   try {
     if (work.delivery_phase === "host") {
+      await dependencies.project(work.work_id)
       const host = await dependencies.callHost(work, input.capability_token)
       if (!await dependencies.hostAccepted(input, host)) {
         throw new Error("host_acceptance_record_failed")
@@ -34,6 +35,9 @@ export async function processDispatch(
       work.delivery_phase = "writeback"
     }
     const commentId = await dependencies.reconcile(work)
+    if (!work.rejection_code && !["cancel-run", "recover-discovery"].includes(work.action)) {
+      await dependencies.project(work.work_id)
+    }
     const hasRun = !["cancel-run", "recover-discovery"].includes(work.action) &&
       work.rejection_code === null &&
       work.thread_id !== null
@@ -51,6 +55,9 @@ export async function processDispatch(
     const code = (error instanceof Error ? error.message : "dispatch_failed")
       .replace(/[^a-z0-9_]/gi, "_").slice(0, 120)
     await dependencies.retry(input, code)
+    if (!work.rejection_code && !["cancel-run", "recover-discovery"].includes(work.action)) {
+      await dependencies.project(work.work_id).catch(() => undefined)
+    }
     throw error
   }
 }

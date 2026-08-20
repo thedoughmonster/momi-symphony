@@ -17,13 +17,15 @@ test("terminal completion persists reconciled Linear evidence", async () => {
     () => Promise.resolve({ issue_id: "issue-1", issue_identifier: "MOX-151",
       action: "cleanup", linear_comment_id: null }),
     () => Promise.resolve("comment-1"),
-    (_input, commentId) => { recordedComment = commentId; return Promise.resolve(true) })
+    (_input, commentId) => { recordedComment = commentId; return Promise.resolve(true) },
+    () => Promise.resolve())
   assert.deepEqual(result, { ok: true, disposition: "completed" })
   assert.equal(recordedComment, "comment-1")
 })
 
 test("an unbound terminal callback remains retryable", async () => {
   await assert.rejects(processTerminal(terminal, () => Promise.resolve(null),
-    () => Promise.resolve("comment-1"), () => Promise.resolve(true)),
+    () => Promise.resolve("comment-1"), () => Promise.resolve(true),
+    () => Promise.resolve()),
   /terminal_record_refused/)
 })

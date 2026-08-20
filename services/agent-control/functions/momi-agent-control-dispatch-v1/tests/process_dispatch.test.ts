@@ -27,7 +27,8 @@ test("one claimed dispatch creates one host task and replay is duplicate", async
     cancellationRecorded: () => Promise.resolve(true),
     recoveryRecorded: () => Promise.resolve(true),
     writeback: (_input: DispatchInput, _comment: string | null, marker: boolean) => {
-      hasRun = marker; return Promise.resolve(true) }, retry: () => Promise.resolve(true) }
+      hasRun = marker; return Promise.resolve(true) }, retry: () => Promise.resolve(true),
+    project: () => Promise.resolve() }
   assert.deepEqual(await processDispatch(input, dependencies),
     { ok: true, disposition: "active", thread_id: "thread-1" })
   assert.deepEqual(await processDispatch(input, dependencies),
@@ -52,7 +53,7 @@ test("unknown project writes an explanation without creating a task", async () =
     recoveryRecorded: () => Promise.resolve(true),
     writeback: (_input, _comment, hasRun) => {
       marker = hasRun; return Promise.resolve(true) },
-    retry: () => Promise.resolve(true) })
+    retry: () => Promise.resolve(true), project: () => Promise.resolve() })
   assert.equal(result.disposition, "rejected")
   assert.equal(hostCount, 0); assert.equal(marker, false)
 })
@@ -69,7 +70,7 @@ test("delivery failure releases the durable claim for retry", async () => {
     cancellationRecorded: () => Promise.resolve(true),
     recoveryRecorded: () => Promise.resolve(true),
     writeback: () => Promise.resolve(true), retry: () => {
-      retries += 1; return Promise.resolve(true) } }))
+      retries += 1; return Promise.resolve(true) }, project: () => Promise.resolve() }))
   assert.equal(retries, 1)
 })
 
@@ -87,7 +88,8 @@ test("active cancellation records the host result without adding has-run", async
       recorded = true; return Promise.resolve(true) },
     recoveryRecorded: () => Promise.resolve(true),
     reconcile: () => Promise.resolve("comment-3"), writeback: (_input, _comment, hasRun) => {
-      marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true) })
+      marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true),
+    project: () => Promise.resolve() })
   assert.equal(result.disposition, "requested")
   assert.equal(recorded, true); assert.equal(marker, false)
 })

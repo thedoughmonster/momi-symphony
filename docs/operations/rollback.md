@@ -34,3 +34,9 @@ For MOX-232, stop new Slack sends first with
 exactly the decision-alert route to `disabled` and clears only its acceptance
 issue allowlist. It retains Linear decision identity, lifecycle, attempts,
 receipts, and ambiguous-delivery evidence and does not touch order-alert data.
+
+For MOX-258, redeploy the previous dispatch runtime after stopping new scheduler
+claims. Preserve all lifecycle correlation, receipt, and projection audit fields;
+never remove an Agent State label as a trigger or reconstruct run state from
+Linear. Existing terminal, cancellation, and recovery identities remain
+authoritative.

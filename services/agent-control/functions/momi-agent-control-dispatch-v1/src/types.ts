@@ -30,6 +30,21 @@ export type TerminalInput = DispatchInput & {
   telemetry: AttemptTelemetry
 }
 
+export type LifecycleEvidenceInput = DispatchInput & {
+  event: "lifecycle_evidence"
+  thread_id: string
+  turn_id: string
+  repository: string
+  base_branch: string
+  branch_name: string
+  pull_request_number: number
+  phase: "validating" | "reviewing" | "releasing"
+  status: "pending" | "running" | "succeeded" | "failed"
+  revision_sha: string
+  merge_sha?: string
+  workflow_run_id?: string
+}
+
 export type AttemptTelemetry = {
   policy_version: string
   stable_prefix_fingerprint: string
@@ -85,7 +100,7 @@ export type TerminalContext = {
   linear_comment_id: string | null
 }
 
-export type LinearLabel = { id: string; name: string }
+export type LinearLabel = { id: string; name: string; parentName: string | null }
 
 export type LinearWorkflowState = {
   id: string
@@ -113,4 +128,5 @@ export type DispatchDependencies = {
   writeback: (input: DispatchInput, commentId: string | null,
     hasRun: boolean) => Promise<boolean>
   retry: (input: DispatchInput, code: string) => Promise<boolean>
+  project: (dispatchId: string) => Promise<unknown>
 }

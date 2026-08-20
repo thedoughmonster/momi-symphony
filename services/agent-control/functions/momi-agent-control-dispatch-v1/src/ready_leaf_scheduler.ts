@@ -7,15 +7,18 @@ import {
   claimSchedulerCandidate,
   heartbeatSchedulerSlots,
   listSchedulerCandidateIds,
+  listProjectableAgentStateDispatchIds,
   listSchedulerRoutes,
   markSchedulerCandidateStale,
   reconcileSchedulerCandidate,
   recordSchedulerProviderRetry,
   recordSchedulerProviderSuccess,
   type SchedulerCandidate,
+  type SchedulerClaim,
   type SchedulerLeader,
   type SchedulerRoute,
 } from "./scheduler_database.ts"
+import { reconcileAgentState } from "./agent_state_projection.ts"
 import type { NormalizedLinearIssue } from "./linear_issue_adapter.ts"
 import type { SchedulerPumpInput } from "./types.ts"
 
@@ -26,11 +29,13 @@ export type ReadyLeafSchedulerDependencies = {
   fetchCandidates: (route: SchedulerRoute) => Promise<NormalizedLinearIssue[]>
   refresh: (route: SchedulerRoute, issueIds: readonly string[]) => Promise<NormalizedLinearIssue[]>
   candidateIds: (route: SchedulerRoute) => Promise<string[]>
+  projectable: (route: SchedulerRoute) => Promise<string[]>
   reconcile: (route: SchedulerRoute, issue: NormalizedLinearIssue) => Promise<SchedulerCandidate>
   stale: (route: SchedulerRoute, issueId: string) => Promise<boolean>
   claim: (route: SchedulerRoute, ownerId: string, releaseSha: string,
     leader: SchedulerLeader,
-    candidate: SchedulerCandidate) => Promise<boolean>
+    candidate: SchedulerCandidate) => Promise<SchedulerClaim | null>
+  project: (dispatchId: string) => Promise<unknown>
   heartbeat: (activeWorkIds: readonly string[]) => Promise<void>
   providerRetry: (routeKey: string, errorCode: string) => Promise<void>
   providerSuccess: (routeKey: string) => Promise<void>
@@ -63,9 +68,11 @@ function defaultDependencies(): ReadyLeafSchedulerDependencies {
     ),
     refresh: (route, issueIds) => refreshLinearIssues(issueIds, adapterProfile(route)),
     candidateIds: listSchedulerCandidateIds,
+    projectable: listProjectableAgentStateDispatchIds,
     reconcile: reconcileSchedulerCandidate,
     stale: markSchedulerCandidateStale,
     claim: claimSchedulerCandidate,
+    project: reconcileAgentState,
     heartbeat: heartbeatSchedulerSlots,
     providerRetry: recordSchedulerProviderRetry,
     providerSuccess: recordSchedulerProviderSuccess,
@@ -135,9 +142,13 @@ async function processEnabledRoute(
     }
     const candidate = await dependencies.reconcile(route, fresh)
     if (candidate.generationState !== "eligible" || !candidate.schedulerEligible) continue
-    if (await dependencies.claim(
+    const claim = await dependencies.claim(
       route, ownerId, releaseSha, leader, candidate,
-    )) claimed += 1
+    )
+    if (claim) {
+      claimed += 1
+      await dependencies.project(claim.dispatchId)
+    }
   }
   return { observed: fetched.length, claimed }
 }
@@ -165,6 +176,9 @@ export async function processReadyLeafSchedulerPump(
         )
         observed += receipt.observed
         claimed += receipt.claimed
+      }
+      for (const dispatchId of await dependencies.projectable(route)) {
+        await dependencies.project(dispatchId)
       }
       await dependencies.providerSuccess(route.routeKey)
     } catch (error) {

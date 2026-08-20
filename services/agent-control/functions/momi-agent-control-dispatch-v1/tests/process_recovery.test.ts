@@ -21,7 +21,8 @@ test("recovery writes pending status, calls only recovery, and never adds has-ru
     recoveryRecorded: () => { recorded = true; return Promise.resolve(true) },
     reconcile: () => { reconciles += 1; return Promise.resolve("comment") },
     writeback: (_input, _comment, hasRun) => {
-      marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true) })
+      marker = hasRun; return Promise.resolve(true) }, retry: () => Promise.resolve(true),
+    project: () => Promise.resolve() })
   assert.deepEqual(result, { ok: true, disposition: "recovered" })
   assert.equal(reconciles, 2); assert.equal(recorded, true); assert.equal(marker, false)
 })
@@ -38,7 +39,8 @@ test("mapping mismatch is written back without any host mutation", async () => {
     callRecovery: () => { hostCalls += 1; return Promise.reject(new Error("unexpected")) },
     hostAccepted: () => Promise.resolve(true), cancellationRecorded: () => Promise.resolve(true),
     recoveryRecorded: () => Promise.resolve(true), reconcile: () => Promise.resolve("comment"),
-    writeback: () => Promise.resolve(true), retry: () => Promise.resolve(true) })
+    writeback: () => Promise.resolve(true), retry: () => Promise.resolve(true),
+    project: () => Promise.resolve() })
   assert.deepEqual(result, { ok: true, disposition: "mapping_mismatch" })
   assert.equal(hostCalls, 0)
 })
