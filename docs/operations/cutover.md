@@ -25,7 +25,10 @@
    random bytes, and a root-owned mode-0600 `/etc/momi-agent-control/host.env`.
    Keep `/var/lib/momi-agent-control` mode 0700 and owned only by the host.
    Keep `/var/lib/momi-agent-reviewer` mode 0750 and owned by the reviewer and
-   narrow review group; provision reviewer auth/config only beneath its
+   narrow review group. Keep `codex-home/app-server-control` owned by the
+   reviewer and keep `repository` and `workspaces` owned by the trusted host;
+   all three use the narrow review group and mode 2770 so host-created content
+   inherits that group. Provision reviewer auth/config only beneath its
    `codex-home`, and create a private canonical clone at `repository`. Install the exact
    protected release root-owned at `/opt/momi-symphony/current` and install the
    reviewed Codex binary root-owned at `/usr/local/bin/codex`. Grant

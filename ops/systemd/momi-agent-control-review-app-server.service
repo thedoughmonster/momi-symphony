@@ -11,7 +11,8 @@ Environment=HOME=/var/lib/momi-agent-reviewer
 Environment=CODEX_HOME=/var/lib/momi-agent-reviewer/codex-home
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/var/lib/momi-agent-reviewer
-ExecStartPre=/usr/bin/install -d -m 0770 /var/lib/momi-agent-reviewer/codex-home/app-server-control /var/lib/momi-agent-reviewer/repository /var/lib/momi-agent-reviewer/workspaces
+ExecStartPre=+/usr/bin/install -d -o momi-agent-reviewer -g momi-agent-review -m 2770 /var/lib/momi-agent-reviewer/codex-home/app-server-control
+ExecStartPre=+/usr/bin/install -d -o momi-agent-control -g momi-agent-review -m 2770 /var/lib/momi-agent-reviewer/repository /var/lib/momi-agent-reviewer/workspaces
 ExecStart=/usr/local/bin/codex -c features.code_mode_host=true app-server --listen unix://
 Restart=on-failure
 RestartSec=5
