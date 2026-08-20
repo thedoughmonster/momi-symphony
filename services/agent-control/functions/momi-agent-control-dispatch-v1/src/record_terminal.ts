@@ -1,15 +1,19 @@
+import type { Sql } from "postgres"
+
 import { getDatabase } from "../../../src/database.ts"
 import type { TerminalContext, TerminalInput } from "./types.ts"
 
-export async function recordTerminal(input: TerminalInput): Promise<TerminalContext | null> {
-  const sql = getDatabase()
+export async function recordTerminal(
+  input: TerminalInput,
+  sql: Sql = getDatabase(),
+): Promise<TerminalContext | null> {
   const rows = await sql<TerminalContext[]>`
     select issue_id::text, issue_identifier, action, linear_comment_id::text
     from momi_agent_ops.record_terminal_v3(
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id}, ${input.readiness_result},
       ${input.terminal_disposition}, ${input.summary}, ${input.archived_at}::timestamptz,
-      ${JSON.stringify(input.telemetry)}::jsonb
+      ${sql.json(input.telemetry)}::jsonb
     )
   `
   return rows[0] ?? null
