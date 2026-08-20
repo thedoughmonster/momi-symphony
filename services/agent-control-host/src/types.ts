@@ -155,6 +155,23 @@ export type HostRecord = {
   updatedAt: string
 }
 
+export type SealedReviewCredentials = {
+  version: 1
+  algorithm: "aes-256-gcm"
+  initializationVector: string
+  authenticationTag: string
+  ciphertext: string
+}
+
+export type StoredHostRecord = Omit<HostRecord,
+  "capabilityToken" | "threadId" | "turnId" | "reviewSubject"> & {
+  capabilityToken?: string
+  threadId?: string | null
+  turnId?: string | null
+  reviewSubject?: HostReviewSubject
+  sealedReviewCredentials?: SealedReviewCredentials
+}
+
 export type AppServerClient = {
   connect(): Promise<void>
   request<T>(method: string, params: unknown): Promise<T>

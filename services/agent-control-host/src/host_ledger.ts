@@ -1,4 +1,6 @@
-import type { HostCancellationRecord, HostRecord, HostRecoveryRecord, TerminalSummary } from "./types.ts"
+import { ReviewCredentialBoundary } from "./review_credential_boundary.ts"
+import type { HostCancellationRecord, HostRecord, HostRecoveryRecord, StoredHostRecord,
+  TerminalSummary } from "./types.ts"
 import { readHostLedger } from "./read_host_ledger.ts"
 import { writeHostLedger } from "./write_host_ledger.ts"
 
@@ -8,15 +10,25 @@ export class HostLedger {
   private recoveries = new Map<string, HostRecoveryRecord>()
   private queue: Promise<void> = Promise.resolve()
   private readonly path: string
-  constructor(path: string) { this.path = path }
+  private readonly reviewCredentials?: ReviewCredentialBoundary
+  constructor(path: string, reviewCredentials?: ReviewCredentialBoundary) {
+    this.path = path; this.reviewCredentials = reviewCredentials
+  }
   async load(): Promise<void> {
     const parsed = await readHostLedger(this.path)
-    for (const record of parsed.records ?? []) this.records.set(record.workId, record)
+    let rewriteLegacyReviewCredentials = false
+    for (const stored of parsed.records ?? []) {
+      const record = this.restore(stored)
+      rewriteLegacyReviewCredentials ||= record.runtimeRole === "independent_reviewer" &&
+        !stored.sealedReviewCredentials
+      this.records.set(record.workId, record)
+    }
     for (const record of parsed.cancellations ?? []) {
       record.targetWorkIds ??= record.targetWorkId ? [record.targetWorkId] : []
       this.cancellations.set(record.workId, record)
     }
     for (const record of parsed.recoveries ?? []) this.recoveries.set(record.workId, record)
+    if (rewriteLegacyReviewCredentials) await this.persist()
   }
   get(workId: string): HostRecord | null { return this.records.get(workId) ?? null }
   getCancellation(workId: string): HostCancellationRecord | null {
@@ -87,6 +99,9 @@ export class HostLedger {
       "stable_prefix_fingerprint" | "context_fingerprint" | "runtime_role" |
       "review_subject" | "review_workspace_id">,
   ): Promise<HostRecord> {
+    if (dispatch?.runtime_role === "independent_reviewer" && !this.reviewCredentials) {
+      throw new Error("review_credential_boundary_required")
+    }
     const existing = this.records.get(workId)
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("host_idempotency_conflict")
@@ -172,8 +187,32 @@ export class HostLedger {
     const record = this.records.get(workId); if (!record) throw new Error("host_record_missing")
     return record }
   private async persist(): Promise<void> {
-    this.queue = this.queue.then(() => writeHostLedger(this.path, [...this.records.values()],
+    this.queue = this.queue.then(() => writeHostLedger(this.path,
+      [...this.records.values()].map((record) => this.store(record)),
       [...this.cancellations.values()], [...this.recoveries.values()]))
     await this.queue
+  }
+  private store(record: HostRecord): StoredHostRecord {
+    if (record.runtimeRole !== "independent_reviewer") return record
+    if (!this.reviewCredentials || !record.reviewSubject) {
+      throw new Error("review_credential_boundary_required")
+    }
+    const { capabilityToken, threadId, turnId, reviewSubject, ...durable } = record
+    return { ...durable, sealedReviewCredentials: this.reviewCredentials.seal(
+      record.workId, record.fingerprint,
+      { capabilityToken, threadId, turnId, reviewSubject }) }
+  }
+  private restore(stored: StoredHostRecord): HostRecord {
+    if (stored.runtimeRole !== "independent_reviewer") return stored as HostRecord
+    if (!this.reviewCredentials) throw new Error("review_credential_boundary_required")
+    if (stored.sealedReviewCredentials) {
+      const credentials = this.reviewCredentials.open(
+        stored.workId, stored.fingerprint, stored.sealedReviewCredentials)
+      const { sealedReviewCredentials: _sealed, ...durable } = stored
+      return { ...durable, ...credentials } as HostRecord
+    }
+    if (!stored.capabilityToken || stored.threadId === undefined || stored.turnId === undefined ||
+      !stored.reviewSubject) throw new Error("review_credential_envelope_invalid")
+    return stored as HostRecord
   }
 }

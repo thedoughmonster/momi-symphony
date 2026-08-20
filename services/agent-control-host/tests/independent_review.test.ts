@@ -1,8 +1,13 @@
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 
 import { extractReviewResult } from "../src/extract_review_result.ts"
+import { HostLedger } from "../src/host_ledger.ts"
 import { parseHostDispatch } from "../src/parse_host_dispatch.ts"
+import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
 import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostDispatch } from "../src/types.ts"
 
@@ -150,4 +155,75 @@ test("review result validation computes provenance and rejects blocking acceptan
     type: "agentMessage", text: JSON.stringify({ result: "changes_requested",
       findings: [{ ...finding, path: "src\\a.ts" }],
       artifact_ref: "review://attempt/4" }) }] }), null)
+})
+
+test("full-access implementation execution cannot obtain sealed reviewer credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-review-credential-boundary-"))
+  const ledgerPath = join(directory, "ledger.json")
+  const capabilityToken = "reviewer-capability-not-readable"
+  const threadId = "reviewer-thread-not-readable"
+  const turnId = "reviewer-turn-not-readable"
+  try {
+    await assert.rejects(new HostLedger(join(directory, "unsealed-ledger.json"))
+      .reserve(dispatch.work_id, "review-fingerprint", capabilityToken, "one_shot", {
+        runtime_role: "independent_reviewer", review_subject: dispatch.review_subject,
+      }), /review_credential_boundary_required/)
+    const ledger = new HostLedger(ledgerPath,
+      new ReviewCredentialBoundary(Buffer.alloc(32, 11)))
+    await ledger.reserve(dispatch.work_id, "review-fingerprint", capabilityToken,
+      "one_shot", { runtime_role: "independent_reviewer",
+        review_subject: dispatch.review_subject,
+        review_workspace_id: dispatch.review_workspace_id })
+    await ledger.accept(dispatch.work_id, threadId, turnId)
+
+    let implementationRead = ""
+    const implementationRequests: Array<{ method: string; params: unknown }> = []
+    const implementationClient = { connect: async () => undefined,
+      onNotification: () => undefined,
+      request: async <T>(method: string, params: unknown): Promise<T> => {
+        implementationRequests.push({ method, params })
+        if (method === "turn/start") implementationRead = await readFile(ledgerPath, "utf8")
+        return (method === "thread/start" ? { thread: { id: "implementation-thread" } }
+          : method === "turn/start" ? { turn: { id: "implementation-turn" } } : {}) as T
+      } } as AppServerClient
+    const implementation = { ...dispatch, schema_version: 3 as const,
+      runtime_role: undefined, review_subject: undefined, review_workspace_id: undefined,
+      work_id: "00000000-0000-4000-8000-000000000010",
+      capability_token: "implementation-capability", thread_name: "MOX-260 · execute-run" }
+    await startHostTask(implementationClient, { workspaceRoot: "/workspace",
+      repository: dispatch.repository, baseBranch: "main" }, implementation)
+
+    const turn = implementationRequests.find((request) => request.method === "turn/start")
+      ?.params as Record<string, unknown>
+    assert.deepEqual(turn.sandboxPolicy, { type: "dangerFullAccess" })
+    for (const credential of [capabilityToken, threadId, turnId,
+      dispatch.review_subject!.implementation_dispatch_id,
+      dispatch.review_subject!.head_sha, dispatch.review_subject!.base_sha]) {
+      assert.equal(implementationRead.includes(credential), false)
+      assert.equal(JSON.stringify(turn).includes(credential), false)
+    }
+    const stored = JSON.parse(implementationRead).records[0] as Record<string, unknown>
+    assert.equal("capabilityToken" in stored, false)
+    assert.equal("threadId" in stored, false)
+    assert.equal("turnId" in stored, false)
+    assert.equal("reviewSubject" in stored, false)
+    assert.equal(typeof stored.sealedReviewCredentials, "object")
+    const restartedLedger = new HostLedger(ledgerPath,
+      new ReviewCredentialBoundary(Buffer.alloc(32, 11)))
+    await restartedLedger.load()
+    assert.equal(restartedLedger.get(dispatch.work_id)?.capabilityToken, capabilityToken)
+    assert.equal(restartedLedger.get(dispatch.work_id)?.threadId, threadId)
+    assert.equal(restartedLedger.get(dispatch.work_id)?.turnId, turnId)
+    assert.deepEqual(restartedLedger.get(dispatch.work_id)?.reviewSubject,
+      dispatch.review_subject)
+    const unit = await readFile(new URL("../../../ops/systemd/momi-agent-control-host.service",
+      import.meta.url), "utf8")
+    assert.match(unit, /^User=momi-agent-control$/m)
+    assert.match(unit,
+      /^LoadCredential=momi-review-ledger-key:\/etc\/momi-agent-control\/review-ledger-key$/m)
+    assert.match(unit, /^StateDirectory=momi-agent-control$/m)
+    assert.match(unit, /^UMask=0077$/m)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

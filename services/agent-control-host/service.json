@@ -22,7 +22,7 @@
   },
   "database": {"read": [], "write": []},
   "network": {"outbound_hosts": ["configured:agent_control_callback_url"]},
-  "secrets": ["MOMI_CODEX_HOST_SECRET"],
+  "secrets": ["MOMI_CODEX_HOST_SECRET", "systemd-credential:momi-review-ledger-key"],
   "configuration": [
     "MOMI_AGENT_CONTROL_CALLBACK_URL",
     "MOMI_CODEX_WORKSPACE_ROOT",
@@ -34,7 +34,8 @@
     "MOMI_AGENT_CONTROL_SCHEDULER_ENABLED",
     "MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS",
     "MOMI_AGENT_CONTROL_RELEASE_SHA",
-    "CODEX_HOME"
+    "CODEX_HOME",
+    "CREDENTIALS_DIRECTORY"
   ],
   "deployment": {"owns": [], "depends_on": []},
   "runtime_dependencies": [

@@ -19,6 +19,11 @@ The host's v4 review transport creates a new App Server thread and turn with the
 release, change policy, or invoke Symphony. A reviewer capability is generated inside the private
 ledger and is not available to the implementation task. The implementation callback credential
 cannot record an accepted receipt or publish the dedicated GitHub status.
+The host runs under the distinct `momi-agent-control` operating-system identity. Its root-owned
+systemd credential AES-GCM seals reviewer callback capability, thread, turn, and exact-subject
+fields before the durable ledger is written; the key and plaintext fields are never passed to
+full-access implementation turns running under the App Server identity. Missing or unreadable
+credential material fails host startup and reviewer reservation closed.
 
 Canonical acceptance is the exact-generation `momi_agent_ops.review_attempts` receipt. Any head,
 base, policy, or profile change makes it stale. A bounded fix may be reverified by the same

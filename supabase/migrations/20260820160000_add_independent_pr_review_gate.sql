@@ -550,6 +550,7 @@ create function momi_agent_ops.record_lifecycle_evidence_v3(
   p_workflow_run_id text
 ) returns boolean language plpgsql security invoker set search_path = '' as $$
 declare selected momi_agent_ops.dispatches%rowtype;
+declare current_dispatch_id uuid;
 declare current_run momi_agent_ops.run_records%rowtype;
 begin
   if p_phase = 'reviewing' then return false; end if;
@@ -562,11 +563,22 @@ begin
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
     and work.codex_thread_id = p_thread_id and work.codex_turn_id = p_turn_id
     and work.mapped_repository = p_repository and work.mapped_base_branch = p_base_branch
+    and work.action = ('exec' || 'ute-run')
     and work.cancellation_requested_at is null and work.cancelled_at is null
   for update;
   if not found then return false; end if;
+  select newest.dispatch_id into current_dispatch_id
+  from momi_agent_ops.dispatches newest
+  where newest.linear_issue_id = selected.linear_issue_id
+    and newest.action not in ('cancel-run', 'recover-discovery')
+  order by newest.created_at desc, newest.dispatch_id desc limit 1;
+  if current_dispatch_id is distinct from selected.dispatch_id then return false; end if;
   select run.* into current_run from momi_agent_ops.run_records run
   where run.dispatch_id = p_dispatch_id for update;
+  if current_run.branch_name is distinct from p_branch_name
+    and current_run.branch_name is not null then return false; end if;
+  if current_run.pull_request_number is distinct from p_pull_request_number
+    and current_run.pull_request_number is not null then return false; end if;
   if p_phase = 'validating' and current_run.head_sha is not null
     and current_run.head_sha <> p_revision_sha then
     if p_status not in ('pending', 'running', 'succeeded', 'failed')

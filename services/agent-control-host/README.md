@@ -37,9 +37,18 @@ non-interactive approval and full host access. Keep it behind bearer auth, exact
 repository/base mapping, and a dedicated operator-controlled workspace.
 
 Run with `pnpm agent-control:host` only after configuring the callback, host
-secret, workspace root, repository/base, ledger path, and an installed Codex
-App Server daemon. Put any public TLS/reverse-proxy boundary outside this
+secret, workspace root, repository/base, ledger path, the root-owned systemd
+credential `/etc/momi-agent-control/review-ledger-key` (exactly 32 random bytes),
+and an installed
+Codex App Server daemon. Reviewer callback capability, thread, turn, and subject
+identities are authenticated-encrypted in the durable ledger with this
+service-private credential; implementation turns never receive the credential
+or plaintext fields. Put any public TLS/reverse-proxy boundary outside this
 process. The adapter never logs request bodies, prompts, or capability tokens.
+Run the unit as the dedicated `momi-agent-control` operating-system identity,
+not the implementation/App Server identity. Keep its credential root-owned and
+its ledger under the systemd-managed state directory; grant only the narrowly
+required repository and private App Server socket access to that service user.
 
 New dispatches use the v3 compact transport: stable action rules and volatile
 attempt context are separate input items with durable fingerprints and a typed
@@ -49,8 +58,8 @@ replaced by redacted, artifact-linked receipts. See
 
 Independent review uses the v4 transport on the same authenticated host path. It creates a fresh
 thread/turn with an attested reviewer role, a revision-bound bounded packet, a typed review-only
-output schema, and zero mutation authority. The ledger preserves reviewer role and exact subject
-for callback provenance. Reviewer callbacks never become implementation terminal receipts; see
+output schema, and zero mutation authority. The ledger preserves reviewer role and sealed exact
+subject for callback provenance. Reviewer callbacks never become implementation terminal receipts; see
 [`docs/operations/independent-review.md`](../../docs/operations/independent-review.md).
 
 When explicitly enabled after the protected development acceptance, this same

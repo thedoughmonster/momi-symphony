@@ -11,6 +11,7 @@ import { prepareReviewWorkspace } from "../src/prepare_review_workspace.ts"
 import { cleanupReviewWorkspace } from "../src/cleanup_review_workspace.ts"
 import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
+import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
 import type { AppServerClient, HostDispatch } from "../src/types.ts"
 
 const run = promisify(execFile)
@@ -78,7 +79,8 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
     const config = { workspaceRoot: repository, repository: "thedoughmonster/momi-symphony",
       baseBranch: "main" }
     workspace = await prepareReviewWorkspace(config, reviewDispatch)
-    const ledger = new HostLedger(join(ledgerDirectory, "ledger.json"))
+    const ledger = new HostLedger(join(ledgerDirectory, "ledger.json"),
+      new ReviewCredentialBoundary(Buffer.alloc(32, 7)))
     await ledger.reserve(reviewerId, "review-fingerprint", randomUUID(), "one_shot", {
       runtime_role: "independent_reviewer", review_subject: subject,
       review_workspace_id: reviewerId })

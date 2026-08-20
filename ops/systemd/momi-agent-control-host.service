@@ -5,14 +5,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=momi-agent-control
+Group=momi-agent-control
 WorkingDirectory=/home/codex-dev/momi-symphony
 EnvironmentFile=/home/codex-dev/.config/momi-agent-control/host.env
+LoadCredential=momi-review-ledger-key:/etc/momi-agent-control/review-ledger-key
 Environment=PATH=/home/codex-dev/.local/bin:/home/codex-dev/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/codex-dev/.local/share/pnpm/bin/pnpm agent-control:host
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
+StateDirectory=momi-agent-control
+UMask=0077
 
 [Install]
 WantedBy=default.target

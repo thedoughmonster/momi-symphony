@@ -16,11 +16,14 @@
    global history, and report only the expected pending mapping migration.
 2. Run the `runtime` phase at the same commit to deploy both Edge Functions
    without applying migrations.
-3. Back up the current ledger, user unit, and environment file without exposing
+3. Back up the current ledger, host unit, and environment file without exposing
    their contents.
-4. Install `ops/systemd/momi-agent-control-host.service` in the user unit directory
-   and set the host repository/base values to `thedoughmonster/momi-symphony` and
-   `main`.
+4. Provision the dedicated `momi-agent-control` service identity, a root-owned
+   mode-0400 `/etc/momi-agent-control/review-ledger-key` containing exactly 32
+   random bytes, the systemd-managed state directory, and only the repository
+   and private App Server socket access required by the adapter. Install
+   `ops/systemd/momi-agent-control-host.service` as a system unit and set the
+   host repository/base values to `thedoughmonster/momi-symphony` and `main`.
 5. Reload and restart the host service; verify `/health` locally and through the
    private route.
 6. Run the `mapping` phase at the same commit. It repeats the no-write private
