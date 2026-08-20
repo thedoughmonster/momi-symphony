@@ -23,6 +23,11 @@ test("host-created review Git state inherits the reviewer group and excludes imp
     const workspaces = join(reviewState, "workspaces")
     const workspace = join(workspaces, "review-attempt")
     const marker = join(workspace, "host-created.txt")
+    const reviewerGitTrust = {
+      GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: repository, GIT_CONFIG_KEY_1: "safe.directory",
+      GIT_CONFIG_VALUE_1: `${workspaces}/*`,
+    }
     try {
       await chmod(root, 0o755)
       await mkdir(source); await chown(source, host.uid, host.gid); await chmod(source, 0o750)
@@ -62,10 +67,15 @@ test("host-created review Git state inherits the reviewer group and excludes imp
       assert.equal((await stat(workspaces)).mode & 0o2000, 0o2000)
       assert.equal((await stat(workspace)).mode & 0o2000, 0o2000)
 
+      await assert.rejects(asIdentity(reviewer, "git", ["-C", workspace,
+        "rev-parse", "HEAD"]), (error: unknown) => {
+        assert.match(String((error as { stderr?: string }).stderr), /dubious ownership/)
+        return true
+      })
       assert.equal((await asIdentity(reviewer, "git", ["-C", workspace,
-        "rev-parse", "HEAD"])).stdout.trim(), revision)
+        "rev-parse", "HEAD"], reviewerGitTrust)).stdout.trim(), revision)
       assert.equal((await asIdentity(reviewer, "git", ["-C", repository,
-        "show", `${revision}:subject.txt`])).stdout, "exact subject\n")
+        "show", `${revision}:subject.txt`], reviewerGitTrust)).stdout, "exact subject\n")
       assert.equal((await asIdentity(reviewer, process.execPath, ["-e",
         "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
         marker])).stdout, "host marker\n")
@@ -74,7 +84,7 @@ test("host-created review Git state inherits the reviewer group and excludes imp
       await assert.rejects(asIdentity(implementation, process.execPath, ["-e",
         "require('node:fs').readFileSync(process.argv[1])", marker]))
       await assert.rejects(asIdentity(implementation, "git", ["-C", repository,
-        "rev-parse", "refs/momi-review/exact-head"]))
+        "rev-parse", "refs/momi-review/exact-head"], reviewerGitTrust))
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -84,6 +94,7 @@ async function asIdentity(
   identity: { uid: number; gid: number; groups: number[] },
   command: string,
   args: string[],
+  extraEnvironment: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const groupArgs = identity.groups.length > 0
     ? ["--groups", identity.groups.join(",")] : ["--clear-groups"]
@@ -92,6 +103,7 @@ async function asIdentity(
     "momi-review-permission-test", command, ...args], { env: {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp",
       GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+      ...extraEnvironment,
     } })
 }
 

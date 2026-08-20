@@ -323,6 +323,14 @@ test("reviewer App Server identity and restart recovery stay outside implementat
     assert.match(reviewUnit, /^Group=momi-agent-review$/m)
     assert.match(reviewUnit,
       /^Environment=CODEX_HOME=\/var\/lib\/momi-agent-reviewer\/codex-home$/m)
+    assert.match(reviewUnit, /^Environment=GIT_CONFIG_COUNT=2$/m)
+    assert.match(reviewUnit, /^Environment=GIT_CONFIG_KEY_0=safe\.directory$/m)
+    assert.match(reviewUnit,
+      /^Environment=GIT_CONFIG_VALUE_0=\/var\/lib\/momi-agent-reviewer\/repository$/m)
+    assert.match(reviewUnit, /^Environment=GIT_CONFIG_KEY_1=safe\.directory$/m)
+    assert.match(reviewUnit,
+      /^Environment=GIT_CONFIG_VALUE_1=\/var\/lib\/momi-agent-reviewer\/workspaces\/\*$/m)
+    assert.doesNotMatch(reviewUnit, /^Environment=GIT_CONFIG_VALUE_\d+=\*$/m)
     assert.match(reviewUnit, /^ExecStart=\/usr\/local\/bin\/codex /m)
     assert.match(reviewUnit,
       /^ExecStartPre=\+\/usr\/bin\/install -d -o momi-agent-reviewer -g momi-agent-review -m 2770 .*app-server-control$/m)

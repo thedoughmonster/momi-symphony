@@ -10,6 +10,11 @@ Group=momi-agent-review
 Environment=HOME=/var/lib/momi-agent-reviewer
 Environment=CODEX_HOME=/var/lib/momi-agent-reviewer/codex-home
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=GIT_CONFIG_COUNT=2
+Environment=GIT_CONFIG_KEY_0=safe.directory
+Environment=GIT_CONFIG_VALUE_0=/var/lib/momi-agent-reviewer/repository
+Environment=GIT_CONFIG_KEY_1=safe.directory
+Environment=GIT_CONFIG_VALUE_1=/var/lib/momi-agent-reviewer/workspaces/*
 WorkingDirectory=/var/lib/momi-agent-reviewer
 ExecStartPre=+/usr/bin/install -d -o momi-agent-reviewer -g momi-agent-review -m 2770 /var/lib/momi-agent-reviewer/codex-home/app-server-control
 ExecStartPre=+/usr/bin/install -d -o momi-agent-control -g momi-agent-review -m 2770 /var/lib/momi-agent-reviewer/repository /var/lib/momi-agent-reviewer/workspaces
