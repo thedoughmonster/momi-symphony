@@ -87,20 +87,18 @@ export class GitHubReviewGateway {
       this.loadRulesetBypass(repository).catch(() => null),
     ])
     const runs = Array.isArray(checks.check_runs) ? checks.check_runs as Array<Record<string, unknown>> : []
-    const reviewStatuses = statuses.filter((status) => status.context === REVIEW_CHECK_NAME &&
-      text(object(status.creator).login) === this.publisher)
-    const reviewCheck = conclusion([...runs.filter((run) => run.name === REVIEW_CHECK_NAME &&
-      Number(object(run.app).id) === this.appId),
-      ...reviewStatuses])
+    const reviewCheck = conclusion(runs.filter((run) => run.name === REVIEW_CHECK_NAME &&
+      Number(object(run.app).id) === this.appId &&
+      text(object(run.app).slug) === this.publisher))
     const required = object(protection.required_status_checks)
     const requiredChecks = Array.isArray(required.checks)
       ? required.checks as Array<Record<string, unknown>> : []
-    const requiredNames = [
-      ...(Array.isArray(required.contexts) ? required.contexts : []),
-      ...requiredChecks.map((check) => check.context),
-    ]
-    const requiredCiNames = [...new Set(requiredNames.map(String))]
-      .filter((name) => name !== REVIEW_CHECK_NAME)
+    const boundContexts = new Set(requiredChecks.map((check) => text(check.context)))
+    const bareRequiredContexts = [...new Set((Array.isArray(required.contexts)
+      ? required.contexts : []).map(String))].filter((name) =>
+      name !== REVIEW_CHECK_NAME && !boundContexts.has(name))
+    const boundRequiredChecks = requiredChecks.filter((check) =>
+      check.context !== REVIEW_CHECK_NAME)
     const enforceAdmins = object(protection.enforce_admins)
     const pullRequestReviews = object(protection.required_pull_request_reviews)
     const bypassAllowances = object(pullRequestReviews.bypass_pull_request_allowances)
@@ -112,7 +110,7 @@ export class GitHubReviewGateway {
     const baseHeadSha = text(object(branch.commit).sha)
     if (!/^[0-9a-f]{40}$/.test(baseHeadSha)) throw new Error("github_base_branch_malformed")
     return { baseHeadSha, requiredCi: { headSha,
-      conclusion: requiredConclusion(requiredCiNames, runs, statuses) },
+      conclusion: requiredConclusion(bareRequiredContexts, boundRequiredChecks, runs, statuses) },
       reviewCheck: { name: REVIEW_CHECK_NAME, headSha, conclusion: reviewCheck },
       reviewCheckRequired: required.strict === true && requiredChecks.some((check) =>
         check.context === REVIEW_CHECK_NAME && Number(check.app_id) === this.appId),
@@ -255,9 +253,10 @@ export class GitHubReviewGateway {
 
   publishReviewCheck(repository: string, headSha: string,
     accepted: boolean, description: string): Promise<unknown> {
-    return this.request(`/repos/${repository}/statuses/${headSha}`, {
-      method: "POST", body: JSON.stringify({ state: accepted ? "success" : "failure",
-        context: REVIEW_CHECK_NAME, description: description.slice(0, 140) }) })
+    return this.request(`/repos/${repository}/check-runs`, {
+      method: "POST", body: JSON.stringify({ name: REVIEW_CHECK_NAME, head_sha: headSha,
+        status: "completed", conclusion: accepted ? "success" : "failure",
+        output: { title: REVIEW_CHECK_NAME, summary: description.slice(0, 65_000) } }) })
   }
 
   private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
@@ -312,13 +311,18 @@ function hasBypassActors(allowances: Record<string, unknown>): boolean {
     Array.isArray(allowances[key]) && allowances[key].length > 0)
 }
 
-function requiredConclusion(requiredNames: string[], runs: Array<Record<string, unknown>>,
+function requiredConclusion(bareContexts: string[],
+  boundChecks: Array<Record<string, unknown>>, runs: Array<Record<string, unknown>>,
   statuses: Array<Record<string, unknown>>): "success" | "pending" | "failure" | "unknown" {
-  if (requiredNames.length === 0) return "unknown"
-  const results = requiredNames.map((name) => conclusion([
-    ...runs.filter((run) => run.name === name),
-    ...statuses.filter((status) => status.context === name),
-  ]))
+  if (bareContexts.length === 0 && boundChecks.length === 0) return "unknown"
+  const results = [
+    ...bareContexts.map((name) => conclusion([
+      ...runs.filter((run) => run.name === name),
+      ...statuses.filter((status) => status.context === name),
+    ])),
+    ...boundChecks.map((required) => conclusion(runs.filter((run) =>
+      run.name === required.context && Number(object(run.app).id) === Number(required.app_id)))),
+  ]
   if (results.some((result) => result === "failure")) return "failure"
   if (results.some((result) => result === "pending")) return "pending"
   return results.every((result) => result === "success") ? "success" : "unknown"

@@ -9,7 +9,9 @@ import test from "node:test"
 
 import { prepareReviewWorkspace } from "../src/prepare_review_workspace.ts"
 import { cleanupReviewWorkspace } from "../src/cleanup_review_workspace.ts"
-import type { HostDispatch } from "../src/types.ts"
+import { HostController } from "../src/host_controller.ts"
+import { HostLedger } from "../src/host_ledger.ts"
+import type { AppServerClient, HostDispatch } from "../src/types.ts"
 
 const run = promisify(execFile)
 
@@ -52,5 +54,54 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     if (workspace) await run("git", ["worktree", "remove", "--force", workspace],
       { cwd: repository }).catch(() => undefined)
     await rm(repository, { recursive: true, force: true })
+  }
+})
+
+test("terminal implementation cleanup removes an abandoned changes-requested workspace", async () => {
+  const repository = await mkdtemp(join(tmpdir(), "momi-review-cleanup-source-"))
+  const ledgerDirectory = await mkdtemp(join(tmpdir(), "momi-review-cleanup-ledger-"))
+  const implementationId = randomUUID(); const reviewerId = randomUUID()
+  let workspace = ""
+  try {
+    await run("git", ["init", "-b", "main"], { cwd: repository })
+    await run("git", ["config", "user.name", "Review Test"], { cwd: repository })
+    await run("git", ["config", "user.email", "review@example.invalid"], { cwd: repository })
+    await writeFile(join(repository, "subject.txt"), "subject\n")
+    await run("git", ["add", "subject.txt"], { cwd: repository })
+    await run("git", ["commit", "-m", "subject"], { cwd: repository })
+    const head = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
+    const subject = { implementation_dispatch_id: implementationId, pull_request_number: 16,
+      head_sha: head, base_sha: head, generation: 1, profile: "high" as const,
+      policy_version: "independent-review-v1" }
+    const reviewDispatch = { schema_version: 4, work_id: reviewerId,
+      review_workspace_id: reviewerId, review_subject: subject } as HostDispatch
+    const config = { workspaceRoot: repository, repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main" }
+    workspace = await prepareReviewWorkspace(config, reviewDispatch)
+    const ledger = new HostLedger(join(ledgerDirectory, "ledger.json"))
+    await ledger.reserve(reviewerId, "review-fingerprint", randomUUID(), "one_shot", {
+      runtime_role: "independent_reviewer", review_subject: subject,
+      review_workspace_id: reviewerId })
+    await ledger.accept(reviewerId, "review-thread", "review-turn")
+    await ledger.terminal(reviewerId, { readiness_result: "ready",
+      terminal_disposition: "completed", summary: "Changes requested." },
+    new Date().toISOString(), { result: "changes_requested", findings: [],
+      artifact_ref: "review://attempt/1", result_fingerprint: `sha256:${"1".repeat(64)}` })
+    await ledger.callbackSent(reviewerId)
+    await ledger.reserve(implementationId, "implementation-fingerprint", randomUUID())
+    await ledger.accept(implementationId, "implementation-thread", "implementation-turn")
+    await ledger.terminal(implementationId, { readiness_result: "ready",
+      terminal_disposition: "completed", summary: "Implementation completed." },
+    new Date().toISOString())
+    const client = { connect: () => Promise.resolve(), onNotification: () => undefined,
+      request: () => Promise.resolve({}) } as AppServerClient
+    await new HostController(client, ledger, config, () => Promise.resolve()).start()
+    assert.equal(await stat(workspace).then(() => true, () => false), false)
+    assert.notEqual(ledger.get(reviewerId)?.reviewWorkspaceCleanedAt, null)
+  } finally {
+    if (workspace) await run("git", ["worktree", "remove", "--force", workspace],
+      { cwd: repository }).catch(() => undefined)
+    await rm(repository, { recursive: true, force: true })
+    await rm(ledgerDirectory, { recursive: true, force: true })
   }
 })

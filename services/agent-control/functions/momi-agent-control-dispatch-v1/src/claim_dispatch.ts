@@ -18,11 +18,17 @@ export async function claimDispatch(input: DispatchInput): Promise<ClaimedDispat
   const claimed = rows[0] ?? null
   if (claimed?.delivery_phase !== "cancel_host" ||
     !claimed.cancellation_target_ids?.length) return claimed
+  const fenced = await sql<{ fenced: boolean }[]>`
+    select momi_agent_ops.fence_cancellation_v1(
+      ${input.work_id}::uuid, ${input.capability_token}::uuid
+    ) as fenced`
+  if (fenced[0]?.fenced !== true) throw new Error("cancellation_fence_refused")
   const reviewers = await sql<{ reviewer_dispatch_id: string }[]>`
     select reviewer_dispatch_id::text
     from momi_agent_ops.review_attempts
     where implementation_dispatch_id = any(${claimed.cancellation_target_ids}::uuid[])
-      and state = 'running' and reviewer_thread_id is not null and reviewer_turn_id is not null
+      and state in ('running', 'changes_requested')
+      and reviewer_thread_id is not null and reviewer_turn_id is not null
     order by reviewer_dispatch_id`
   claimed.cancellation_target_ids = [...new Set([
     ...claimed.cancellation_target_ids,

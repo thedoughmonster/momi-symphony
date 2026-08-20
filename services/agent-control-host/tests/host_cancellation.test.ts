@@ -7,7 +7,7 @@ import test from "node:test"
 import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
 import { parseHostCancellation } from "../src/parse_host_cancellation.ts"
-import type { AppServerClient, HostCancellation } from "../src/types.ts"
+import type { AppServerClient, HostCancellation, HostDispatch } from "../src/types.ts"
 
 class FakeAppServer implements AppServerClient {
   requests: Array<{ method: string; params: unknown }> = []
@@ -15,6 +15,23 @@ class FakeAppServer implements AppServerClient {
   onNotification(): void {}
   request<T>(method: string, params: unknown): Promise<T> {
     this.requests.push({ method, params }); return Promise.resolve({} as T)
+  }
+}
+
+class PausedStartAppServer extends FakeAppServer {
+  private releaseStart!: () => void
+  private markStartReached!: () => void
+  readonly startReached = new Promise<void>((resolve) => { this.markStartReached = resolve })
+  private readonly startGate = new Promise<void>((resolve) => { this.releaseStart = resolve })
+  release(): void { this.releaseStart() }
+  override async request<T>(method: string, params: unknown): Promise<T> {
+    this.requests.push({ method, params })
+    if (method === "thread/start") {
+      this.markStartReached(); await this.startGate
+      return { thread: { id: "thread-late" } } as T
+    }
+    if (method === "turn/start") return { turn: { id: "turn-late" } } as T
+    return {} as T
   }
 }
 
@@ -93,6 +110,48 @@ test("one exact lifecycle cancellation interrupts its owned target set once", as
     assert.equal(client.requests.filter((item) => item.method === "turn/interrupt").length, 2)
     assert.deepEqual(targets.map((target) => Boolean(ledger.get(target)?.cancellationRequestedAt)),
       [true, true])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("reserved work is durably fenced and interrupted immediately after its turn starts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-agent-cancel-reserved-"))
+  const ledger = new HostLedger(join(directory, "ledger.json"))
+  const client = new PausedStartAppServer()
+  const controller = new HostController(client, ledger, {
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
+  }, () => Promise.resolve())
+  const target = "00000000-0000-4000-8000-000000000041"
+  const input: HostCancellation = { schema_version: 2,
+    work_id: "00000000-0000-4000-8000-000000000042",
+    capability_token: "00000000-0000-4000-8000-000000000043",
+    target_work_ids: [target], repository: "thedoughmonster/momi-symphony",
+    base_branch: "main" }
+  const dispatch: HostDispatch = { schema_version: 3, work_id: target,
+    capability_token: "00000000-0000-4000-8000-000000000044",
+    issue_id: "00000000-0000-4000-8000-000000000045", issue_identifier: "MOX-260",
+    issue_url: "https://linear.app/x/issue/MOX-260/x",
+    project_id: "00000000-0000-4000-8000-000000000046",
+    project_name: "Symphony Control Plane", repository: "thedoughmonster/momi-symphony",
+    base_branch: "main", active_states: ["In Progress"], interaction_mode: "one_shot",
+    thread_name: "MOX-260", stable_instruction: "implement", volatile_context: "bounded",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222", policy_version: "test-v1",
+    budget: { model_turns: 1, no_progress_cycles: 1, subagents: 0, subagent_depth: 0,
+      model_visible_tool_bytes: 1_000, elapsed_ms: 60_000 } }
+  try {
+    await controller.start()
+    const starting = controller.dispatch(dispatch)
+    await client.startReached
+    assert.deepEqual(await controller.cancel(input), { cancellation_state: "requested" })
+    assert.notEqual(ledger.get(target)?.cancellationRequestedAt, null)
+    assert.equal(client.requests.some((item) => item.method === "turn/interrupt"), false)
+    client.release()
+    assert.deepEqual(await starting, { thread_id: "thread-late", turn_id: "turn-late" })
+    assert.deepEqual(client.requests.find((item) => item.method === "turn/interrupt"), {
+      method: "turn/interrupt", params: { threadId: "thread-late", turnId: "turn-late" } })
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

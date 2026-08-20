@@ -84,6 +84,11 @@ export class HostController {
       const started = await startHostTask(this.client, this.config, input)
       const accepted = await this.ledger.accept(
         input.work_id, started.thread_id, started.turn_id)
+      if (accepted.cancellationRequestedAt) {
+        await this.client.request("turn/interrupt", {
+          threadId: started.thread_id, turnId: started.turn_id,
+        })
+      }
       this.scheduleBudget(accepted)
       void this.recover(accepted).catch(() => undefined)
       return started
@@ -150,6 +155,9 @@ export class HostController {
     }
   }
   private async deliverCallback(record: HostRecord): Promise<void> {
+    if (record.runtimeRole !== "independent_reviewer") {
+      await this.cleanupReviewLineage(record.workId)
+    }
     if (!record.callbackSent) {
       await this.callback(record); await this.ledger.callbackSent(record.workId)
     }
@@ -158,6 +166,15 @@ export class HostController {
       record.reviewWorkspaceId && !record.reviewWorkspaceCleanedAt) {
       await cleanupReviewWorkspace(this.config, record)
       await this.ledger.reviewWorkspaceCleaned(record.workId)
+    }
+  }
+  private async cleanupReviewLineage(implementationDispatchId: string): Promise<void> {
+    for (const review of this.ledger.recordsForImplementation(implementationDispatchId)) {
+      if (review.state === "terminal" && review.callbackSent && review.reviewWorkspaceId &&
+        !review.reviewWorkspaceCleanedAt) {
+        await cleanupReviewWorkspace(this.config, review)
+        await this.ledger.reviewWorkspaceCleaned(review.workId)
+      }
     }
   }
   private scheduleCallback(record: HostRecord): void {

@@ -24,6 +24,8 @@ export async function startHostTask(
   if (!(input.schema_version === 4 && input.review_thread_id && reusedReviewerThread)) {
     await client.request("thread/name/set", { threadId, name: input.thread_name })
   }
+  const reviewMode = reusedReviewerThread ? "bounded_reverification" :
+    input.review_thread_id ? "fresh_recovery" : "fresh"
   const turnInput: Record<string, unknown> = {
     threadId, clientUserMessageId: input.work_id,
     approvalPolicy: "never", sandboxPolicy: input.schema_version === 4
@@ -31,7 +33,9 @@ export async function startHostTask(
     ...(input.schema_version === 4 ? { runtimeWorkspaceRoots: [cwd] } : {}),
     input: input.schema_version === 3 || input.schema_version === 4
       ? [{ type: "text", text: input.stable_instruction, text_elements: [] },
-        { type: "text", text: input.volatile_context, text_elements: [] }]
+        { type: "text", text: input.volatile_context, text_elements: [] },
+        ...(input.schema_version === 4 ? [{ type: "text",
+          text: `Host-attested review mode: ${reviewMode}.`, text_elements: [] }] : [])]
       : [{ type: "text", text: input.instruction, text_elements: [] }],
     responsesapiClientMetadata: { work_id: input.work_id,
       issue_identifier: input.issue_identifier,
@@ -45,8 +49,7 @@ export async function startHostTask(
       runtime_role: "independent_reviewer",
       implementation_dispatch_id: input.review_subject?.implementation_dispatch_id,
       review_generation: input.review_subject?.generation,
-      review_mode: reusedReviewerThread ? "bounded_reverification" :
-        input.review_thread_id ? "fresh_recovery" : "fresh",
+      review_mode: reviewMode,
     }
     turnInput.outputSchema = { type: "object", additionalProperties: false,
       required: ["result", "findings", "artifact_ref"], properties: {

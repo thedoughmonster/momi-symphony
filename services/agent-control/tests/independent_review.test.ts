@@ -113,8 +113,16 @@ test("review packets include only exact bounded sources", () => {
     applicable_rules: [{ path: "AGENTS.md", fingerprint: "fnv1a64:1" }],
     changed_paths: ["src/b.ts", "src/a.ts"], diff_artifact_ref: "github://pr/16.diff",
     ci: [{ name: "CI", conclusion: "success", head_sha: head },
-      { name: "other", conclusion: "success", head_sha: "d".repeat(40) }] })
+      { name: "other", conclusion: "success", head_sha: "d".repeat(40) }],
+    correction_context: { previous_head_sha: "c".repeat(40), new_head_sha: head,
+      delta_artifact_ref: `github://compare/${"c".repeat(40)}...${head}`,
+      changed_paths: ["src/a.ts"],
+      changed_hunks: [{ path: "src/a.ts", old_start: 9, old_end: 11 }],
+      risk_dimensions: ["architecture"] } })
   assert.deepEqual(packet.changed_paths, ["src/a.ts", "src/b.ts"])
+  assert.equal(packet.diff_artifact_ref, "github://pr/16.diff")
+  assert.deepEqual((packet.correction_context as Record<string, unknown>).changed_paths,
+    ["src/a.ts"])
   assert.equal((packet.ci as unknown[]).length, 1)
   assert.equal("implementation_transcript" in packet, false)
   assert.equal("reviewer_transcript" in packet, false)

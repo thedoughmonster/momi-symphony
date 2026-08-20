@@ -75,13 +75,16 @@ test("bounded correction reuses only the prior reviewer thread with a fresh turn
   const metadata = (requests.find((request) => request.method === "turn/start")?.params as {
     responsesapiClientMetadata: Record<string, unknown> }).responsesapiClientMetadata
   assert.equal(metadata.review_mode, "bounded_reverification")
+  const turnInput = (requests.find((request) => request.method === "turn/start")?.params as {
+    input: Array<{ text: string }> }).input
+  assert.equal(turnInput[2]?.text, "Host-attested review mode: bounded_reverification.")
 })
 
 test("unavailable prior reviewer starts a fresh isolated recovery thread", async () => {
-  const requests: string[] = []
+  const requests: Array<{ method: string; params: unknown }> = []
   const client = { connect: async () => undefined, onNotification: () => undefined,
-    request: async <T>(method: string): Promise<T> => {
-      requests.push(method)
+    request: async <T>(method: string, params: unknown): Promise<T> => {
+      requests.push({ method, params })
       if (method === "thread/unarchive") throw new Error("reviewer unavailable")
       if (method === "thread/start") return { thread: { id: "recovery-thread" } } as T
       if (method === "turn/start") return { turn: { id: "recovery-turn" } } as T
@@ -91,7 +94,13 @@ test("unavailable prior reviewer starts a fresh isolated recovery thread", async
     repository: dispatch.repository, baseBranch: "main" },
   { ...dispatch, review_thread_id: "unavailable-thread" }, async () => "/isolated-review")
   assert.deepEqual(result, { thread_id: "recovery-thread", turn_id: "recovery-turn" })
-  assert.deepEqual(requests, ["thread/unarchive", "thread/start", "thread/name/set", "turn/start"])
+  assert.deepEqual(requests.map((request) => request.method),
+    ["thread/unarchive", "thread/start", "thread/name/set", "turn/start"])
+  const turn = requests.at(-1)?.params as { input: Array<{ text: string }>;
+    responsesapiClientMetadata: Record<string, unknown> }
+  assert.equal(turn.input[2]?.text, "Host-attested review mode: fresh_recovery.")
+  assert.equal(turn.responsesapiClientMetadata.review_mode, "fresh_recovery")
+  assert.match(turn.input[1]?.text ?? "", /Exact bounded packet/)
 })
 
 test("review result validation computes provenance and rejects blocking acceptance", () => {

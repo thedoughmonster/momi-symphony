@@ -3,7 +3,7 @@ import type { Sql } from "postgres"
 import { getDatabase } from "../../../src/database.ts"
 import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSION,
   requiresFreshReviewer, selectReviewProfile, type ReviewReceipt,
-  type ReviewRiskDimension } from "../../../src/independent_review.ts"
+  type ReviewCorrectionContext, type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
@@ -43,12 +43,11 @@ export async function processReviewRequest(input: ReviewRequestInput,
   const rulesFingerprint = stableFingerprint(applicableRules)
   const prior = await priorChangesRequestedReview(sql, input.work_id)
   let reverificationOf: string | null = null
-  let reviewChangedPaths = subject.changedPaths
-  let reviewDiffArtifactRef = subject.diffArtifactRef
   let unresolvedFindings: Array<{ id: string; path: string; line: number | null;
     required_outcome: string }> = []
   let correctionRiskDimensions = subject.riskDimensions
   let reviewWorkspaceId: string | null = null
+  let correctionContext: ReviewCorrectionContext | undefined
   if (prior) {
     const delta = await github.loadCorrectionDelta(input.repository,
       prior.head_sha, subject.headSha)
@@ -66,10 +65,12 @@ export async function processReviewRequest(input: ReviewRequestInput,
       previousRiskDimensions: prior.risk_dimensions,
       correctionRiskDimensions: delta.riskDimensions })) {
       reverificationOf = prior.review_attempt_id
-      reviewChangedPaths = delta.changedPaths
       correctionRiskDimensions = delta.riskDimensions
       reviewWorkspaceId = prior.reviewer_dispatch_id
-      reviewDiffArtifactRef = `https://api.github.com/repos/${input.repository}/compare/${prior.head_sha}...${subject.headSha}`
+      correctionContext = { previous_head_sha: prior.head_sha, new_head_sha: subject.headSha,
+        delta_artifact_ref: `https://api.github.com/repos/${input.repository}/compare/${prior.head_sha}...${subject.headSha}`,
+        changed_paths: delta.changedPaths, changed_hunks: delta.changedHunks,
+        risk_dimensions: delta.riskDimensions }
       unresolvedFindings = prior.findings.map((finding) => ({ id: String(finding.id),
         path: String(finding.path), line: Number.isSafeInteger(finding.line)
           ? Number(finding.line) : null, required_outcome: String(finding.required_outcome) }))
@@ -84,8 +85,8 @@ export async function processReviewRequest(input: ReviewRequestInput,
   }, issue: { identifier: issue.identifier, title: issue.title,
     required_outcome: boundedRequiredOutcome(issue.description) },
   applicable_rules: applicableRules,
-  changed_paths: reviewChangedPaths, diff_artifact_ref: reviewDiffArtifactRef, ci: headCi,
-  unresolved_findings: unresolvedFindings })
+  changed_paths: subject.changedPaths, diff_artifact_ref: subject.diffArtifactRef, ci: headCi,
+  unresolved_findings: unresolvedFindings, correction_context: correctionContext })
   const packetFingerprint = stableFingerprint(packet)
   if (reviewerPrompt(packet, profile, false).volatile.length > 7_500) {
     throw new Error("review_packet_prompt_too_large")
@@ -97,7 +98,7 @@ export async function processReviewRequest(input: ReviewRequestInput,
       ${input.work_id}::uuid, ${input.capability_token}::uuid,
       ${input.thread_id}, ${input.turn_id}, ${input.repository}, ${input.base_branch},
       ${input.pull_request_number}, ${subject.headSha}, ${subject.baseSha}, ${profile},
-      ${REVIEW_POLICY_VERSION}, ${packetFingerprint}, ${reviewDiffArtifactRef},
+      ${REVIEW_POLICY_VERSION}, ${packetFingerprint}, ${subject.diffArtifactRef},
       ${rulesFingerprint}, ${subject.riskDimensions}, ${correctionRiskDimensions},
       ${reverificationOf}::uuid, 4
     )
@@ -152,7 +153,16 @@ export async function processReviewRequest(input: ReviewRequestInput,
       ${attempt.reviewer_dispatch_id}::uuid, ${attempt.reviewer_capability_token}::uuid,
       'independent_reviewer', ${accepted.thread_id}, ${accepted.turn_id}
     ) as recorded`
-  if (started[0]?.recorded !== true) throw new Error("reviewer_start_record_refused")
+  if (started[0]?.recorded !== true) {
+    await cancelRejectedReviewer(hostUrl, secret, attempt.reviewer_dispatch_id,
+      attempt.reviewer_capability_token, input.repository, input.base_branch, fetchImpl)
+    await sql`
+      select momi_agent_ops.record_review_interruption_v1(
+        ${input.work_id}::uuid, ${input.capability_token}::uuid,
+        ${input.thread_id}, ${input.turn_id}, ${attempt.reviewer_dispatch_id}::uuid
+      )`
+    throw new Error("reviewer_start_record_refused")
+  }
   await reconcileAgentState(input.work_id)
   return { ok: true, disposition: "accepted", review_attempt_id: attempt.review_attempt_id,
     reviewer_dispatch_id: attempt.reviewer_dispatch_id, generation: attempt.generation }
@@ -330,7 +340,7 @@ function reviewerPrompt(packet: Record<string, unknown>, profile: string,
   stable: string; volatile: string } {
   return { stable: [
     reverification
-      ? "Review only the mechanically bounded finding correction; the host may use same-thread re-verification or fresh isolation recovery."
+      ? "Review the exact full subject. In bounded_reverification mode, focus on the mechanically proven finding correction; in fresh_recovery mode, perform a fresh full substantive review."
       : "Act only as a fresh independent substantive pull-request reviewer.",
     "Do not edit files, push, merge, release, change policy, or invoke Symphony.",
     "Inspect only the exact revision-bound packet and narrowly necessary referenced files.",
@@ -369,4 +379,19 @@ function boundedRequiredOutcome(description: string | null): string {
   const outcome = description.slice(0, outcomeEnd > 0 ? outcomeEnd : Math.min(description.length, 1200))
   const mandate = appendix >= 0 ? description.slice(appendix) : ""
   return `${outcome.trim()}\n\n${mandate.trim()}`.slice(0, 4_800)
+}
+
+async function cancelRejectedReviewer(hostDispatchUrl: URL, secret: string,
+  reviewerDispatchId: string, reviewerCapabilityToken: string,
+  repository: string, baseBranch: string, fetchImpl: typeof fetch): Promise<void> {
+  const url = new URL(hostDispatchUrl)
+  url.pathname = `${url.pathname.slice(0, -"/v1/dispatch".length)}/v1/cancel`
+  const response = await fetchImpl(url, { method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ schema_version: 2, work_id: reviewerDispatchId,
+      capability_token: reviewerCapabilityToken, target_work_ids: [reviewerDispatchId],
+      repository, base_branch: baseBranch }), signal: AbortSignal.timeout(10_000) })
+  const result = await response.json().catch(() => null) as Record<string, unknown> | null
+  if (!response.ok || !["requested", "already_terminal"].includes(
+    String(result?.cancellation_state))) throw new Error("reviewer_start_interruption_failed")
 }

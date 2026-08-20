@@ -24,6 +24,10 @@ export async function cancelHostWork(
     if (!target) throw new Error("host_cancel_target_missing")
     if (target.state === "terminal") continue
     requested = true
+    if (target.state === "reserved" && !target.threadId && !target.turnId) {
+      await ledger.cancellationRequested(target.workId)
+      continue
+    }
     if (target.state === "interactive") {
       if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
       if (!target.cancellationRequestedAt) {

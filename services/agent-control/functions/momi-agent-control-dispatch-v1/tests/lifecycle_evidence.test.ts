@@ -57,3 +57,34 @@ test("focused validation success automatically enters independent review", async
 test("implementation callbacks cannot submit review-phase lifecycle evidence", () => {
   assert.equal(parseDispatchInput({ ...input, phase: "reviewing" }), null)
 })
+
+test("review terminal callbacks require exact nested subject and result schemas", () => {
+  const telemetry = { policy_version: "independent-review-v1",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222", input_tokens: null,
+    cached_input_tokens: null, output_tokens: null, model_visible_tool_bytes: 1,
+    model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+    retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1,
+    disposition: "completed" }
+  const review = { event: "review_terminal",
+    reviewer_dispatch_id: "00000000-0000-4000-8000-000000000011",
+    capability_token: "00000000-0000-4000-8000-000000000012",
+    runtime_role: "independent_reviewer", thread_id: "review-thread", turn_id: "review-turn",
+    review_subject: { implementation_dispatch_id: input.work_id, pull_request_number: 16,
+      head_sha: "a".repeat(40), base_sha: "b".repeat(40), generation: 1,
+      profile: "high", policy_version: "independent-review-v1" },
+    review_result: { result: "changes_requested", findings: [{ id: "finding-1",
+      severity: "blocking", category: "correctness", path: "src/review.ts", line: 10,
+      contract: "Bind the exact source.", required_outcome: "Reject mismatched evidence.",
+      evidence: "A mismatched source was accepted." }], artifact_ref: "review://attempt/1",
+      result_fingerprint: `sha256:${"1".repeat(64)}` }, terminal_disposition: "completed",
+    archived_at: "2026-08-20T15:00:00.000Z", telemetry }
+  assert.deepEqual(parseDispatchInput(review), review)
+  assert.equal(parseDispatchInput({ ...review, review_subject: {
+    ...review.review_subject, extra: true } }), null)
+  assert.equal(parseDispatchInput({ ...review, review_result: {
+    ...review.review_result, artifact_ref: "" } }), null)
+  assert.equal(parseDispatchInput({ ...review, terminal_disposition: "interrupted" }), null)
+  assert.notEqual(parseDispatchInput({ ...review, terminal_disposition: "interrupted",
+    review_result: null, telemetry: { ...telemetry, disposition: "interrupted" } }), null)
+})

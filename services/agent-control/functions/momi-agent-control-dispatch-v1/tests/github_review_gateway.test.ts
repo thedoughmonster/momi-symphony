@@ -19,7 +19,9 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
       { filename: "supabase/migrations/next.sql" },
     ])
     if (url.endsWith(`/commits/${head}/check-runs`)) return response({ check_runs: [
-      { name: "CI", conclusion: "success" },
+      { name: "CI", conclusion: "success", app: { id: 77, slug: "ci-app" } },
+      { name: "Symphony Independent Review", conclusion: "success",
+        app: { id: 42, slug: "review-publisher" } },
     ] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([
       { context: "Symphony Independent Review", state: "success",
@@ -29,7 +31,8 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
     if (url.endsWith("/branches/main/protection")) return response({
       required_status_checks: { strict: true,
         contexts: ["CI", "Symphony Independent Review"],
-        checks: [{ context: "Symphony Independent Review", app_id: 42 }] },
+        checks: [{ context: "CI", app_id: 77 },
+          { context: "Symphony Independent Review", app_id: 42 }] },
       enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false },
       allow_deletions: { enabled: false },
     })
@@ -41,7 +44,7 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
       reviewThreads: { nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false } },
     } } } })
     if (url.includes("/rulesets?")) return response([])
-    if (url.endsWith(`/statuses/${head}`)) return response({ id: 1 })
+    if (url.endsWith("/check-runs") && init?.method === "POST") return response({ id: 1 })
     if (url.includes(`/compare/${base}...${head}`)) return response({ files: [
       { filename: "services/agent-control/src/independent_review.ts" }] })
     if (url.includes("/contents/AGENTS.md?")) return response({
@@ -75,9 +78,11 @@ test("GitHub review gateway freezes exact PR identity and fail-closed merge fact
   assert.deepEqual(await gateway.compareChangedPaths(subject.repository, base, head),
     ["services/agent-control/src/independent_review.ts"])
   await gateway.publishReviewCheck(subject.repository, head, true, "accepted")
-  const publish = calls.find((call) => call.url.endsWith(`/statuses/${head}`))
-  assert.equal((JSON.parse(String(publish?.init?.body)) as Record<string, unknown>).context,
-    "Symphony Independent Review")
+  const publish = calls.find((call) => call.url.endsWith("/check-runs") &&
+    call.init?.method === "POST")
+  const published = JSON.parse(String(publish?.init?.body)) as Record<string, unknown>
+  assert.equal(published.name, "Symphony Independent Review")
+  assert.equal(published.head_sha, head)
   assert.equal(calls.some((call) => String((call.init?.headers as Record<string, string>)
     ?.Authorization).includes("review-token")), true)
 })
@@ -128,12 +133,48 @@ test("missing required CI and enabled bypasses fail closed", async () => {
   assert.equal(facts.bypassPossible, true)
 })
 
+test("app-bound checks require the exact app identity and review publisher slug", async () => {
+  const gateway = new GitHubReviewGateway(async (input) => {
+    const url = String(input)
+    if (url.endsWith(`/commits/${head}/check-runs`)) return response({ check_runs: [
+      { name: "CI", conclusion: "success", app: { id: 88, slug: "wrong-ci" } },
+      { name: "Symphony Independent Review", conclusion: "success",
+        app: { id: 42, slug: "wrong-review-publisher" } },
+    ] })
+    if (url.endsWith(`/commits/${head}/statuses`)) return response([
+      { context: "CI", state: "success" },
+      { context: "Symphony Independent Review", state: "success",
+        creator: { login: "review-publisher" } },
+    ])
+    if (url.endsWith("/branches/main")) return response({ commit: { sha: base } })
+    if (url.endsWith("/branches/main/protection")) return response({
+      required_status_checks: { strict: true, contexts: ["CI", "Symphony Independent Review"],
+        checks: [{ context: "CI", app_id: 77 },
+          { context: "Symphony Independent Review", app_id: 42 }] },
+      enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false },
+      allow_deletions: { enabled: false },
+    })
+    if (url.includes("/pulls/16/reviews?")) return response([])
+    if (url.endsWith("/graphql")) return response({ data: { repository: { pullRequest: {
+      reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+    } } } })
+    if (url.includes("/rulesets?")) return response([])
+    return new Response("missing", { status: 404 })
+  }, "review-token", "review-publisher", 42)
+  const facts = await gateway.loadMergeFacts("thedoughmonster/momi-symphony", "main", 16, head)
+  assert.equal(facts.requiredCi.conclusion, "unknown")
+  assert.equal(facts.reviewCheck.conclusion, "unknown")
+})
+
 test("latest same-context success replaces stale failure and bypass actors are authoritative", async () => {
   const gateway = new GitHubReviewGateway(async (input) => {
     const url = String(input)
     if (url.endsWith(`/commits/${head}/check-runs`)) return response({ check_runs: [
       { id: 1, name: "CI", conclusion: "failure", completed_at: "2026-08-20T10:00:00Z" },
       { id: 2, name: "CI", conclusion: "success", completed_at: "2026-08-20T11:00:00Z" },
+      { id: 5, name: "Symphony Independent Review", conclusion: "success",
+        completed_at: "2026-08-20T11:00:00Z",
+        app: { id: 42, slug: "review-publisher" } },
     ] })
     if (url.endsWith(`/commits/${head}/statuses`)) return response([
       { id: 3, context: "Symphony Independent Review", state: "failure",

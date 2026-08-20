@@ -261,6 +261,7 @@ create function momi_agent_ops.record_reviewer_start_v1(
 ) returns boolean language plpgsql security invoker set search_path = '' as $$
 declare attempt momi_agent_ops.review_attempts%rowtype;
 declare implementation_thread text;
+declare implementation_canceled boolean;
 begin
   select review.* into attempt from momi_agent_ops.review_attempts review
   where review.reviewer_dispatch_id = p_reviewer_dispatch_id
@@ -269,9 +270,13 @@ begin
     and review.state = 'reserved' for update;
   if not found or p_runtime_role <> 'independent_reviewer'
     or p_thread_id is null or p_turn_id is null then return false; end if;
-  select work.codex_thread_id into implementation_thread from momi_agent_ops.dispatches work
-  where work.dispatch_id = attempt.implementation_dispatch_id;
-  if implementation_thread is null or implementation_thread = p_thread_id then return false; end if;
+  select work.codex_thread_id,
+    work.cancellation_requested_at is not null or work.cancelled_at is not null
+  into implementation_thread, implementation_canceled
+  from momi_agent_ops.dispatches work
+  where work.dispatch_id = attempt.implementation_dispatch_id for update;
+  if implementation_thread is null or implementation_thread = p_thread_id
+    or implementation_canceled then return false; end if;
   update momi_agent_ops.review_attempts review set state = 'running',
     runtime_role = p_runtime_role, reviewer_thread_id = p_thread_id,
     reviewer_turn_id = p_turn_id, started_at = now(), updated_at = now()
@@ -551,6 +556,35 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.fence_cancellation_v1(
+  p_dispatch_id uuid, p_capability_token uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare selected_target uuid;
+begin
+  select work.target_dispatch_id into selected_target
+  from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state = 'requested'
+  for update;
+  if not found or selected_target is null then return false; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  )
+  update momi_agent_ops.dispatches target set
+    cancellation_requested_at = coalesce(target.cancellation_requested_at, now())
+  where target.dispatch_id in (select owned.dispatch_id from lifecycle owned)
+    and target.work_status in ('claimed', 'writeback_pending', 'active');
+  return true;
+end;
+$$;
+
 create function momi_agent_ops.record_review_interruption_v1(
   p_dispatch_id uuid,
   p_capability_token uuid,
@@ -560,11 +594,21 @@ create function momi_agent_ops.record_review_interruption_v1(
 ) returns boolean language plpgsql security invoker set search_path = '' as $$
 begin
   update momi_agent_ops.review_attempts review set
+    state = case when review.state = 'reserved' then 'canceled' else review.state end,
+    canceled_at = case when review.state = 'reserved'
+      then coalesce(review.canceled_at, now()) else review.canceled_at end,
+    terminal_at = case when review.state = 'reserved'
+      then coalesce(review.terminal_at, now()) else review.terminal_at end,
     interruption_confirmed_at = coalesce(review.interruption_confirmed_at, now()),
     updated_at = now()
   where review.reviewer_dispatch_id = p_reviewer_dispatch_id
     and review.implementation_dispatch_id = p_dispatch_id
-    and review.state in ('superseded', 'canceled')
+    and (review.state in ('superseded', 'canceled') or (
+      review.state = 'reserved' and exists (
+        select 1 from momi_agent_ops.dispatches parent
+        where parent.dispatch_id = p_dispatch_id
+          and (parent.cancellation_requested_at is not null
+            or parent.cancelled_at is not null))))
     and exists (select 1 from momi_agent_ops.dispatches work
       where work.dispatch_id = p_dispatch_id
         and work.host_callback_token_hash = encode(extensions.digest(
@@ -600,7 +644,8 @@ begin
   update momi_agent_ops.review_attempts review set state = 'canceled',
     canceled_at = coalesce(review.canceled_at, now()),
     terminal_at = coalesce(review.terminal_at, now()),
-    interruption_confirmed_at = now(), updated_at = now()
+    interruption_confirmed_at = case when review.state = 'running' then now()
+      else review.interruption_confirmed_at end, updated_at = now()
   where review.implementation_dispatch_id in (
     select owned.dispatch_id from lifecycle owned
   ) and review.state in ('reserved', 'running');
@@ -678,6 +723,7 @@ revoke all on function momi_agent_ops.create_review_attempt_v1(
   momi_agent_ops.record_lifecycle_evidence_v3(
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text
   ), momi_agent_ops.record_review_interruption_v1(uuid, uuid, text, text, uuid),
+  momi_agent_ops.fence_cancellation_v1(uuid, uuid),
   momi_agent_ops.record_cancellation_v3(uuid, uuid, text),
   momi_agent_ops.record_terminal_v5(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb

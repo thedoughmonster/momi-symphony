@@ -7,6 +7,11 @@ export type ReviewRiskDimension = "architecture" | "security_auth" | "public_con
   "schema_migration" | "concurrency" | "scheduler_recovery_cancellation" |
   "release_credential" | "runtime_network" | "general" | "ambiguous"
 
+export type ReviewCorrectionContext = { previous_head_sha: string; new_head_sha: string;
+  delta_artifact_ref: string; changed_paths: string[];
+  changed_hunks: Array<{ path: string; old_start: number; old_end: number }>;
+  risk_dimensions: ReviewRiskDimension[] }
+
 export type ReviewFinding = {
   id: string
   severity: "blocking" | "nonblocking"
@@ -221,6 +226,7 @@ export function buildBoundedReviewerPacket(input: {
   diff_artifact_ref: string
   ci: Array<{ name: string; conclusion: string; head_sha: string }>
   unresolved_findings?: Array<Pick<ReviewFinding, "id" | "path" | "line" | "required_outcome">>
+  correction_context?: ReviewCorrectionContext
 }): Record<string, unknown> {
   if (input.changed_paths.length === 0 || input.changed_paths.length > 500 ||
     input.changed_paths.some((path) => !validRepositoryPath(path)) ||
@@ -232,7 +238,8 @@ export function buildBoundedReviewerPacket(input: {
     applicable_rules: input.applicable_rules, changed_paths: [...input.changed_paths].sort(),
     diff_artifact_ref: input.diff_artifact_ref,
     ci: input.ci.filter((check) => check.head_sha === input.subject.head_sha),
-    unresolved_findings: input.unresolved_findings ?? [] }
+    unresolved_findings: input.unresolved_findings ?? [],
+    ...(input.correction_context ? { correction_context: input.correction_context } : {}) }
   if (JSON.stringify(packet).length > 6_500) throw new Error("review_packet_prompt_too_large")
   return packet
 }

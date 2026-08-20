@@ -107,6 +107,7 @@
       "momi_agent_ops.record_cancellation_v1",
       "momi_agent_ops.record_cancellation_v2",
       "momi_agent_ops.record_cancellation_v3",
+      "momi_agent_ops.fence_cancellation_v1",
       "momi_agent_ops.record_host_acceptance_v1",
       "momi_agent_ops.record_linear_writeback_v1",
       "momi_agent_ops.record_linear_writeback_v2",
