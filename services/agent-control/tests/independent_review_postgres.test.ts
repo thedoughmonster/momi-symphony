@@ -840,7 +840,7 @@ test("parent cancellation retires ambiguous review capacity without acceptance",
       publication_pending, revocation_required
     from momi_agent_ops.prepare_review_check_revocations_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)`
-  assert.deepEqual(revocations, [{ implementation_dispatch_id: dispatchId, head_sha: head,
+  assert.deepEqual([...revocations], [{ implementation_dispatch_id: dispatchId, head_sha: head,
     publication_pending: false, revocation_required: true }])
   const [revoked] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_review_check_revocation_v1(
@@ -986,7 +986,7 @@ async (context) => {
   const pending = await database.sql<{ publication_pending: boolean }[]>`
     select publication_pending from momi_agent_ops.prepare_review_check_revocations_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)`
-  assert.deepEqual(pending, [{ publication_pending: true }])
+  assert.deepEqual([...pending], [{ publication_pending: true }])
   const [staleFinish] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.finish_review_check_publication_v1(
       ${dispatchId}::uuid, ${attemptId}::uuid, ${head},
