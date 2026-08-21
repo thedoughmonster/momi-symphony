@@ -55,6 +55,20 @@ scheduler.
 
 The workflow contains no production target or automatic production trigger.
 
+## Independent-review enforcement
+
+Development pull requests use the required GitHub check `Symphony Independent
+Review`, published by the `momi-symphony-review-dev` GitHub App (App ID
+`4672413`). Acceptance is bound to the exact current pull-request head and its
+relevant base and policy identity. A new commit invalidates earlier acceptance;
+both CI and independent-review evidence must be current for the new head before
+merge.
+
+After GitHub has observed this App-owned check, the operator configures the
+repository's branch protection separately. This enforcement note does not alter
+the manual, environment-gated development release above, and it does not
+authorize any production deployment or promotion.
+
 ## Material decision-alert gate
 
 MOX-232 adds a separately selectable `decision-alert` runtime and a private
