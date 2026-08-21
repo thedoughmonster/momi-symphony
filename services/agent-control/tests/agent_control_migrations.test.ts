@@ -276,6 +276,8 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /begin_review_check_publication_v1/)
   assert.match(migration, /finish_review_check_publication_v1/)
   assert.match(migration, /prepare_review_check_revocations_v1/)
+  assert.match(migration, /recover_abandoned_review_check_publication_v1/)
+  assert.match(migration, /publication_started_at > now\(\) - interval '5 minutes'/)
   assert.match(migration, /record_review_check_revocation_v1/)
   assert.match(migration, /merge_review_eligible_v1/)
   assert.match(migration, /record_merge_preflight_v1/)
@@ -314,13 +316,13 @@ test("independent review receipts are private, exact-revision, and author-proof"
     assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
       `${routine} generation fence missing`)
   }
-  const cancellationReceipt = migration.slice(
-    migration.indexOf("create function momi_agent_ops.record_review_cancellation_receipt_v1("),
-    migration.indexOf("\n$$;", migration.indexOf(
-      "create function momi_agent_ops.record_review_cancellation_receipt_v1(")))
-  assert.ok(cancellationReceipt.indexOf("pg_advisory_xact_lock") >= 0)
-  assert.ok(cancellationReceipt.indexOf("pg_advisory_xact_lock") <
-    cancellationReceipt.indexOf("for update"))
+  for (const routine of ["record_review_cancellation_receipt_v1",
+    "recover_abandoned_review_check_publication_v1"]) {
+    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
+    const body = migration.slice(start, migration.indexOf("\n$$;", start))
+    assert.ok(body.indexOf("pg_advisory_xact_lock") >= 0)
+    assert.ok(body.indexOf("pg_advisory_xact_lock") < body.indexOf("for update"))
+  }
   assert.match(migration,
     /current_run\.head_sha is distinct from p_previous_revision_sha then return false/)
   assert.match(migration, /current_run\.branch_name is distinct from p_branch_name/)

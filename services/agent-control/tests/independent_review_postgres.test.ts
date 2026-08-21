@@ -863,25 +863,52 @@ test("parent cancellation retires reserved review capacity across receipt replay
     select momi_agent_ops.record_review_cancellation_receipt_v1(
       ${created.reviewer_dispatch_id}::uuid,
       ${created.reviewer_capability_token}::uuid,
-      'reserved', 'canceled', true, true) as recorded`
+      'reserved', 'canceled', false, false) as recorded`
   assert.equal(receipt.recorded, true)
   const [afterReceipt] = await database.sql<{
-    state: string; active_reviews: number; interruption_confirmed: boolean
+    state: string; active_reviews: number; interruption_confirmed: boolean;
+    cancellation_receipt_fingerprint: string
   }[]>`
     select attempt.state,
       (select count(*)::integer from momi_agent_ops.review_attempts active
         where active.state in ('reserved', 'running', 'ambiguous')) as active_reviews,
-      attempt.interruption_confirmed_at is not null as interruption_confirmed
+      attempt.interruption_confirmed_at is not null as interruption_confirmed,
+      attempt.cancellation_receipt_fingerprint
     from momi_agent_ops.review_attempts attempt
     where attempt.review_attempt_id = ${created.review_attempt_id}::uuid`
-  assert.deepEqual(afterReceipt, { state: "canceled", active_reviews: 0,
-    interruption_confirmed: true })
+  assert.deepEqual(
+    { state: afterReceipt.state, active_reviews: afterReceipt.active_reviews,
+      interruption_confirmed: afterReceipt.interruption_confirmed },
+    { state: "canceled", active_reviews: 0, interruption_confirmed: false })
+  assert.match(afterReceipt.cancellation_receipt_fingerprint, /^sha256:[0-9a-f]{64}$/)
+  const [enrichedReceipt] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_cancellation_receipt_v1(
+      ${created.reviewer_dispatch_id}::uuid,
+      ${created.reviewer_capability_token}::uuid,
+      'canceled', 'canceled', true, true) as recorded`
+  assert.equal(enrichedReceipt.recorded, true)
+  const [afterEnrichment] = await database.sql<{
+    interruption_confirmed: boolean; cancellation_receipt_fingerprint: string
+  }[]>`
+    select attempt.interruption_confirmed_at is not null as interruption_confirmed,
+      attempt.cancellation_receipt_fingerprint
+    from momi_agent_ops.review_attempts attempt
+    where attempt.review_attempt_id = ${created.review_attempt_id}::uuid`
+  assert.equal(afterEnrichment.interruption_confirmed, true)
+  assert.notEqual(afterEnrichment.cancellation_receipt_fingerprint,
+    afterReceipt.cancellation_receipt_fingerprint)
   const [replayedReceipt] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_review_cancellation_receipt_v1(
       ${created.reviewer_dispatch_id}::uuid,
       ${created.reviewer_capability_token}::uuid,
       'canceled', 'canceled', true, true) as recorded`
   assert.equal(replayedReceipt.recorded, true)
+  const [downgradedReceipt] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_cancellation_receipt_v1(
+      ${created.reviewer_dispatch_id}::uuid,
+      ${created.reviewer_capability_token}::uuid,
+      'canceled', 'canceled', false, false) as recorded`
+  assert.equal(downgradedReceipt.recorded, false)
   const [recorded] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_cancellation_v3(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
@@ -934,7 +961,7 @@ test("parent cancellation retires reserved review capacity across receipt replay
   assert.equal(ambiguousReceipt.recorded, true)
 })
 
-test("cancellation revokes an in-flight exact-head success projection before fencing",
+test("cancellation recovers an abandoned exact-head success projection before fencing",
 async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))
@@ -1015,6 +1042,19 @@ async (context) => {
     select publication_pending from momi_agent_ops.prepare_review_check_revocations_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)`
   assert.deepEqual([...pending], [{ publication_pending: true }])
+  const [activeRecovery] = await database.sql<{ recovered: boolean }[]>`
+    select momi_agent_ops.recover_abandoned_review_check_publication_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid,
+      ${dispatchId}::uuid, ${head}) as recovered`
+  assert.equal(activeRecovery.recovered, false)
+  await database.sql`update momi_agent_ops.run_records set
+    review_check_publication_started_at = now() - interval '6 minutes'
+    where dispatch_id = ${dispatchId}::uuid`
+  const [abandonedRecovery] = await database.sql<{ recovered: boolean }[]>`
+    select momi_agent_ops.recover_abandoned_review_check_publication_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid,
+      ${dispatchId}::uuid, ${head}) as recovered`
+  assert.equal(abandonedRecovery.recovered, true)
   const [staleFinish] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.finish_review_check_publication_v1(
       ${dispatchId}::uuid, ${attemptId}::uuid, ${head},

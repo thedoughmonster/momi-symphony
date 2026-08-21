@@ -32,12 +32,13 @@ test("records authenticated reviewer cancellation receipts before parent complet
 })
 
 test("replays a receipt-persisted cancellation without changing reviewer authority", async () => {
-  const expectedStates: unknown[] = []; let currentState = "reserved"; let parentCalls = 0
+  const receipts: unknown[][] = []; let currentState = "reserved"; let parentCalls = 0
   const sql = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const query = strings.join("?")
     if (query.includes("select state from")) return [{ state: currentState }]
     if (query.includes("record_review_cancellation_receipt_v1")) {
-      expectedStates.push(values[2]); currentState = "canceled"; return [{ recorded: true }]
+      receipts.push([values[2], values[4], values[5]])
+      currentState = "canceled"; return [{ recorded: true }]
     }
     if (query.includes("record_cancellation_v3")) {
       parentCalls += 1
@@ -50,8 +51,14 @@ test("replays a receipt-persisted cancellation without changing reviewer authori
     review_cancellations: [receipt] }
   await assert.rejects(recordCancellation(input, result, sql),
     /simulated_parent_recording_crash/)
-  assert.equal(await recordCancellation(input, result, sql), true)
-  assert.deepEqual(expectedStates, ["reserved", "canceled"])
+  const enrichedResult = { cancellation_state: "requested" as const,
+    review_cancellations: [{ ...receipt, identities_complete: true,
+      interruption_confirmed: true }] }
+  assert.equal(await recordCancellation(input, enrichedResult, sql), true)
+  assert.deepEqual(receipts, [
+    ["reserved", false, false],
+    ["canceled", true, true],
+  ])
   assert.equal(parentCalls, 2)
 })
 

@@ -80,12 +80,50 @@ test("cancellation waits while an exact-head success publication lease is active
       implementation_dispatch_id: "00000000-0000-4000-8000-000000000023",
       repository: "thedoughmonster/momi-symphony", head_sha: "a".repeat(40),
       publication_pending: true, revocation_required: true }]
+    if (query.includes("recover_abandoned_review_check_publication_v1")) {
+      return [{ recovered: false }]
+    }
     throw new Error("must_not_continue_after_publication_lease")
   }
   await assert.rejects(claimDispatch(input, sql as never, {
     publishReviewCheck: async () => { published = true },
   } as never), /review_check_publication_pending/)
   assert.equal(published, false)
+})
+
+test("cancellation recovers an abandoned exact-head publication before revoking", async () => {
+  const implementationId = "00000000-0000-4000-8000-000000000033"
+  const head = "b".repeat(40); const timeline: string[] = []; let prepared = 0
+  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const query = strings.join("?")
+    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
+      action: "cancel-run", delivery_phase: "cancel_host",
+      cancellation_target_ids: [implementationId] }]
+    if (query.includes("prepare_review_check_revocations_v1")) {
+      timeline.push("prepare"); prepared += 1
+      return [{ implementation_dispatch_id: implementationId,
+        repository: "thedoughmonster/momi-symphony", head_sha: head,
+        publication_pending: prepared === 1, revocation_required: true }]
+    }
+    if (query.includes("recover_abandoned_review_check_publication_v1")) {
+      timeline.push("recover"); return [{ recovered: true }]
+    }
+    if (query.includes("record_review_check_revocation_v1")) {
+      timeline.push("record-revocation"); return [{ recorded: true }]
+    }
+    if (query.includes("fence_cancellation_v1")) {
+      timeline.push("fence"); return [{ fenced: true }]
+    }
+    if (query.includes("from momi_agent_ops.review_attempts")) return []
+    throw new Error(`unexpected_query:${query}`)
+  }
+  const github = { publishReviewCheck: async (_repository: string, sha: string,
+    success: boolean) => {
+    assert.equal(sha, head); assert.equal(success, false); timeline.push("publish-failure")
+  } }
+  await claimDispatch(input, sql as never, github as never)
+  assert.deepEqual(timeline,
+    ["prepare", "recover", "prepare", "publish-failure", "record-revocation", "fence"])
 })
 
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {

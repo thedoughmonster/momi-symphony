@@ -31,11 +31,22 @@ alter table momi_agent_ops.run_records
   add column review_check_publication_sha text check (
     review_check_publication_sha is null or review_check_publication_sha ~ '^[0-9a-f]{40}$'
   ),
+  add column review_check_publication_started_at timestamptz,
   add column review_check_revocation_sha text check (
     review_check_revocation_sha is null or review_check_revocation_sha ~ '^[0-9a-f]{40}$'
   ),
   add column review_check_revocation_requested_at timestamptz,
   add column review_check_revoked_at timestamptz;
+
+alter table momi_agent_ops.run_records
+  add constraint run_records_review_check_publication_lease_check check (
+    (review_check_publication_token is null
+      and review_check_publication_sha is null
+      and review_check_publication_started_at is null)
+    or (review_check_publication_token is not null
+      and review_check_publication_sha is not null
+      and review_check_publication_started_at is not null)
+  );
 
 create table momi_agent_ops.review_attempts (
   review_attempt_id uuid primary key default gen_random_uuid(),
@@ -366,6 +377,7 @@ begin
     review_policy_version = p_policy_version, review_profile = p_profile,
     review_receipt_id = null, review_check_sha = null,
     review_check_publication_token = null, review_check_publication_sha = null,
+    review_check_publication_started_at = null,
     review_check_revocation_sha = null, review_check_revocation_requested_at = null,
     review_check_revoked_at = null, updated_at = now()
   where record.dispatch_id = p_dispatch_id;
@@ -508,6 +520,7 @@ begin
     review_policy_version = source.policy_version, review_profile = next_profile,
     review_receipt_id = null, review_check_sha = null,
     review_check_publication_token = null, review_check_publication_sha = null,
+    review_check_publication_started_at = null,
     review_check_revocation_sha = null, review_check_revocation_requested_at = null,
     review_check_revoked_at = null, updated_at = now()
   where run.dispatch_id = source.implementation_dispatch_id;
@@ -619,6 +632,7 @@ declare
   implementation_id uuid;
   issue_id uuid;
   receipt_fingerprint text;
+  incomplete_receipt_fingerprint text;
 begin
   if p_expected_state not in (
     'reserved', 'running', 'ambiguous', 'changes_requested', 'superseded', 'canceled')
@@ -646,9 +660,21 @@ begin
     p_reviewer_dispatch_id::text || ':' || p_host_state || ':' ||
     p_identities_complete::text || ':' || p_interruption_confirmed::text,
     'UTF8'), 'sha256'), 'hex');
+  incomplete_receipt_fingerprint := 'sha256:' || encode(extensions.digest(convert_to(
+    p_reviewer_dispatch_id::text || ':' || p_host_state || ':false:false',
+    'UTF8'), 'sha256'), 'hex');
   if attempt.cancellation_receipt_fingerprint is not null then
-    return attempt.cancellation_receipt_fingerprint = receipt_fingerprint
-      and attempt.state in ('canceled', 'superseded');
+    if attempt.state not in ('canceled', 'superseded') then return false; end if;
+    if attempt.cancellation_receipt_fingerprint = receipt_fingerprint then return true; end if;
+    if attempt.cancellation_receipt_fingerprint <> incomplete_receipt_fingerprint
+      or not p_identities_complete or not p_interruption_confirmed then return false; end if;
+    update momi_agent_ops.review_attempts review set
+      cancellation_receipt_fingerprint = receipt_fingerprint,
+      cancellation_receipt_at = now(),
+      interruption_confirmed_at = coalesce(review.interruption_confirmed_at, now()),
+      updated_at = now()
+    where review.review_attempt_id = attempt.review_attempt_id;
+    return found;
   end if;
   if attempt.state <> p_expected_state then return false; end if;
   if attempt.reviewer_thread_id is not null or attempt.reviewer_turn_id is not null then
@@ -874,7 +900,8 @@ begin
   publication_token := gen_random_uuid();
   update momi_agent_ops.run_records run set
     review_check_publication_token = publication_token,
-    review_check_publication_sha = p_head_sha, updated_at = now()
+    review_check_publication_sha = p_head_sha,
+    review_check_publication_started_at = now(), updated_at = now()
   where run.dispatch_id = p_dispatch_id;
   return publication_token;
 end;
@@ -912,6 +939,7 @@ begin
     review_check_sha = case when p_success and can_record then p_head_sha
       else run.review_check_sha end,
     review_check_publication_token = null, review_check_publication_sha = null,
+    review_check_publication_started_at = null,
     updated_at = now()
   where run.dispatch_id = p_dispatch_id
     and run.review_check_publication_token = p_publication_token
@@ -1109,6 +1137,7 @@ begin
       review_policy_version = null, review_profile = null, review_receipt_id = null,
       review_check_sha = null,
       review_check_publication_token = null, review_check_publication_sha = null,
+      review_check_publication_started_at = null,
       review_check_revocation_sha = null, review_check_revocation_requested_at = null,
       review_check_revoked_at = null, merge_preflight_sha = null,
       merge_preflight_base_sha = null, merge_preflight_review_receipt_id = null,
@@ -1256,6 +1285,71 @@ begin
   where work.dispatch_id in (select owned.dispatch_id from lifecycle owned)
     and run.head_sha is not null
   order by work.dispatch_id;
+end;
+$$;
+
+create function momi_agent_ops.recover_abandoned_review_check_publication_v1(
+  p_dispatch_id uuid, p_capability_token uuid,
+  p_implementation_dispatch_id uuid, p_head_sha text
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare selected_target uuid;
+declare target_issue_id uuid;
+declare publication_token uuid;
+declare publication_sha text;
+declare publication_started_at timestamptz;
+begin
+  if p_head_sha !~ '^[0-9a-f]{40}$' then return false; end if;
+  select work.target_dispatch_id into selected_target
+  from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state = 'requested';
+  if not found or selected_target is null then return false; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  ) select work.linear_issue_id into target_issue_id
+    from momi_agent_ops.dispatches work
+    where work.dispatch_id = p_implementation_dispatch_id
+      and work.dispatch_id in (select owned.dispatch_id from lifecycle owned);
+  if not found then return false; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || target_issue_id::text, 0));
+  perform 1 from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state = 'requested' and work.target_dispatch_id = selected_target
+  for update;
+  if not found then return false; end if;
+  select run.review_check_publication_token, run.review_check_publication_sha,
+    run.review_check_publication_started_at
+  into publication_token, publication_sha, publication_started_at
+  from momi_agent_ops.run_records run
+  where run.dispatch_id = p_implementation_dispatch_id
+    and run.head_sha = p_head_sha
+    and run.review_check_revocation_sha = p_head_sha
+    and run.review_check_revocation_requested_at is not null
+  for update;
+  if not found then return false; end if;
+  if publication_token is null then return true; end if;
+  if publication_sha is distinct from p_head_sha
+    or publication_started_at is null
+    or publication_started_at > now() - interval '5 minutes' then return false; end if;
+  update momi_agent_ops.run_records run set
+    review_check_publication_token = null, review_check_publication_sha = null,
+    review_check_publication_started_at = null, updated_at = now()
+  where run.dispatch_id = p_implementation_dispatch_id
+    and run.review_check_publication_token = publication_token
+    and run.review_check_publication_sha = p_head_sha
+    and run.review_check_publication_started_at = publication_started_at;
+  return found;
 end;
 $$;
 
@@ -1430,6 +1524,7 @@ revoke all on function momi_agent_ops.fence_current_dispatch_generation_v1(uuid)
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text, text
   ),
   momi_agent_ops.prepare_review_check_revocations_v1(uuid, uuid),
+  momi_agent_ops.recover_abandoned_review_check_publication_v1(uuid, uuid, uuid, text),
   momi_agent_ops.record_review_check_revocation_v1(uuid, uuid, uuid, text),
   momi_agent_ops.fence_cancellation_v1(uuid, uuid),
   momi_agent_ops.record_cancellation_v3(uuid, uuid, text),

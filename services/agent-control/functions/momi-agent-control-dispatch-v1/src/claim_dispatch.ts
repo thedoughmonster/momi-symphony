@@ -19,7 +19,7 @@ export async function claimDispatch(input: DispatchInput,
   const claimed = rows[0] ?? null
   if (claimed?.delivery_phase !== "cancel_host" ||
     !claimed.cancellation_target_ids?.length) return claimed
-  const revocations = await sql<{ implementation_dispatch_id: string;
+  let revocations = await sql<{ implementation_dispatch_id: string;
     repository: string; head_sha: string; publication_pending: boolean;
     revocation_required: boolean }[]>`
     select implementation_dispatch_id::text, repository, head_sha,
@@ -27,8 +27,29 @@ export async function claimDispatch(input: DispatchInput,
     from momi_agent_ops.prepare_review_check_revocations_v1(
       ${input.work_id}::uuid, ${input.capability_token}::uuid
     )`
-  if (revocations.some((row) => row.publication_pending)) {
-    throw new Error("review_check_publication_pending")
+  const pendingPublications = revocations.filter((row) => row.publication_pending)
+  if (pendingPublications.length) {
+    for (const publication of pendingPublications) {
+      const recovered = await sql<{ recovered: boolean }[]>`
+        select momi_agent_ops.recover_abandoned_review_check_publication_v1(
+          ${input.work_id}::uuid, ${input.capability_token}::uuid,
+          ${publication.implementation_dispatch_id}::uuid,
+          ${publication.head_sha}) as recovered`
+      if (recovered[0]?.recovered !== true) {
+        throw new Error("review_check_publication_pending")
+      }
+    }
+    revocations = await sql<{ implementation_dispatch_id: string;
+      repository: string; head_sha: string; publication_pending: boolean;
+      revocation_required: boolean }[]>`
+      select implementation_dispatch_id::text, repository, head_sha,
+        publication_pending, revocation_required
+      from momi_agent_ops.prepare_review_check_revocations_v1(
+        ${input.work_id}::uuid, ${input.capability_token}::uuid
+      )`
+    if (revocations.some((row) => row.publication_pending)) {
+      throw new Error("review_check_publication_pending")
+    }
   }
   for (const revocation of revocations.filter((row) => row.revocation_required)) {
     await (github ??= new GitHubReviewGateway()).publishReviewCheck(
