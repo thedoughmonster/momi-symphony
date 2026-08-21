@@ -373,6 +373,46 @@ test("incident observations serialize with dispatch creation and stale slots sta
     }])
   })
 
+test("retry persistence takes the generation lock before updating its dispatch",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await database.sql`
+      update momi_agent_ops.dispatches set work_status = 'claimed', attempt_count = 1,
+        lease_expires_at = now() + interval '5 minutes'
+      where dispatch_id = ${dispatchId}::uuid`
+
+    let releaseLock = () => undefined
+    const lockGate = new Promise<void>((resolve) => { releaseLock = resolve })
+    let lockHeld = () => undefined
+    const lockReady = new Promise<void>((resolve) => { lockHeld = resolve })
+    const locker = database.sql.begin(async (transaction) => {
+      await transaction`select pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+          ${`momi_agent_ops.dispatch_generation:${issueId}`}, 0))`
+      lockHeld()
+      await lockGate
+    })
+    await lockReady
+    let retryFinished = false
+    const retry = database.sql<{ retried: boolean }[]>`
+      select momi_agent_ops.retry_dispatch_v2(
+        ${dispatchId}::uuid, ${capability}::uuid, 'host_failed') as retried
+    `.then((rows) => {
+      retryFinished = true
+      assert.equal(rows[0]?.retried, true)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(retryFinished, false)
+    const statusWhileLocked = await database.sql<{ work_status: string }[]>`
+      select work_status from momi_agent_ops.dispatches
+      where dispatch_id = ${dispatchId}::uuid`
+    assert.equal(statusWhileLocked[0]?.work_status, "claimed")
+    releaseLock()
+    await Promise.all([locker, retry])
+  })
+
 test("rejected dispatches cannot displace guidance and pending reviews stay actionable",
   async (context) => {
     const database = await schedulerHarness.start()

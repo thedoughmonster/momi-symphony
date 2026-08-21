@@ -370,6 +370,38 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.retry_dispatch_v2(
+  p_dispatch_id uuid, p_capability_token uuid, p_error_code text
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare token uuid := gen_random_uuid();
+declare issue_id uuid;
+begin
+  select work.linear_issue_id into issue_id from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending');
+  if not found then return false; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || issue_id::text, 0));
+  update momi_agent_ops.dispatches work set
+    work_status = case when work.attempt_count >= 8 then 'dead_letter' else 'pending' end,
+    next_attempt_at = now() + make_interval(secs => least(300,
+      5 * (2 ^ greatest(work.attempt_count - 1, 0))::integer)),
+    lease_expires_at = null,
+    capability_token_hash = case when work.attempt_count >= 8
+      then work.capability_token_hash else encode(extensions.digest(
+        convert_to(token::text, 'UTF8'), 'sha256'), 'hex') end,
+    wake_capability_token = case when work.attempt_count >= 8 then null else token end,
+    last_error_code = left(coalesce(nullif(p_error_code, ''), 'dispatch_failed'), 120)
+  where work.dispatch_id = p_dispatch_id
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending');
+  return found;
+end;
+$$;
+
 create function momi_agent_ops.reconcile_dispatch_operator_incident_v1()
 returns trigger language plpgsql security invoker set search_path = '' as $$
 declare run momi_agent_ops.run_records%rowtype;
@@ -619,6 +651,7 @@ grant all on function momi_agent_ops.record_operator_incident_v1(
   uuid, uuid, text, text, text, text, uuid, uuid, timestamptz
 ), momi_agent_ops.resolve_operator_incidents_v1(uuid, uuid, text, timestamptz),
   momi_agent_ops.record_linear_writeback_v6(uuid, uuid, uuid),
+  momi_agent_ops.retry_dispatch_v2(uuid, uuid, text),
   momi_agent_ops.record_terminal_v6(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
   ) to service_role;
@@ -627,6 +660,7 @@ revoke all on function momi_agent_ops.record_operator_incident_v1(
   uuid, uuid, text, text, text, text, uuid, uuid, timestamptz
 ), momi_agent_ops.resolve_operator_incidents_v1(uuid, uuid, text, timestamptz),
   momi_agent_ops.record_linear_writeback_v6(uuid, uuid, uuid),
+  momi_agent_ops.retry_dispatch_v2(uuid, uuid, text),
   momi_agent_ops.record_terminal_v6(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
   ), momi_agent_ops.reconcile_dispatch_operator_incident_v1(),
