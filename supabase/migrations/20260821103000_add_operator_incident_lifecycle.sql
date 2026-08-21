@@ -143,6 +143,8 @@ begin
       )
   for update;
   if not found then return null; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || work.linear_issue_id::text, 0));
   select selected.* into run from momi_agent_ops.run_records selected
   where selected.dispatch_id = p_dispatch_id for update;
   if not found then return null; end if;
@@ -317,6 +319,8 @@ begin
   select current_run.* into run from momi_agent_ops.run_records current_run
   where current_run.dispatch_id = new.dispatch_id;
   if not found then return new; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || new.linear_issue_id::text, 0));
   if old.work_status = 'dead_letter' and new.work_status = 'pending' then
     update momi_agent_ops.operator_incidents incident set
       lifecycle_state = 'resolved', resolution_code = 'operator_recovered',
@@ -407,6 +411,9 @@ declare work momi_agent_ops.dispatches%rowtype;
 declare run momi_agent_ops.run_records%rowtype;
 declare generation text;
 declare identity text;
+declare initial_state text := 'ambiguous';
+declare initial_resolution_code text;
+declare initial_superseded_at timestamptz;
 begin
   if new.state = 'released' and old.state is distinct from new.state then
     update momi_agent_ops.operator_incidents incident set
@@ -421,6 +428,8 @@ begin
   where selected.dispatch_id = new.dispatch_id
     and selected.action = ('exec' || 'ute-run');
   if not found then return new; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || work.linear_issue_id::text, 0));
   select selected.* into run from momi_agent_ops.run_records selected
   where selected.dispatch_id = new.dispatch_id;
   if not found then return new; end if;
@@ -428,25 +437,44 @@ begin
   identity := encode(extensions.digest(convert_to(
     new.dispatch_id::text || ':' || run.run_id::text || ':slot_ambiguous:' ||
       generation, 'UTF8'), 'sha256'), 'hex');
-  update momi_agent_ops.operator_incidents incident set
-    lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
-    superseded_at = now(), updated_at = now()
-  where incident.implementation_dispatch_id = new.dispatch_id
-    and incident.category = 'slot_ambiguous'
-    and incident.incident_identity <> identity
-    and incident.lifecycle_state in ('active', 'ambiguous');
+  if exists (select 1 from momi_agent_ops.dispatches newer
+    join momi_agent_ops.project_mappings mapping
+      on mapping.linear_project_id = newer.linear_project_id
+      and mapping.active and mapping.repository = newer.mapped_repository
+      and mapping.base_branch = newer.mapped_base_branch
+    where newer.linear_issue_id = work.linear_issue_id
+      and newer.linear_project_id = work.linear_project_id
+      and newer.action = ('exec' || 'ute-run')
+      and newer.rejection_code is null
+      and newer.mapped_repository = work.mapped_repository
+      and newer.mapped_base_branch = work.mapped_base_branch
+      and (newer.created_at, newer.dispatch_id) >
+        (work.created_at, work.dispatch_id)) then
+    initial_state := 'superseded';
+    initial_resolution_code := 'generation_superseded';
+    initial_superseded_at := now();
+  else
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
+      superseded_at = now(), updated_at = now()
+    where incident.implementation_dispatch_id = new.dispatch_id
+      and incident.category = 'slot_ambiguous'
+      and incident.incident_identity <> identity
+      and incident.lifecycle_state in ('active', 'ambiguous');
+  end if;
   insert into momi_agent_ops.operator_incidents as incident (
     incident_identity, implementation_dispatch_id, run_id, scheduler_slot_id,
     generation_key, linear_issue_id, linear_issue_identifier, linear_issue_url,
     lifecycle_phase, category, lifecycle_state, repository, base_branch,
     pull_request_number, head_sha, dispatch_id, first_observed_at,
-    last_progress_at, guidance_code
+    last_progress_at, guidance_code, resolution_code, superseded_at
   ) values (
     identity, new.dispatch_id, run.run_id, new.slot_id, generation,
     work.linear_issue_id, work.linear_issue_identifier, work.linear_issue_url,
-    'scheduler', 'slot_ambiguous', 'ambiguous', work.mapped_repository,
+    'scheduler', 'slot_ambiguous', initial_state, work.mapped_repository,
     work.mapped_base_branch, run.pull_request_number, run.head_sha,
-    new.dispatch_id, now(), now(), 'reconcile_scheduler_slot'
+    new.dispatch_id, now(), now(), 'reconcile_scheduler_slot',
+    initial_resolution_code, initial_superseded_at
   ) on conflict (incident_identity) do update set
     last_progress_at = greatest(incident.last_progress_at, excluded.last_progress_at),
     observation_count = least(incident.observation_count + 1, 1000000),

@@ -3,7 +3,7 @@ import test from "node:test"
 import type { Sql } from "postgres"
 
 import { schedulerHarness } from "./ready_leaf_scheduler_postgres/harness.ts"
-import { acquire, claim, configure, ownerOne, reconcile,
+import { acquire, claim, configure, issueId as schedulerIssueId, ownerOne, reconcile,
   releaseSha } from "./ready_leaf_scheduler_postgres/contract.ts"
 
 const dispatchId = "67000000-0000-4000-8000-000000000001"
@@ -217,6 +217,58 @@ test("dead-letter incidents stay fenced and scheduler work is not recoverable",
     }])
   })
 
+test("incident observations serialize with dispatch creation and stale slots stay fenced",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+
+    let releaseLock = () => undefined
+    const lockGate = new Promise<void>((resolve) => { releaseLock = resolve })
+    let lockHeld = () => undefined
+    const lockReady = new Promise<void>((resolve) => { lockHeld = resolve })
+    const locker = database.sql.begin(async (transaction) => {
+      await transaction`select pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+          ${`momi_agent_ops.dispatch_generation:${issueId}`}, 0))`
+      lockHeld()
+      await lockGate
+    })
+    await lockReady
+    let observationFinished = false
+    const observation = database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'run_ambiguous',
+        'concurrent-observation', 'working', 'recover_dispatch', null, null, now())
+    `.then(() => { observationFinished = true })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(observationFinished, false)
+    releaseLock()
+    await Promise.all([locker, observation])
+
+    await configure(database.sql, "enabled")
+    const candidate = await reconcile(database.sql, 268)
+    const leader = await acquire(database.sql, ownerOne, releaseSha)
+    assert.ok(leader)
+    const scheduled = await claim(database.sql, ownerOne,
+      leader.fencing_generation, candidate, releaseSha)
+    assert.ok(scheduled.dispatch_id)
+    await seedAdditionalDispatch(database.sql, {
+      dispatchId: "67000000-0000-4000-8000-000000000026",
+      deliveryId: "67000000-0000-4000-8000-000000000027", rejected: false,
+      issueId: schedulerIssueId(268), identifier: "MOX-268" })
+    await database.sql`
+      update momi_agent_ops.scheduler_slots set state = 'quarantined'
+      where dispatch_id = ${scheduled.dispatch_id}::uuid`
+    const staleSlot = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state, resolution_code from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${scheduled.dispatch_id}::uuid
+        and category = 'slot_ambiguous'`
+    assert.deepEqual(staleSlot.map((row) => ({ ...row })), [{
+      lifecycle_state: "superseded", resolution_code: "generation_superseded",
+    }])
+  })
+
 test("rejected and delayed older dispatches cannot displace canonical guidance",
   async (context) => {
     const database = await schedulerHarness.start()
@@ -279,6 +331,7 @@ async function seedImplementation(sql: Sql) {
 
 async function seedAdditionalDispatch(sql: Sql, input: {
   dispatchId: string; deliveryId: string; rejected: boolean
+  issueId?: string; identifier?: string
 }) {
   await sql`
     insert into momi_agent_ops.raw_webhook_envelopes (
@@ -292,8 +345,9 @@ async function seedAdditionalDispatch(sql: Sql, input: {
       linear_project_id, linear_project_name, mapped_repository, mapped_base_branch,
       active_states, work_status, rejection_code, capability_token_hash
     ) values (${input.dispatchId}::uuid, ${input.deliveryId}::uuid,
-      ${`additional:${input.dispatchId}`}, ${issueId}::uuid, 'MOX-267',
-      'https://linear.app/moxx-workboard/issue/MOX-267/operator-incident',
+      ${`additional:${input.dispatchId}`}, ${input.issueId ?? issueId}::uuid,
+      ${input.identifier ?? "MOX-267"},
+      ${`https://linear.app/moxx-workboard/issue/${input.identifier ?? "MOX-267"}/operator-incident`},
       ${"execute-run"}, '{}'::jsonb, ${projectId}::uuid, 'Symphony Control Plane',
       ${input.rejected ? null : repository}, ${input.rejected ? null : "main"},
       array['In Progress'], 'pending', ${input.rejected ? "unknown_project" : null},
