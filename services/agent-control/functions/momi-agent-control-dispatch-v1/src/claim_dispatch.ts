@@ -50,7 +50,7 @@ export async function claimDispatch(input: DispatchInput,
     select reviewer_dispatch_id::text
     from momi_agent_ops.review_attempts
     where implementation_dispatch_id = any(${claimed.cancellation_target_ids}::uuid[])
-      and state in ('running', 'changes_requested', 'ambiguous')
+      and state in ('reserved', 'running', 'changes_requested', 'ambiguous', 'canceled')
     order by reviewer_dispatch_id`
   claimed.cancellation_target_ids = [...new Set([
     ...claimed.cancellation_target_ids,

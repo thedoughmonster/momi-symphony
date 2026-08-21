@@ -31,6 +31,30 @@ test("records authenticated reviewer cancellation receipts before parent complet
   assert.deepEqual(timeline, ["review-receipt", "parent-cancellation"])
 })
 
+test("replays a receipt-persisted cancellation without changing reviewer authority", async () => {
+  const expectedStates: unknown[] = []; let currentState = "reserved"; let parentCalls = 0
+  const sql = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const query = strings.join("?")
+    if (query.includes("select state from")) return [{ state: currentState }]
+    if (query.includes("record_review_cancellation_receipt_v1")) {
+      expectedStates.push(values[2]); currentState = "canceled"; return [{ recorded: true }]
+    }
+    if (query.includes("record_cancellation_v3")) {
+      parentCalls += 1
+      if (parentCalls === 1) throw new Error("simulated_parent_recording_crash")
+      return [{ recorded: true }]
+    }
+    throw new Error(`unexpected_sql:${query}`)
+  }) as unknown as Sql
+  const result = { cancellation_state: "requested" as const,
+    review_cancellations: [receipt] }
+  await assert.rejects(recordCancellation(input, result, sql),
+    /simulated_parent_recording_crash/)
+  assert.equal(await recordCancellation(input, result, sql), true)
+  assert.deepEqual(expectedStates, ["reserved", "canceled"])
+  assert.equal(parentCalls, 2)
+})
+
 test("fails closed before parent completion when a reviewer receipt is refused", async () => {
   let parentRecorded = false
   const sql = (async (strings: TemplateStringsArray) => {

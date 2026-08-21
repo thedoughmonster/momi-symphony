@@ -8,10 +8,10 @@ import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
   capability_token: "00000000-0000-4000-8000-000000000002" }
 
-test("authenticated cancellation expands incomplete ambiguous reviewer targets", async () => {
+test("authenticated cancellation keeps reserved and receipted reviewer targets stable", async () => {
   const implementationId = "00000000-0000-4000-8000-000000000003"
   const reviewerId = "00000000-0000-4000-8000-000000000004"
-  const queries: string[] = []
+  const queries: string[] = []; let reviewerState = "reserved"
   const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
     const query = strings.join("?"); queries.push(query)
     if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
@@ -20,14 +20,21 @@ test("authenticated cancellation expands incomplete ambiguous reviewer targets",
     if (query.includes("prepare_review_check_revocations_v1")) return []
     if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
     if (query.includes("from momi_agent_ops.review_attempts")) {
-      return [{ reviewer_dispatch_id: reviewerId }]
+      return query.includes(`'${reviewerState}'`) ? [{ reviewer_dispatch_id: reviewerId }] : []
     }
     throw new Error("unexpected_query")
   }
-  const claimed = await claimDispatch(input, sql as never)
-  assert.deepEqual(claimed?.cancellation_target_ids, [implementationId, reviewerId])
-  assert.match(queries[3], /state in \('running', 'changes_requested', 'ambiguous'\)/)
-  assert.doesNotMatch(queries[3], /reviewer_thread_id is not null/)
+  const reservedClaim = await claimDispatch(input, sql as never)
+  reviewerState = "canceled"
+  const replayClaim = await claimDispatch(input, sql as never)
+  assert.deepEqual(reservedClaim?.cancellation_target_ids, [implementationId, reviewerId])
+  assert.deepEqual(replayClaim?.cancellation_target_ids,
+    reservedClaim?.cancellation_target_ids)
+  for (const query of [queries[3], queries[7]]) {
+    assert.match(query,
+      /state in \('reserved', 'running', 'changes_requested', 'ambiguous', 'canceled'\)/)
+    assert.doesNotMatch(query, /reviewer_thread_id is not null/)
+  }
 })
 
 test("cancellation publishes and records exact-head revocation before its durable fence", async () => {

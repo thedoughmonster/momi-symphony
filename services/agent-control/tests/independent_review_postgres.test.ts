@@ -757,7 +757,7 @@ async (context) => {
   assert.notEqual(replacement.reviewer_dispatch_id, created.reviewer_dispatch_id)
 })
 
-test("parent cancellation retires ambiguous review capacity without acceptance", async (context) => {
+test("parent cancellation retires reserved review capacity across receipt replay", async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))
   const deliveryId = "31600000-0000-4000-8000-000000000001"
@@ -830,8 +830,6 @@ test("parent cancellation retires ambiguous review capacity without acceptance",
       'review://MOX-260/cancel-ambiguous', 'fnv1a64:2222222222222222',
       array['scheduler_recovery_cancellation'], array['scheduler_recovery_cancellation'], null, 1)
   `
-  await database.sql`select momi_agent_ops.record_review_start_ambiguous_v1(
-    ${created.reviewer_dispatch_id}::uuid, ${created.reviewer_capability_token}::uuid)`
   const revocations = await database.sql<{
     implementation_dispatch_id: string; head_sha: string;
     publication_pending: boolean; revocation_required: boolean
@@ -851,20 +849,39 @@ test("parent cancellation retires ambiguous review capacity without acceptance",
     select momi_agent_ops.fence_cancellation_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid) as fenced`
   assert.equal(fenced.fenced, true)
+  const [blockedParent] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_cancellation_v3(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
+  assert.equal(blockedParent.recorded, false)
   const [forgedReceipt] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_review_cancellation_receipt_v1(
       ${created.reviewer_dispatch_id}::uuid,
       '31600000-0000-4000-8000-000000000099'::uuid,
-      'ambiguous', 'canceled', false, false) as recorded`
+      'reserved', 'canceled', true, true) as recorded`
   assert.equal(forgedReceipt.recorded, false)
-  for (let replay = 0; replay < 2; replay += 1) {
-    const [receipt] = await database.sql<{ recorded: boolean }[]>`
-      select momi_agent_ops.record_review_cancellation_receipt_v1(
-        ${created.reviewer_dispatch_id}::uuid,
-        ${created.reviewer_capability_token}::uuid,
-        'ambiguous', 'canceled', false, false) as recorded`
-    assert.equal(receipt.recorded, true)
-  }
+  const [receipt] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_cancellation_receipt_v1(
+      ${created.reviewer_dispatch_id}::uuid,
+      ${created.reviewer_capability_token}::uuid,
+      'reserved', 'canceled', true, true) as recorded`
+  assert.equal(receipt.recorded, true)
+  const [afterReceipt] = await database.sql<{
+    state: string; active_reviews: number; interruption_confirmed: boolean
+  }[]>`
+    select attempt.state,
+      (select count(*)::integer from momi_agent_ops.review_attempts active
+        where active.state in ('reserved', 'running', 'ambiguous')) as active_reviews,
+      attempt.interruption_confirmed_at is not null as interruption_confirmed
+    from momi_agent_ops.review_attempts attempt
+    where attempt.review_attempt_id = ${created.review_attempt_id}::uuid`
+  assert.deepEqual(afterReceipt, { state: "canceled", active_reviews: 0,
+    interruption_confirmed: true })
+  const [replayedReceipt] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_cancellation_receipt_v1(
+      ${created.reviewer_dispatch_id}::uuid,
+      ${created.reviewer_capability_token}::uuid,
+      'canceled', 'canceled', true, true) as recorded`
+  assert.equal(replayedReceipt.recorded, true)
   const [recorded] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_cancellation_v3(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
@@ -896,14 +913,25 @@ test("parent cancellation retires ambiguous review capacity without acceptance",
   assert.deepEqual(state, { attempt_state: "canceled", active_reviews: 0,
     review_state: "failed", review_receipt_id: null, review_check_sha: null,
     merge_preflight_sha: null })
-  const [replacement] = await database.sql<{ disposition: string }[]>`
-    select disposition from momi_agent_ops.create_review_attempt_v1(
+  const [replacement] = await database.sql<{ disposition: string;
+    reviewer_dispatch_id: string; reviewer_capability_token: string }[]>`
+    select disposition, reviewer_dispatch_id::text, reviewer_capability_token::text
+    from momi_agent_ops.create_review_attempt_v1(
       ${capacityDispatchId}::uuid, ${capacityCallback}::uuid, 'capacity-thread', 'capacity-turn',
       'thedoughmonster/momi-symphony', 'main', 99, ${head}, ${baseSha}, 'high',
       'independent-review-v1', 'fnv1a64:3333333333333333',
       'review://MOX-999/capacity-after-cancel', 'fnv1a64:4444444444444444',
       array['general'], array['general'], null, 1)`
   assert.equal(replacement.disposition, "created")
+  await database.sql`select momi_agent_ops.record_review_start_ambiguous_v1(
+    ${replacement.reviewer_dispatch_id}::uuid,
+    ${replacement.reviewer_capability_token}::uuid)`
+  const [ambiguousReceipt] = await database.sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_review_cancellation_receipt_v1(
+      ${replacement.reviewer_dispatch_id}::uuid,
+      ${replacement.reviewer_capability_token}::uuid,
+      'ambiguous', 'canceled', false, false) as recorded`
+  assert.equal(ambiguousReceipt.recorded, true)
 })
 
 test("cancellation revokes an in-flight exact-head success projection before fencing",
