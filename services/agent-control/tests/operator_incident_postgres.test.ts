@@ -415,6 +415,47 @@ test("retry persistence takes the generation lock before updating its dispatch",
     await Promise.all([locker, retry])
   })
 
+test("Linear writeback takes the generation lock before dispatch row locks",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await database.sql`
+      update momi_agent_ops.dispatches set work_status = 'writeback_pending'
+      where dispatch_id = ${dispatchId}::uuid`
+
+    let releaseLock = () => undefined
+    const lockGate = new Promise<void>((resolve) => { releaseLock = resolve })
+    let lockHeld = () => undefined
+    const lockReady = new Promise<void>((resolve) => { lockHeld = resolve })
+    const locker = database.sql.begin(async (transaction) => {
+      await transaction`select pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+          ${`momi_agent_ops.dispatch_generation:${issueId}`}, 0))`
+      lockHeld()
+      await lockGate
+    })
+    await lockReady
+    let writebackFinished = false
+    const writeback = database.sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_linear_writeback_v6(
+        ${dispatchId}::uuid, ${capability}::uuid, null) as recorded
+    `.then((rows) => {
+      writebackFinished = true
+      assert.equal(rows[0]?.recorded, true)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(writebackFinished, false)
+    await database.sql.begin(async (transaction) => {
+      const rows = await transaction<{ work_status: string }[]>`
+        select work_status from momi_agent_ops.dispatches
+        where dispatch_id = ${dispatchId}::uuid for update nowait`
+      assert.equal(rows[0]?.work_status, "writeback_pending")
+    })
+    releaseLock()
+    await Promise.all([locker, writeback])
+  })
+
 test("rejected dispatches cannot displace guidance and pending reviews stay actionable",
   async (context) => {
     const database = await schedulerHarness.start()

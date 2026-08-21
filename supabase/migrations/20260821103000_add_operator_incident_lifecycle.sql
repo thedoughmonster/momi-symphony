@@ -325,7 +325,18 @@ create function momi_agent_ops.record_linear_writeback_v6(
 declare recorded boolean;
 declare run momi_agent_ops.run_records%rowtype;
 declare work momi_agent_ops.dispatches%rowtype;
+declare issue_id uuid;
 begin
+  select selected.linear_issue_id into issue_id from momi_agent_ops.dispatches selected
+  where selected.dispatch_id = p_dispatch_id
+    and selected.action = ('exec' || 'ute-run')
+    and encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex') in (
+        selected.capability_token_hash, selected.host_callback_token_hash);
+  if found then
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+      'momi_agent_ops.dispatch_generation:' || issue_id::text, 0));
+  end if;
   select selected.* into work from momi_agent_ops.dispatches selected
   where selected.dispatch_id = p_dispatch_id
     and encode(extensions.digest(
