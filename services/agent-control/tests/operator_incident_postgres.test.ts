@@ -167,6 +167,10 @@ test("successful terminals resolve incidents only after durable Linear writeback
       select momi_agent_ops.record_operator_incident_v1(
         ${dispatchId}::uuid, ${capability}::uuid, 'run_ambiguous',
         'before-terminal-writeback', 'working', 'recover_dispatch', null, null, now())`
+    await database.sql`
+      update momi_agent_ops.run_records set merge_sha = ${head},
+        release_state = 'succeeded', release_sha = ${head}
+      where dispatch_id = ${dispatchId}::uuid`
     const telemetry = { policy_version: "mox-execution-efficiency-v1",
       stable_prefix_fingerprint: "fnv1a64:1111111111111111",
       context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 10,
