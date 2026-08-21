@@ -149,6 +149,18 @@ begin
     where selected.review_attempt_id = p_review_attempt_id
       and selected.implementation_dispatch_id = p_dispatch_id;
     if not found or p_scheduler_slot_id is not null then return null; end if;
+    select incident.incident_id into created_incident_id
+    from momi_agent_ops.operator_incidents incident
+    join momi_agent_ops.review_attempts incident_review
+      on incident_review.review_attempt_id = incident.review_attempt_id
+    where incident.implementation_dispatch_id = p_dispatch_id
+      and incident.category = 'reviewer_ambiguous'
+      and incident.lifecycle_state = 'ambiguous'
+      and (incident_review.created_at, incident_review.review_attempt_id) >
+        (review.created_at, review.review_attempt_id)
+    order by incident_review.created_at desc,
+      incident_review.review_attempt_id desc limit 1;
+    if found then return created_incident_id; end if;
   elsif p_review_attempt_id is not null then return null;
   end if;
   if p_category = 'slot_ambiguous' then

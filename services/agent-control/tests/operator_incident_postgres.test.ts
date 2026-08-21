@@ -66,6 +66,19 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
         resolution_code: null },
     ])
 
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
+        ${reviewOne}::uuid, null, now())`
+    const afterDelayedOlderObservation = await database.sql<Array<Record<string, unknown>>>`
+      select generation_key, lifecycle_state, resolution_code
+      from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${dispatchId}::uuid
+      order by generation_key`
+    assert.deepEqual(afterDelayedOlderObservation.map((row) => ({ ...row })), generations.map(
+      (row) => ({ ...row })))
+
     const firstResolution = await database.sql<{ affected: number }[]>`
       select momi_agent_ops.resolve_operator_incidents_v1(
         ${dispatchId}::uuid, ${capability}::uuid, 'operator_recovered', now()
