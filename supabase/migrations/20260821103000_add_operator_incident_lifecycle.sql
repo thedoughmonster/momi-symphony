@@ -108,6 +108,8 @@ declare
   identity text;
   created_incident_id uuid;
   initial_state text;
+  initial_resolution_code text;
+  initial_superseded_at timestamptz;
 begin
   if p_category not in ('terminal_failure', 'run_ambiguous', 'reviewer_ambiguous',
       'callback_ambiguous', 'slot_ambiguous', 'retained_task_ambiguous')
@@ -144,6 +146,19 @@ begin
   select selected.* into run from momi_agent_ops.run_records selected
   where selected.dispatch_id = p_dispatch_id for update;
   if not found then return null; end if;
+  if exists (select 1 from momi_agent_ops.dispatches newer
+    where newer.linear_issue_id = work.linear_issue_id
+      and newer.linear_project_id = work.linear_project_id
+      and newer.action = ('exec' || 'ute-run')
+      and newer.rejection_code is null
+      and newer.mapped_repository = work.mapped_repository
+      and newer.mapped_base_branch = work.mapped_base_branch
+      and (newer.created_at, newer.dispatch_id) >
+        (work.created_at, work.dispatch_id)) then
+    initial_state := 'superseded';
+    initial_resolution_code := 'generation_superseded';
+    initial_superseded_at := p_observed_at;
+  end if;
   if p_category = 'reviewer_ambiguous' then
     select selected.* into review from momi_agent_ops.review_attempts selected
     where selected.review_attempt_id = p_review_attempt_id
@@ -173,30 +188,33 @@ begin
   identity := encode(extensions.digest(convert_to(
     p_dispatch_id::text || ':' || run.run_id::text || ':' || p_category || ':' ||
       p_generation_key, 'UTF8'), 'sha256'), 'hex');
-  initial_state := case when p_category = 'terminal_failure'
-    then 'active' else 'ambiguous' end;
+  initial_state := coalesce(initial_state,
+    case when p_category = 'terminal_failure' then 'active' else 'ambiguous' end);
 
-  update momi_agent_ops.operator_incidents incident set
-    lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
-    superseded_at = p_observed_at, updated_at = p_observed_at
-  where incident.implementation_dispatch_id = p_dispatch_id
-    and incident.category = p_category
-    and incident.incident_identity <> identity
-    and incident.lifecycle_state in ('active', 'ambiguous');
+  if initial_state <> 'superseded' then
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
+      superseded_at = p_observed_at, updated_at = p_observed_at
+    where incident.implementation_dispatch_id = p_dispatch_id
+      and incident.category = p_category
+      and incident.incident_identity <> identity
+      and incident.lifecycle_state in ('active', 'ambiguous');
+  end if;
 
   insert into momi_agent_ops.operator_incidents as incident (
     incident_identity, implementation_dispatch_id, run_id, review_attempt_id,
     scheduler_slot_id, generation_key, linear_issue_id, linear_issue_identifier,
     linear_issue_url, lifecycle_phase, category, lifecycle_state, repository,
     base_branch, pull_request_number, head_sha, dispatch_id, review_generation_id,
-    first_observed_at, last_progress_at, guidance_code
+    first_observed_at, last_progress_at, guidance_code, resolution_code,
+    superseded_at
   ) values (
     identity, p_dispatch_id, run.run_id, p_review_attempt_id, p_scheduler_slot_id,
     p_generation_key, work.linear_issue_id, work.linear_issue_identifier,
     work.linear_issue_url, p_lifecycle_phase, p_category, initial_state,
     work.mapped_repository, work.mapped_base_branch, run.pull_request_number,
     run.head_sha, p_dispatch_id, p_review_attempt_id, p_observed_at, p_observed_at,
-    p_guidance_code
+    p_guidance_code, initial_resolution_code, initial_superseded_at
   ) on conflict (incident_identity) do update set
     last_progress_at = greatest(incident.last_progress_at, excluded.last_progress_at),
     observation_count = least(incident.observation_count + 1, 1000000),
@@ -318,7 +336,9 @@ begin
   phase := case when run.terminal_at is null then 'working' else 'callback' end;
   guidance := case when run.terminal_at is null
     then 'recover_dispatch' else 'retry_terminal_callback' end;
-  generation := 'dead-letter:' || new.attempt_count::text;
+  generation := 'dead-letter:' || new.attempt_count::text || ':' || coalesce(
+    ((extract(epoch from new.dead_letter_recovered_at) * 1000000)::bigint)::text,
+    'initial');
   identity := encode(extensions.digest(convert_to(
     new.dispatch_id::text || ':' || run.run_id::text || ':' || category || ':' ||
       generation, 'UTF8'), 'sha256'), 'hex');
@@ -429,7 +449,13 @@ for each row execute function momi_agent_ops.resolve_review_operator_incident_v1
 create function momi_agent_ops.supersede_operator_incidents_for_new_dispatch_v1()
 returns trigger language plpgsql security invoker set search_path = '' as $$
 begin
-  if new.action = ('exec' || 'ute-run') then
+  if new.action = ('exec' || 'ute-run') and new.rejection_code is null
+    and new.linear_project_id is not null
+    and new.mapped_repository is not null and new.mapped_base_branch is not null
+    and exists (select 1 from momi_agent_ops.project_mappings mapping
+      where mapping.linear_project_id = new.linear_project_id and mapping.active
+        and mapping.repository = new.mapped_repository
+        and mapping.base_branch = new.mapped_base_branch) then
     update momi_agent_ops.operator_incidents incident set
       lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
       superseded_at = now(), updated_at = now()

@@ -284,6 +284,11 @@ test("operator incidents are bounded, exact-generation, private, and idempotent"
   assert.match(migration, /generation_superseded/)
   assert.match(migration,
     /incident_review\.created_at, incident_review\.review_attempt_id[\s\S]+review\.created_at, review\.review_attempt_id/)
+  assert.match(migration, /extract\(epoch from new\.dead_letter_recovered_at\)/)
+  assert.match(migration,
+    /new\.rejection_code is null[\s\S]+mapping\.linear_project_id = new\.linear_project_id/)
+  assert.match(migration,
+    /newer\.created_at, newer\.dispatch_id[\s\S]+work\.created_at, work\.dispatch_id/)
   assert.match(migration, /record_terminal_v6/)
   assert.match(migration,
     /readiness_result = 'unready'[\s\S]+retained_task_ambiguous[\s\S]+reconcile_retained_task/)

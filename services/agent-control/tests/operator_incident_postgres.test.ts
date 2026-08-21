@@ -11,6 +11,7 @@ const capability = "67000000-0000-4000-8000-000000000004"
 const reviewOne = "67000000-0000-4000-8000-000000000005"
 const reviewTwo = "67000000-0000-4000-8000-000000000006"
 const repository = "thedoughmonster/momi-symphony"
+const projectId = "de0dbcdb-9025-4ccc-8b3c-56f23d7367d5"
 const head = "a".repeat(40)
 const base = "b".repeat(40)
 
@@ -148,6 +149,66 @@ test("a retained unready terminal opens one typed operator incident", async (con
   })
 })
 
+test("dead-letter recovery epochs open a fresh incident after re-exhaustion", async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  await seedImplementation(database.sql)
+  await database.sql`
+    update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
+    where dispatch_id = ${dispatchId}::uuid`
+  await database.sql`
+    update momi_agent_ops.dispatches set dead_letter_recovered_at = now(),
+      dead_letter_recovery_owner_issue_identifier = 'MOX-999',
+      dead_letter_recovery_from_attempt_count = 8,
+      dead_letter_recovery_from_error_code = 'codex_host_delivery_failed',
+      dead_letter_recovery_host_dispatch_url = 'https://host.example/v1/dispatch',
+      attempt_count = 0, work_status = 'pending'
+    where dispatch_id = ${dispatchId}::uuid`
+  await database.sql`
+    update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
+    where dispatch_id = ${dispatchId}::uuid`
+  const incidents = await database.sql<Array<Record<string, unknown>>>`
+    select generation_key, lifecycle_state from momi_agent_ops.operator_incidents
+    order by first_observed_at, incident_id`
+  assert.equal(incidents.length, 2)
+  assert.equal(incidents[0]?.lifecycle_state, "resolved")
+  assert.equal(incidents[1]?.lifecycle_state, "ambiguous")
+  assert.notEqual(incidents[0]?.generation_key, incidents[1]?.generation_key)
+})
+
+test("rejected and delayed older dispatches cannot displace canonical guidance",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await seedReview(database.sql, reviewOne, "67000000-0000-4000-8000-000000000007")
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
+        ${reviewOne}::uuid, null, now())`
+    await seedAdditionalDispatch(database.sql, {
+      dispatchId: "67000000-0000-4000-8000-000000000020",
+      deliveryId: "67000000-0000-4000-8000-000000000021", rejected: true })
+    let current = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${dispatchId}::uuid`
+    assert.equal(current[0]?.lifecycle_state, "ambiguous")
+
+    await seedAdditionalDispatch(database.sql, {
+      dispatchId: "67000000-0000-4000-8000-000000000022",
+      deliveryId: "67000000-0000-4000-8000-000000000023", rejected: false })
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
+        ${reviewOne}::uuid, null, now())`
+    current = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${dispatchId}::uuid`
+    assert.equal(current[0]?.lifecycle_state, "superseded")
+  })
+
 async function seedImplementation(sql: Sql) {
   await sql`
     insert into momi_agent_ops.raw_webhook_envelopes (
@@ -159,18 +220,45 @@ async function seedImplementation(sql: Sql) {
       dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
       linear_issue_identifier, linear_issue_url, action, changed_fields,
       mapped_repository, mapped_base_branch, active_states, work_status,
+      linear_project_id, linear_project_name,
       capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id
     ) values (${dispatchId}::uuid, ${deliveryId}::uuid, 'operator-incident-fixture',
       ${issueId}::uuid, 'MOX-267',
       'https://linear.app/moxx-workboard/issue/MOX-267/operator-incident',
       ${"execute-run"}, '{}'::jsonb, ${repository}, 'main', array['In Progress'],
-      'active', ${"1".repeat(64)}, encode(extensions.digest(convert_to(
+      'active', ${projectId}::uuid, 'Symphony Control Plane', ${"1".repeat(64)},
+      encode(extensions.digest(convert_to(
         ${capability}::uuid::text, 'UTF8'), 'sha256'), 'hex'),
       'implementation-thread', 'implementation-turn')`
   await sql`
     insert into momi_agent_ops.run_records (
       dispatch_id, pull_request_number, head_sha, validation_state, validation_sha
     ) values (${dispatchId}::uuid, 17, ${head}, 'succeeded', ${head})`
+}
+
+async function seedAdditionalDispatch(sql: Sql, input: {
+  dispatchId: string; deliveryId: string; rejected: boolean
+}) {
+  await sql`
+    insert into momi_agent_ops.raw_webhook_envelopes (
+      delivery_id, raw_body, payload, payload_sha256, auth_result
+    ) values (${input.deliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+      ${"0".repeat(64)}, 'verified')`
+  await sql`
+    insert into momi_agent_ops.dispatches (
+      dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
+      linear_issue_identifier, linear_issue_url, action, changed_fields,
+      linear_project_id, linear_project_name, mapped_repository, mapped_base_branch,
+      active_states, work_status, rejection_code, capability_token_hash
+    ) values (${input.dispatchId}::uuid, ${input.deliveryId}::uuid,
+      ${`additional:${input.dispatchId}`}, ${issueId}::uuid, 'MOX-267',
+      'https://linear.app/moxx-workboard/issue/MOX-267/operator-incident',
+      ${"execute-run"}, '{}'::jsonb, ${projectId}::uuid, 'Symphony Control Plane',
+      ${input.rejected ? null : repository}, ${input.rejected ? null : "main"},
+      array['In Progress'], 'pending', ${input.rejected ? "unknown_project" : null},
+      ${"3".repeat(64)})`
+  await sql`insert into momi_agent_ops.run_records (dispatch_id)
+    values (${input.dispatchId}::uuid)`
 }
 
 async function seedReview(sql: Parameters<typeof seedImplementation>[0],
