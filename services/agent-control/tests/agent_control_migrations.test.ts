@@ -16,6 +16,8 @@ const nativeCancellationPath =
   "supabase/migrations/20260820143000_retire_action_labels_and_native_cancellation.sql"
 const independentReviewPath =
   "supabase/migrations/20260820160000_add_independent_pr_review_gate.sql"
+const operatorIncidentPath =
+  "supabase/migrations/20260821103000_add_operator_incident_lifecycle.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -258,4 +260,38 @@ test("independent review state is minimal, exact-subject, private, and immutable
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
   assert.match(migration, /from public, anon, authenticated, service_role/)
+})
+
+test("operator incidents are bounded, exact-generation, private, and idempotent", async () => {
+  const migration = await readFile(operatorIncidentPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /create table momi_agent_ops\.operator_incidents/)
+  for (const field of ["incident_identity", "implementation_dispatch_id", "run_id",
+    "review_attempt_id", "scheduler_slot_id", "generation_key", "linear_issue_id",
+    "linear_issue_url", "lifecycle_phase", "category", "repository",
+    "pull_request_number", "head_sha", "first_observed_at", "last_progress_at",
+    "guidance_code", "resolution_code", "observation_count"]) {
+    assert.match(migration, new RegExp(field))
+  }
+  for (const state of ["active", "ambiguous", "resolved", "superseded"]) {
+    assert.match(migration, new RegExp(`'${state}'`))
+  }
+  for (const category of ["terminal_failure", "run_ambiguous", "reviewer_ambiguous",
+    "callback_ambiguous", "slot_ambiguous", "retained_task_ambiguous"]) {
+    assert.match(migration, new RegExp(`'${category}'`))
+  }
+  assert.match(migration, /on conflict \(incident_identity\) do update/)
+  assert.match(migration, /generation_superseded/)
+  assert.match(migration, /record_terminal_v6/)
+  assert.match(migration, /resolve_operator_incidents_v1/)
+  assert.match(migration, /reconcile_dispatch_operator_incident_v1/)
+  assert.match(migration, /new\.work_status <> 'dead_letter'/)
+  assert.match(migration, /reconcile_slot_operator_incident_v1/)
+  assert.match(migration, /new\.state <> 'quarantined'/)
+  assert.match(migration, /resolve_review_operator_incident_v1/)
+  assert.match(migration, /supersede_operator_incidents_for_new_dispatch_v1/)
+  assert.match(migration, /enable row level security/)
+  assert.doesNotMatch(migration, /prompt|transcript|provider_body|payload|token_count|chain_of_thought/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+  assert.doesNotMatch(migration, /slack/i)
 })
