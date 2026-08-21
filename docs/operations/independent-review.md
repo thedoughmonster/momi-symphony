@@ -46,8 +46,9 @@ terminal, or missing. Running remains pending, terminal schedules callback repla
 authenticated implementation retry after an observed missing record may fail the pending attempt
 and create one replacement. If the host acceptance response was lost, the capability-authenticated
 exact-subject terminal callback may atomically bind previously absent independent thread/turn
-identity while completing the pending attempt. A thread-only ambiguous start is recovered from the
-reviewer App Server or reported missing. Recovery never synthesizes acceptance.
+identity while completing the pending attempt. An ambiguous start lacking its exact new thread and
+turn pair is always reported missing; prior turns on a reused reviewer thread are never recovery
+evidence for a new subject. Recovery never synthesizes acceptance.
 
 Agent State derives `reviewing` from the current exact-head attempt rather than a copied review
 mirror. The merge path alone consumes canonical review authority; successful terminalization

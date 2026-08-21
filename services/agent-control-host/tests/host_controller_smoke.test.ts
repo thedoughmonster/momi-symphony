@@ -56,7 +56,7 @@ test("review start ledger releases definite prestart work and fences ambiguous i
   }
 })
 
-test("thread-only ambiguous review start is missing unless its turn is recoverable", async () => {
+test("thread-only ambiguous review start is always missing and cannot reuse an old turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "momi-review-status-"))
   const implementationClient = new FakeAppServer()
   const reviewClient = new FakeAppServer()
@@ -77,10 +77,11 @@ test("thread-only ambiguous review start is missing unless its turn is recoverab
     await ledger.threadStarted(reviewWork, "review-thread")
     assert.deepEqual(await controller.reviewWorkState(reviewWork),
       { review_work_state: "missing" })
-    reviewClient.resumeTurns = [{ id: "review-turn", status: "inProgress", items: [] }]
+    reviewClient.resumeTurns = [{ id: "old-review-turn", status: "completed", items: [] }]
     assert.deepEqual(await controller.reviewWorkState(reviewWork),
-      { review_work_state: "running" })
-    assert.equal(ledger.get(reviewWork)?.turnId, "review-turn")
+      { review_work_state: "missing" })
+    assert.equal(ledger.get(reviewWork)?.turnId, null)
+    assert.equal(reviewClient.requests.some((request) => request.method === "thread/read"), false)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
