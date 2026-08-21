@@ -1,13 +1,12 @@
-import { reviewBudgetFingerprint, reviewExecutionProfile, validReviewFinding } from
-  "../../../src/independent_review.ts"
-import type { DispatchInput, LifecycleEvidenceInput, MergePreflightInput, SchedulerPumpInput,
+import { validReviewFinding } from "../../../src/independent_review.ts"
+import type { DispatchInput, LifecycleEvidenceInput, MergeRequestInput, SchedulerPumpInput,
   ReviewRequestInput, ReviewStatusInput, ReviewTerminalInput, TerminalInput } from "./types.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export function parseDispatchInput(
   value: unknown,
-): DispatchInput | LifecycleEvidenceInput | MergePreflightInput | ReviewRequestInput | ReviewStatusInput |
+): DispatchInput | LifecycleEvidenceInput | MergeRequestInput | ReviewRequestInput | ReviewStatusInput |
   ReviewTerminalInput | SchedulerPumpInput | TerminalInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const body = value as Record<string, unknown>
@@ -33,7 +32,7 @@ export function parseDispatchInput(
       : null
   }
   if (body.event === "review_request") return parseReviewRequest(body)
-  if (body.event === "merge_preflight") return parseMergePreflight(body)
+  if (body.event === "merge_request") return parseMergeRequest(body)
   if (body.event === "review_status") {
     const keys = ["capability_token", "event", "thread_id", "turn_id", "work_id"]
     if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
@@ -61,7 +60,7 @@ export function parseDispatchInput(
     telemetry: body.telemetry as TerminalInput["telemetry"] }
 }
 
-function parseMergePreflight(body: Record<string, unknown>): MergePreflightInput | null {
+function parseMergeRequest(body: Record<string, unknown>): MergeRequestInput | null {
   const keys = ["base_branch", "capability_token", "event", "pull_request_number",
     "repository", "thread_id", "turn_id", "work_id"]
   if (Object.keys(body).sort().join(",") !== keys.sort().join(",") ||
@@ -70,7 +69,7 @@ function parseMergePreflight(body: Record<string, unknown>): MergePreflightInput
     !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repository) ||
     typeof body.base_branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(body.base_branch) ||
     !Number.isSafeInteger(body.pull_request_number) || Number(body.pull_request_number) < 1) return null
-  return body as MergePreflightInput
+  return body as MergeRequestInput
 }
 
 function parseReviewRequest(body: Record<string, unknown>): ReviewRequestInput | null {
@@ -105,20 +104,15 @@ function parseReviewTerminal(body: Record<string, unknown>): ReviewTerminalInput
 function validReviewSubject(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
-  const keys = ["base_sha", "budget_fingerprint", "generation", "head_sha",
-    "implementation_dispatch_id", "model", "policy_version", "profile",
-    "pull_request_number", "reasoning_effort"]
+  const keys = ["base_sha", "head_sha", "implementation_dispatch_id", "policy_version",
+    "profile", "pull_request_number"]
   const profile = String(body.profile) as "low" | "standard" | "high"
   if (!["low", "standard", "high"].includes(profile)) return false
-  const execution = reviewExecutionProfile(profile)
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     uuid.test(String(body.implementation_dispatch_id)) &&
     Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
     /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
     /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
-    Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
-    body.model === execution.model && body.reasoning_effort === execution.reasoning_effort &&
-    body.budget_fingerprint === reviewBudgetFingerprint(profile) &&
     typeof body.policy_version === "string" && body.policy_version.length > 0 &&
     body.policy_version.length <= 120
 }
@@ -126,16 +120,13 @@ function validReviewSubject(value: unknown): boolean {
 function validReviewResult(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
-  const keys = ["artifact_ref", "findings", "result", "result_fingerprint"]
+  const keys = ["findings", "result"]
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     ["accepted", "changes_requested", "inconclusive", "escalate"].includes(String(body.result)) &&
     Array.isArray(body.findings) && body.findings.length <= 100 &&
     body.findings.every(validReviewFinding) &&
     !(body.result === "accepted" && body.findings.some((finding) =>
-      (finding as Record<string, unknown>).severity === "blocking")) &&
-    typeof body.artifact_ref === "string" && body.artifact_ref.length > 0 &&
-    body.artifact_ref.length <= 500 &&
-    /^sha256:[0-9a-f]{64}$/.test(String(body.result_fingerprint))
+      (finding as Record<string, unknown>).severity === "blocking"))
 }
 
 function parseLifecycleEvidence(body: Record<string, unknown>): LifecycleEvidenceInput | null {

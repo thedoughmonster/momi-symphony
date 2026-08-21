@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path"
 
 import type { AppServerClient, HostAcceptance, HostConfiguration, HostDispatch } from "./types.ts"
-import { REVIEW_FINDING_ID_PATTERN, REVIEW_FINDING_PATH_PATTERN } from
+import { REVIEW_FINDING_ID_PATTERN, REVIEW_FINDING_PATH_PATTERN, reviewExecutionProfile } from
   "../../agent-control/src/independent_review.ts"
 import { prepareReviewWorkspace } from "./prepare_review_workspace.ts"
 
@@ -71,20 +71,18 @@ export async function startHostTask(
       context_fingerprint: input.context_fingerprint },
   }
   if (input.schema_version === 4) {
-    turnInput.model = input.review_subject!.model
-    turnInput.effort = input.review_subject!.reasoning_effort
+    const execution = reviewExecutionProfile(input.review_subject!.profile)
+    turnInput.model = execution.model
+    turnInput.effort = execution.reasoning_effort
     turnInput.responsesapiClientMetadata = {
       ...(turnInput.responsesapiClientMetadata as Record<string, unknown>),
       runtime_role: "independent_reviewer",
       implementation_dispatch_id: input.review_subject?.implementation_dispatch_id,
-      review_generation: input.review_subject?.generation,
-      review_model: input.review_subject?.model,
-      review_reasoning_effort: input.review_subject?.reasoning_effort,
-      review_budget_fingerprint: input.review_subject?.budget_fingerprint,
+      review_profile: input.review_subject?.profile,
       review_mode: reviewMode,
     }
     turnInput.outputSchema = { type: "object", additionalProperties: false,
-      required: ["result", "findings", "artifact_ref"], properties: {
+      required: ["result", "findings"], properties: {
         result: { enum: ["accepted", "changes_requested", "inconclusive", "escalate"] },
         findings: { type: "array", maxItems: 100, items: { type: "object",
           additionalProperties: false,
@@ -99,7 +97,7 @@ export async function startHostTask(
             contract: { type: "string", minLength: 1, maxLength: 2000 },
             required_outcome: { type: "string", minLength: 1, maxLength: 2000 },
             evidence: { type: "string", minLength: 1, maxLength: 2000 },
-          } } }, artifact_ref: { type: "string", minLength: 1, maxLength: 500 } },
+          } } } },
       allOf: [{ anyOf: [
         { required: ["result", "findings"], properties: { result: { const: "accepted" },
           findings: { items: { properties: { severity: { const: "nonblocking" } } } } } },

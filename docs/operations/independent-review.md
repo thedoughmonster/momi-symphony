@@ -1,78 +1,48 @@
 # Independent PR review
 
-Normal `execute-run` work keeps its implementation slot from dispatch through validation,
-independent review, rework, merge, development release, and terminal Linear writeback. Review is
-an internal lifecycle phase of the existing control plane; it is not a scheduler, Linear issue,
-or detached debt queue.
+Normal substantive `execute-run` pull requests require one independent substantive review before
+merge. Review is a phase of the existing implementation lifecycle; it is not a second scheduler,
+a Linear issue, or a review-debt queue.
 
-After focused validation succeeds for a coherent PR head, agent-control fresh-reads the PR from
-GitHub, selects the `low`, `standard`, or `high` profile from changed paths, freezes the exact
-repository/PR/head/base/policy subject, and reserves one private review attempt. Sensitive or
-ambiguous surfaces promote to `high`; there is no no-review profile. A bounded packet contains the
-named issue, applicable `AGENTS.md` references, exact changed paths, an exact diff reference,
-current-subject CI metadata, and unresolved finding identities when applicable. Implementation
-transcripts, author reasoning, sibling-review prose, and unrelated history are excluded.
-Applicable rules are loaded only from the protected base revision. Reviewer threads start in the
-host-owned workspace harness, outside the candidate checkout; the exact candidate worktree is
-mounted as read-only review data, and candidate-head `AGENTS.md` files never govern the reviewer.
+After validation succeeds, agent-control reads the live pull request and creates one `pending`
+attempt for the exact repository, PR, head, base, policy, and risk-derived profile. The only
+terminal states are `accepted`, `changes_requested`, `failed`, and `canceled`. A head, base,
+policy, profile, or current-dispatch mismatch makes a historical row non-current without mutating
+that row. At most one attempt is pending per implementation, and at most one accepted attempt can
+exist for an exact subject.
 
-The host's v4 review transport creates a new thread and turn on a reviewer-only App Server with the attested
-`independent_reviewer` role. Its typed output is one of `accepted`, `changes_requested`,
-`inconclusive`, or `escalate` plus compact findings. The reviewer cannot edit, push, merge,
-release, change policy, or invoke Symphony. A reviewer capability is generated inside the private
-ledger and is not available to the implementation task. The implementation callback credential
-cannot record an accepted receipt or publish the dedicated GitHub status.
-The host and reviewer App Server run under distinct `momi-agent-control` and
-`momi-agent-reviewer` operating-system identities. The implementation App Server remains under a
-third implementation identity. The
-reviewer's `CODEX_HOME`, socket, session storage, ledger, and detached review workspaces live under
-the reviewer state directory, accessible only to the reviewer identity and the host's narrow
-`momi-agent-review` group. Exact review objects and worktree metadata come from a separate private
-repository there and are never exposed to implementation turns. Both services
-use `PrivateTmp=true`, so review workspaces intentionally do not use `/tmp`. The root-owned host
-environment and AES-GCM credential are unreadable by the implementation identity. Missing,
-overlapping, or non-private reviewer paths and missing credential material fail host startup closed.
-Restart recovery reconnects reviewer records only through the reviewer daemon; implementation-side
-App Server enumeration cannot address that daemon's thread namespace. Both services execute only
-root-owned release binaries, never code or tools from the implementation user's writable checkout.
+The reviewer runs through the separate reviewer App Server, OS identity, socket, `CODEX_HOME`,
+repository, and read-only detached exact-head workspace. Its callback capability is AES-256-GCM
+sealed at rest. Candidate-head `AGENTS.md` files are review data; governing rules are loaded from
+the protected base. The implementation identity cannot access the reviewer credential or record
+reviewer identity. Accepted results cannot contain blocking findings.
 
-Canonical acceptance is the exact-generation `momi_agent_ops.review_attempts` receipt. Any head,
-base, policy, or profile change makes it stale. A bounded fix may be reverified by the same
-independent reviewer only when the controller proves every changed path is covered by the active
-finding set and no material risk dimension changed; ambiguity requires a fresh reviewer. Accepted
-results cannot contain blocking findings.
-An `escalate` result creates a fresh reviewer attempt through a durable reviewer-authenticated
-transition. Profiles promote only `low → standard → high`; each promotion has a new dispatch,
-thread, turn, capability, and generation. Ordinary retries and escalations share one durable
-three-attempt budget for the exact repository/PR/head/base/policy subject. Exhaustion returns the
-same terminal `review_budget_exhausted` disposition without creating another attempt, including on
-replay, instead of resetting when the request path changes.
+Profiles (`low`, `standard`, `high`) derive execution model, reasoning effort, and budget; those
+mechanical values are not review authority. Inconclusive output and escalation exhaustion are
+failed attempts. Escalation creates a generic child attempt at the next profile. A correction may
+reuse the same independent reviewer only when the complete correction diff is confined to active
+finding paths and base, policy, profile, and material risk are unchanged.
 
-Reviewer cancellation does not depend on a reviewer terminal result. The host returns a sealed,
-exact-attempt cancellation receipt containing its reviewer capability and whether thread/turn
-interruption was confirmed. Agent-control authenticates that receipt against the private attempt
-ledger and idempotently retires ambiguous or superseded capacity. Unknown starts remain failed
-closed; canceled result callbacks cannot create acceptance.
+`momi_agent_ops.current_review_authority_v1` is the sole canonical current-state query. It returns
+an accepted independent attempt only when it matches the current active, noncanceled implementation
+and exact validated subject. Merge uses that answer once under the shared current-dispatch/per-PR
+lock, alongside live exact-head CI, GitHub blockers, the trusted `Symphony Independent Review`
+check, and branch-protection/bypass facts. If eligible, the gateway submits the merge with the
+exact expected head SHA. No merge-preflight receipt is persisted.
 
-The control plane projects accepted canonical evidence to the exact head as
-`Symphony Independent Review` using the reviewer-only GitHub credential. Protect `main` with both
-the existing CI requirement and this status, enforce protection for administrators, disallow force
-pushes/deletion, and do not give implementation credentials permission to alter protection or
-publish this context.
-Success-check publication uses a durable exact-head publication lease. Cancellation first blocks
-new success publication, waits for an in-flight lease to finish, publishes a failure check for the
-exact SHA through the trusted GitHub gateway, and records that revocation before the database may
-fence the lifecycle canceled. Replay resumes from the durable revocation state. This ordering
-prevents either an older success projection or stale merge preflight from surviving cancellation.
+The GitHub review check is a deterministic projection and enforcement backstop, never review
+authority. Its external ID is stable for repository and head; reconciliation updates the owned
+check to in-progress, success, or failure from current database state. There are no publication
+leases, check mirrors, revocation receipts, or proof-of-proof records.
 
-Immediately before merge, call the authenticated `merge_preflight` event. It fresh-reads the PR,
-required CI, the dedicated status, authoritative review/request-changes state, and branch
-protection; combines those facts with the exact accepted private receipt; and runs the pure
-fail-closed reducer. Missing, stale, unknown, ambiguous, bypassable, or contradictory evidence is
-ineligible. The implementation lifecycle cannot complete while an implementation PR lacks
-exact-head validation, accepted review, the projected status, or applicable release evidence.
+Head change and lifecycle cancellation acquire the same lock domain used by merge, atomically
+cancel pending attempts, and make current authority false before committing. Host interruption
+and failure-check projection follow as idempotent best-effort cleanup. A late callback must still
+win the `state = pending` compare-and-set and all current-parent/current-subject checks, so it
+cannot restore canceled or obsolete authority. Recovery reports observed host state and never
+synthesizes acceptance.
 
-Development rollout uses only `.github/workflows/deploy-dev.yml`: apply the single owned migration,
-deploy the dispatch Edge Function, then verify a clean review, changes-requested and bounded-fix
-path, stale-head rejection, reviewer failure/recovery, and credential/bypass refusal. Production
-promotion is not authorized by this procedure.
+Agent State derives `reviewing` from the current exact-head attempt rather than a copied review
+mirror. Successful terminalization requires exact-head validation, accepted independent review,
+an actual merge SHA, and successful release evidence. Development rollout uses only
+`.github/workflows/deploy-dev.yml`; production promotion is not authorized by this procedure.

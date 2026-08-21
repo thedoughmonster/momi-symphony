@@ -2,7 +2,7 @@ import { cancellationFingerprint } from "./cancellation_fingerprint.ts"
 import { buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostCancellation, HostCancellationResult,
-  HostConfiguration, HostRecord, HostReviewCancellationReceipt } from "./types.ts"
+  HostConfiguration, HostRecord } from "./types.ts"
 
 export type HostClientResolver = AppServerClient | ((record: HostRecord) => AppServerClient)
 
@@ -18,21 +18,14 @@ export async function cancelHostWork(
   const prior = await ledger.reserveCancellation(
     input.work_id, cancellationFingerprint(input), input.target_work_ids)
   if (prior?.state !== undefined && prior.state !== "reserved") {
-    return { cancellation_state: prior.state,
-      review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids),
-      unmaterialized_reviewer_dispatch_ids:
-        prior.unmaterializedReviewerDispatchIds ?? [] }
+    return { cancellation_state: prior.state }
   }
   let requested = false
   for (const targetWorkId of input.target_work_ids) {
     let target = ledger.get(targetWorkId)
     if (!target) {
-      if (await ledger.fenceUnmaterializedCancellationTarget(input.work_id, targetWorkId)) {
-        requested = true
-        continue
-      }
-      target = ledger.get(targetWorkId)
-      if (!target) throw new Error("host_cancel_target_missing")
+      requested = true
+      continue
     }
     if (target.state === "terminal") continue
     requested = true
@@ -51,47 +44,32 @@ export async function cancelHostWork(
       continue
     }
     if (target.state === "interactive") {
-      if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
+      if (!target.threadId) continue
       if (!target.cancellationRequestedAt) {
         await ledger.cancellationRequested(target.workId)
-        await targetClient.request("thread/archive", { threadId: target.threadId })
-        await ledger.recordTelemetry(target.workId,
-          buildSyntheticTelemetry(target, "interrupted"))
-        await ledger.terminal(target.workId, { readiness_result: "ready",
-          terminal_disposition: "interrupted",
-          summary: "Interactive discovery task canceled and archived." },
-        new Date().toISOString())
+        try {
+          await targetClient.request("thread/archive", { threadId: target.threadId })
+          await ledger.recordTelemetry(target.workId,
+            buildSyntheticTelemetry(target, "interrupted"))
+          await ledger.terminal(target.workId, { readiness_result: "ready",
+            terminal_disposition: "interrupted",
+            summary: "Interactive discovery task canceled and archived." },
+          new Date().toISOString())
+        } catch { /* Durable database cancellation remains authoritative. */ }
       }
       continue
     }
-    if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
+    if (!target.threadId || !target.turnId) {
+      await ledger.fenceCanceledStart(target.workId)
+      continue
+    }
     if (target.cancellationRequestedAt) continue
-    await targetClient.request("turn/interrupt", {
-      threadId: target.threadId, turnId: target.turnId,
-    })
-    await ledger.interruptionRequested(target.workId)
-    await ledger.interruptionConfirmed(target.workId)
-    await ledger.cancellationRequested(target.workId)
+    const fenced = await ledger.fenceCanceledStart(target.workId)
+    await interruptClaimed(targetClient, ledger, fenced.record, fenced.interruptionClaimed)
   }
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)
-  return { cancellation_state: state,
-    review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids),
-    unmaterialized_reviewer_dispatch_ids:
-      ledger.getCancellation(input.work_id)?.unmaterializedReviewerDispatchIds ?? [] }
-}
-
-function reviewCancellationReceipts(ledger: HostLedger,
-  targetWorkIds: string[]): HostReviewCancellationReceipt[] {
-  return targetWorkIds.flatMap((workId) => {
-    const record = ledger.get(workId)
-    if (record?.runtimeRole !== "independent_reviewer" || record.state !== "canceled") return []
-    const identitiesComplete = Boolean(record.threadId && record.turnId)
-    return [{ reviewer_dispatch_id: record.workId,
-      capability_token: record.capabilityToken, host_state: "canceled" as const,
-      identities_complete: identitiesComplete,
-      interruption_confirmed: identitiesComplete && Boolean(record.interruptionConfirmedAt) }]
-  })
+  return { cancellation_state: state }
 }
 
 async function interruptClaimed(client: AppServerClient, ledger: HostLedger,
@@ -104,6 +82,5 @@ async function interruptClaimed(client: AppServerClient, ledger: HostLedger,
     await ledger.interruptionConfirmed(record.workId)
   } catch (error) {
     await ledger.interruptionFailed(record.workId)
-    throw error
   }
 }

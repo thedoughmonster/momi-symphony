@@ -18,7 +18,7 @@ import { recordLinearWriteback } from "./record_linear_writeback.ts"
 import { recordTerminal } from "./record_terminal.ts"
 import { retryDispatch } from "./retry_dispatch.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
-import { processMergePreflight, processReviewRequest, processReviewStatus,
+import { processMergeRequest, processReviewRequest, processReviewStatus,
   processReviewTerminal } from "./review_controller.ts"
 import type { DispatchDependencies, TerminalInput } from "./types.ts"
 
@@ -55,7 +55,7 @@ export async function handleRequestWithDependencies(
       if (input.event === "review_request") return Response.json(await processReviewRequest(input))
       if (input.event === "review_status") return Response.json(await processReviewStatus(input))
       if (input.event === "review_terminal") return Response.json(await processReviewTerminal(input))
-      if (input.event === "merge_preflight") return Response.json(await processMergePreflight(input))
+      if (input.event === "merge_request") return Response.json(await processMergeRequest(input))
       if (input.event === "lifecycle_evidence") {
         return Response.json(await processLifecycleEvidence(input))
       }

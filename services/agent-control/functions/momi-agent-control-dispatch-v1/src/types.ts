@@ -62,8 +62,8 @@ export type ReviewStatusInput = DispatchInput & {
   turn_id: string
 }
 
-export type MergePreflightInput = DispatchInput & {
-  event: "merge_preflight"
+export type MergeRequestInput = DispatchInput & {
+  event: "merge_request"
   thread_id: string
   turn_id: string
   repository: string
@@ -83,18 +83,12 @@ export type ReviewTerminalInput = {
     pull_request_number: number
     head_sha: string
     base_sha: string
-    generation: number
     profile: "low" | "standard" | "high"
-    model: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"
-    reasoning_effort: "low" | "medium" | "high"
-    budget_fingerprint: string
     policy_version: string
   }
   review_result: null | {
     result: "accepted" | "changes_requested" | "inconclusive" | "escalate"
     findings: Array<Record<string, unknown>>
-    artifact_ref: string
-    result_fingerprint: string
   }
   terminal_disposition: "completed" | "failed" | "interrupted"
   archived_at: string
@@ -147,9 +141,7 @@ export type ClaimedDispatch = {
 
 export type HostAcceptance = { thread_id: string; turn_id: string }
 
-export type HostCancellation = { cancellation_state: "requested" | "already_terminal";
-  review_cancellations: import("./review_cancellation_receipt.ts").ReviewCancellationReceipt[];
-  unmaterialized_reviewer_dispatch_ids: string[] }
+export type HostCancellation = { cancellation_state: "requested" | "already_terminal" }
 
 export type HostRecovery = { recovery_state: Exclude<RecoveryState,
   "not_requested" | "requested"> }

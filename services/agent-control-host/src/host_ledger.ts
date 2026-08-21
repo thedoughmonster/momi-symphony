@@ -25,7 +25,6 @@ export class HostLedger {
     }
     for (const record of parsed.cancellations ?? []) {
       record.targetWorkIds ??= record.targetWorkId ? [record.targetWorkId] : []
-      record.unmaterializedReviewerDispatchIds ??= []
       this.cancellations.set(record.workId, record)
     }
     for (const record of parsed.recoveries ?? []) this.recoveries.set(record.workId, record)
@@ -53,25 +52,8 @@ export class HostLedger {
       return existing
     }
     this.cancellations.set(workId, { workId, fingerprint, targetWorkIds,
-      unmaterializedReviewerDispatchIds: [], state: "reserved",
-      updatedAt: new Date().toISOString() })
+      state: "reserved", updatedAt: new Date().toISOString() })
     await this.persist(); return null
-  }
-  async fenceUnmaterializedCancellationTarget(cancellationWorkId: string,
-    targetWorkId: string): Promise<boolean> {
-    const cancellation = this.cancellations.get(cancellationWorkId)
-    if (!cancellation || !cancellation.targetWorkIds.includes(targetWorkId)) {
-      throw new Error("host_cancellation_missing")
-    }
-    if (this.records.has(targetWorkId)) return false
-    cancellation.unmaterializedReviewerDispatchIds ??= []
-    if (!cancellation.unmaterializedReviewerDispatchIds.includes(targetWorkId)) {
-      cancellation.unmaterializedReviewerDispatchIds.push(targetWorkId)
-      cancellation.unmaterializedReviewerDispatchIds.sort()
-      cancellation.updatedAt = new Date().toISOString()
-      await this.persist()
-    }
-    return true
   }
   async completeCancellation(workId: string, state: "requested" | "already_terminal"): Promise<void> {
     const record = this.cancellations.get(workId)
@@ -123,10 +105,6 @@ export class HostLedger {
       "stable_prefix_fingerprint" | "context_fingerprint" | "runtime_role" |
       "review_subject" | "review_workspace_id">,
   ): Promise<HostRecord> {
-    if ([...this.cancellations.values()].some((cancellation) =>
-      cancellation.unmaterializedReviewerDispatchIds?.includes(workId))) {
-      throw new Error("host_dispatch_canceled")
-    }
     if (dispatch?.runtime_role === "independent_reviewer" && !this.reviewCredentials) {
       throw new Error("review_credential_boundary_required")
     }

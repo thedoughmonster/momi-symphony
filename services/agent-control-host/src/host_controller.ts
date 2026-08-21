@@ -156,8 +156,8 @@ export class HostController {
       (record, turn) => this.finalize(record, turn), runtimeRole)
   }
   private async recover(record: HostRecord, subscribe = false): Promise<void> {
-    const turn = await recoverHostTurn(this.clientFor(record), record, subscribe)
-    if (turn && turn.status !== "inProgress") await this.finalize(record, turn)
+    const recovery = await recoverHostTurn(this.clientFor(record), record, subscribe)
+    if (recovery.state === "terminal") await this.finalize(record, recovery.turn)
   }
   private async finalize(record: HostRecord, turn: TurnShape): Promise<void> {
     if (!record.threadId || this.finalizing.has(record.workId)) return

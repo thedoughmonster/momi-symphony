@@ -1,5 +1,5 @@
 import type { HostDispatch } from "./types.ts"
-import { reviewBudgetFingerprint, reviewExecutionBudget, reviewExecutionProfile } from
+import { reviewExecutionBudget } from
   "../../agent-control/src/independent_review.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -68,20 +68,15 @@ export function parseHostDispatch(value: unknown): HostDispatch | null {
 function validReviewSubject(value: unknown, policyVersion: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const body = value as Record<string, unknown>
-  const keys = ["base_sha", "budget_fingerprint", "generation", "head_sha",
-    "implementation_dispatch_id", "model", "policy_version", "profile",
-    "pull_request_number", "reasoning_effort"]
+  const keys = ["base_sha", "head_sha", "implementation_dispatch_id", "policy_version",
+    "profile", "pull_request_number"]
   const profile = String(body.profile) as "low" | "standard" | "high"
   if (!["low", "standard", "high"].includes(profile)) return false
-  const execution = reviewExecutionProfile(profile)
   return Object.keys(body).sort().join(",") === keys.sort().join(",") &&
     uuid.test(String(body.implementation_dispatch_id)) &&
     Number.isSafeInteger(body.pull_request_number) && Number(body.pull_request_number) > 0 &&
     /^[0-9a-f]{40}$/.test(String(body.head_sha)) &&
     /^[0-9a-f]{40}$/.test(String(body.base_sha)) &&
-    Number.isSafeInteger(body.generation) && Number(body.generation) > 0 &&
-    body.model === execution.model && body.reasoning_effort === execution.reasoning_effort &&
-    body.budget_fingerprint === reviewBudgetFingerprint(profile) &&
     typeof body.policy_version === "string" && body.policy_version === policyVersion
 }
 

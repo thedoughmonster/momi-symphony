@@ -30,11 +30,7 @@ export type HostReviewSubject = {
   pull_request_number: number
   head_sha: string
   base_sha: string
-  generation: number
   profile: "low" | "standard" | "high"
-  model: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"
-  reasoning_effort: "low" | "medium" | "high"
-  budget_fingerprint: string
   policy_version: string
 }
 
@@ -52,8 +48,6 @@ export type HostReviewFinding = {
 export type HostReviewResult = {
   result: "accepted" | "changes_requested" | "inconclusive" | "escalate"
   findings: HostReviewFinding[]
-  artifact_ref: string
-  result_fingerprint: string
 }
 
 export type HostExecutionBudget = {
@@ -100,16 +94,6 @@ export type HostCancellation = {
 
 export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
-  review_cancellations: HostReviewCancellationReceipt[]
-  unmaterialized_reviewer_dispatch_ids: string[]
-}
-
-export type HostReviewCancellationReceipt = {
-  reviewer_dispatch_id: string
-  capability_token: string
-  host_state: "canceled"
-  identities_complete: boolean
-  interruption_confirmed: boolean
 }
 
 export type HostRecovery = {
@@ -128,7 +112,6 @@ export type HostCancellationRecord = {
   workId: string
   fingerprint: string
   targetWorkIds: string[]
-  unmaterializedReviewerDispatchIds?: string[]
   // Read compatibility for durable schema-v1 host ledgers.
   targetWorkId?: string
   state: "reserved" | "requested" | "already_terminal"

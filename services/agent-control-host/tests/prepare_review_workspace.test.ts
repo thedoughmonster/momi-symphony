@@ -43,7 +43,7 @@ test("review workspace is a detached exact-head snapshot reused only after a cle
     await run("git", ["commit", "-m", "second"], { cwd: repository })
     const second = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
     const updated = { ...dispatch, work_id: randomUUID(),
-      review_subject: { ...dispatch.review_subject!, head_sha: second, generation: 2 } }
+      review_subject: { ...dispatch.review_subject!, head_sha: second } }
     const nextWorkspace = await prepareReviewWorkspace({ workspaceRoot: repository,
       repository: "thedoughmonster/momi-symphony", baseBranch: "main",
       reviewRepositoryRoot: repository, reviewWorkspaceRoot }, updated)
@@ -78,9 +78,7 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
     await run("git", ["commit", "-m", "subject"], { cwd: repository })
     const head = (await run("git", ["rev-parse", "HEAD"], { cwd: repository })).stdout.trim()
     const subject = { implementation_dispatch_id: implementationId, pull_request_number: 16,
-      head_sha: head, base_sha: head, generation: 1, profile: "high" as const,
-      model: "gpt-5.6-sol" as const, reasoning_effort: "high" as const,
-      budget_fingerprint: "fnv1a64:0b9ef0157af3f30a",
+      head_sha: head, base_sha: head, profile: "high" as const,
       policy_version: "independent-review-v1" }
     const reviewDispatch = { schema_version: 4, work_id: reviewerId,
       review_workspace_id: reviewerId, review_subject: subject } as HostDispatch
@@ -95,8 +93,7 @@ test("terminal implementation cleanup removes an abandoned changes-requested wor
     await ledger.accept(reviewerId, "review-thread", "review-turn")
     await ledger.terminal(reviewerId, { readiness_result: "ready",
       terminal_disposition: "completed", summary: "Changes requested." },
-    new Date().toISOString(), { result: "changes_requested", findings: [],
-      artifact_ref: "review://attempt/1", result_fingerprint: `sha256:${"1".repeat(64)}` })
+    new Date().toISOString(), { result: "changes_requested", findings: [] })
     await ledger.callbackSent(reviewerId)
     await ledger.reserve(implementationId, "implementation-fingerprint", randomUUID())
     await ledger.accept(implementationId, "implementation-thread", "implementation-turn")

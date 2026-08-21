@@ -226,121 +226,35 @@ test("native cancellation retires routine labels and fences the exact lifecycle"
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
 })
 
-test("independent review receipts are private, exact-revision, and author-proof", async () => {
+test("independent review state is minimal, exact-subject, private, and immutable", async () => {
   const migration = await readFile(independentReviewPath, "utf8")
   assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
   assert.match(migration, /create table momi_agent_ops\.review_attempts/)
-  assert.match(migration, /implementation_dispatch_id uuid not null references/)
-  assert.match(migration, /reviewer_dispatch_id uuid not null unique/)
-  assert.match(migration, /reverification_of uuid references/)
-  assert.match(migration, /escalation_of uuid references/)
-  assert.match(migration, /escalation_depth integer not null default 0/)
-  assert.match(migration, /source\.state = 'changes_requested'/)
-  assert.match(migration, /runtime_role.*independent_reviewer/s)
-  assert.match(migration, /head_sha text not null/)
-  assert.match(migration, /base_sha text not null/)
-  assert.match(migration, /profile in \('low', 'standard', 'high'\)/)
-  assert.match(migration,
-    /\('low', 'gpt-5\.6-luna', 'low', 'fnv1a64:9ede9fa30f041ad1'\)/)
-  assert.match(migration,
-    /\('standard', 'gpt-5\.6-terra', 'medium', 'fnv1a64:9631b8b9d5daf636'\)/)
-  assert.match(migration,
-    /\('high', 'gpt-5\.6-sol', 'high', 'fnv1a64:0b9ef0157af3f30a'\)/)
-  assert.match(migration, /review\.review_model = p_review_model/)
-  assert.match(migration, /review\.reasoning_effort = p_reasoning_effort/)
-  assert.match(migration, /review\.budget_fingerprint = p_budget_fingerprint/)
-  assert.match(migration, /create_review_attempt_v1/)
-  assert.match(migration, /create_escalated_review_attempt_v1/)
-  assert.match(migration, /when 'low' then 'standard'.*when 'standard' then 'high'/s)
-  assert.match(migration, /disposition := 'review_budget_exhausted'/)
-  assert.match(migration, /subject_attempt_number between 1 and 3/)
-  assert.match(migration, /subject_attempt_limit = 3/)
-  assert.match(migration, /review_attempts_one_escalation_idx/)
-  assert.match(migration, /record_reviewer_start_v1/)
-  assert.match(migration, /reviewer_thread_id is distinct from work\.codex_thread_id/)
-  assert.match(migration, /create function momi_agent_ops\.fence_cancellation_v1/)
-  assert.match(migration, /implementation_canceled/)
-  assert.match(migration, /attempt\.state in \('canceled', 'superseded'\)/)
-  assert.match(migration, /record_review_start_ambiguous_v1/)
-  assert.match(migration, /record_review_cancellation_receipt_v1/)
-  assert.match(migration, /record_unmaterialized_review_cancellation_v1/)
-  assert.match(migration, /host_unmaterialized_at/)
-  assert.match(migration, /cancellation_receipt_fingerprint/)
-  assert.match(migration, /state in \('reserved', 'running', 'ambiguous'\)/)
-  assert.match(migration, /disposition := 'already_ambiguous'/)
-  assert.match(migration, /review\.state = 'ambiguous'.*review\.runtime_role is null/s)
-  assert.match(migration, /attempt\.state = 'ambiguous'[\s\S]+state = 'failed'/)
-  assert.match(migration, /interruption_confirmed_at = coalesce\(review\.interruption_confirmed_at, now\(\)\)/)
-  assert.doesNotMatch(migration, /record_review_interruption_v1/)
-  assert.doesNotMatch(migration, /interruption_confirmed_at = case when review\.state = 'running'/)
-  assert.match(migration, /record_review_result_v1/)
-  assert.match(migration, /p_result = 'accepted' and blocking_count > 0/)
-  assert.match(migration, /begin_review_check_publication_v1/)
-  assert.match(migration, /finish_review_check_publication_v1/)
-  assert.match(migration, /prepare_review_check_revocations_v1/)
-  assert.match(migration, /reconstruct_cancellation_targets_v1/)
-  assert.match(migration, /'reserved', 'running', 'changes_requested', 'ambiguous', 'canceled', 'superseded'/)
-  assert.match(migration, /array_agg\(target\.dispatch_id order by target\.dispatch_id\)/)
-  assert.match(migration, /cardinality\(targets\) not between 1 and 128/)
-  assert.match(migration, /recover_abandoned_review_check_publication_v1/)
-  assert.match(migration, /publication_started_at > now\(\) - interval '5 minutes'/)
-  assert.match(migration, /record_review_check_revocation_v1/)
-  assert.match(migration, /merge_review_eligible_v1/)
-  assert.match(migration, /record_merge_preflight_v1/)
-  assert.match(migration, /merge_preflight_review_receipt_id/)
-  assert.match(migration, /run\.merge_sha is null/)
-  assert.match(migration, /record_lifecycle_evidence_v3/)
-  assert.match(migration, /if p_phase = 'reviewing' then return false/)
-  assert.match(migration,
-    /record_lifecycle_evidence_v3[\s\S]+fence_current_dispatch_generation_v1\(p_dispatch_id\)[\s\S]+for update/)
-  assert.match(migration,
-    /record_terminal_v5[\s\S]+fence_current_dispatch_generation_v1\(p_dispatch_id\)[\s\S]+for update/)
-  assert.match(migration, /work\.action = \('exec' \|\| 'ute-run'\)/)
-  assert.match(migration, /serialize_dispatch_generation_v1/)
-  assert.match(migration, /fence_current_dispatch_generation_v1/)
-  assert.match(migration, /disposition := 'current_generation_refused'/)
-  assert.match(migration, /pg_advisory_xact_lock\(pg_catalog\.hashtextextended/)
-  assert.equal((migration.match(/momi_agent_ops\.review_capacity/g) ?? []).length, 2)
-  assert.match(migration,
-    /create_escalated_review_attempt_v1[\s\S]+work\.work_status in \('writeback_pending', 'active'\)[\s\S]+work\.cancellation_requested_at is null and work\.cancelled_at is null[\s\S]+for update/)
-  for (const routine of ["create_review_attempt_v1", "create_escalated_review_attempt_v1",
-    "record_reviewer_start_v1", "record_review_result_v1",
-    "record_lifecycle_evidence_v3", "record_terminal_v5"]) {
-    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
-    const end = migration.indexOf("\n$$;", start)
-    const body = migration.slice(start, end)
-    assert.ok(start >= 0 && end > start, `${routine} body missing`)
-    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
-      `${routine} generation fence missing`)
-    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") < body.indexOf("for update"),
-      `${routine} must acquire the advisory fence before row locks`)
-  }
-  for (const routine of ["record_review_start_ambiguous_v1",
-    "begin_review_check_publication_v1", "finish_review_check_publication_v1",
-    "merge_review_eligible_v1", "record_merge_preflight_v1"]) {
-    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
-    const end = migration.indexOf("\n$$;", start)
-    const body = migration.slice(start, end)
-    assert.ok(start >= 0 && end > start, `${routine} body missing`)
-    assert.ok(body.indexOf("fence_current_dispatch_generation_v1") >= 0,
-      `${routine} generation fence missing`)
-  }
-  for (const routine of ["record_review_cancellation_receipt_v1",
-    "record_unmaterialized_review_cancellation_v1",
-    "reconstruct_cancellation_targets_v1",
-    "recover_abandoned_review_check_publication_v1"]) {
-    const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
-    const body = migration.slice(start, migration.indexOf("\n$$;", start))
-    assert.ok(body.indexOf("pg_advisory_xact_lock") >= 0)
-    assert.ok(body.indexOf("pg_advisory_xact_lock") < body.indexOf("for update"))
+  for (const field of ["implementation_dispatch_id", "reviewer_dispatch_id",
+    "reviewer_callback_capability_hash", "repository", "pull_request_number",
+    "head_sha", "base_sha", "policy_version", "profile", "reviewer_identity",
+    "reviewer_thread_id", "reviewer_turn_id", "findings"]) {
+    assert.match(migration, new RegExp(field))
   }
   assert.match(migration,
-    /current_run\.head_sha is distinct from p_previous_revision_sha then return false/)
-  assert.match(migration, /current_run\.branch_name is distinct from p_branch_name/)
-  assert.match(migration, /current_run\.pull_request_number is distinct from p_pull_request_number/)
-  assert.match(migration, /record_terminal_v5/)
-  assert.match(migration, /implementation_terminal_obligations_incomplete/)
-  assert.match(migration, /review_attempts_one_active_idx/)
+    /state in \([\s\S]*'pending',[\s\S]*'accepted',[\s\S]*'changes_requested',[\s\S]*'failed',[\s\S]*'canceled'/)
+  assert.match(migration, /review_attempts_one_pending_idx/)
+  assert.match(migration, /review_attempts_one_accepted_subject_idx/)
+  assert.match(migration, /reviewer_dispatch_id <> implementation_dispatch_id/)
+  assert.match(migration, /reviewer_identity_not_independent/)
+  assert.match(migration, /review_attempt_history_immutable/)
+  assert.match(migration, /jsonb_path_exists[\s\S]+severity == "blocking"/)
+  for (const obsolete of ["run_records_review_receipt_fk", "merge_preflight",
+    "review_check_sha", "publication", "revocation", "cancellation_receipt",
+    "review_model", "reasoning_effort", "budget_fingerprint",
+    "subject_attempt_number", "packet_fingerprint", "rules_fingerprint",
+    "risk_dimensions", "escalation_depth"]) {
+    assert.doesNotMatch(migration, new RegExp(obsolete))
+  }
+  assert.doesNotMatch(migration, /\bgeneration\s+(?:integer|bigint|text)/)
+  assert.doesNotMatch(migration,
+    /state[^;]+(?:'stale'|'superseded'|'reserved'|'running'|'ambiguous'|'inconclusive')/s)
+  assert.doesNotMatch(migration, /alter table momi_agent_ops\.run_records/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
   assert.match(migration, /from public, anon, authenticated, service_role/)

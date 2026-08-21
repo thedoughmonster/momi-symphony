@@ -1,5 +1,5 @@
 import { REVIEW_CHECK_NAME, reviewRiskDimensions,
-  type ReviewChangedHunk, type ReviewRiskDimension } from "../../../src/independent_review.ts"
+  type ReviewRiskDimension } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 
 export type GitHubReviewSubject = {
@@ -14,9 +14,8 @@ export type GitHubReviewSubject = {
   diffArtifactRef: string
 }
 
-export type GitHubCorrectionDelta = { changedPaths: string[];
-  changedHunks: ReviewChangedHunk[];
-  riskDimensions: ReviewRiskDimension[] }
+export type GitHubCorrectionDelta = { changedPaths: string[]; complete: boolean;
+  riskDimensions: ReviewRiskDimension[]; diffArtifactRef: string }
 
 export type GitHubMergeFacts = {
   baseHeadSha: string
@@ -65,8 +64,8 @@ export class GitHubReviewGateway {
     if (changedPaths.length === 0 || changedPaths.some((path) => !path)) {
       throw new Error("review_diff_empty_or_malformed")
     }
-    const completePatches = files.map((file) => completeChangedHunks(file))
-    const riskDimensions = completePatches.some((hunks) => hunks === null)
+    const complete = files.every(completePatchEvidence)
+    const riskDimensions = !complete
       ? ["ambiguous" as const]
       : reviewRiskDimensions(files.map((file) => ({
         path: text(file.filename), patch: String(file.patch),
@@ -146,21 +145,19 @@ export class GitHubReviewGateway {
     const mergeBase = object(comparison.merge_base_commit)
     if (comparison.status !== "ahead" || text(mergeBase.sha) !== previousSha ||
       !Number.isSafeInteger(comparison.ahead_by) || Number(comparison.ahead_by) < 1) {
-      return { changedPaths: paths, changedHunks: [], riskDimensions: ["ambiguous"] }
+      return { changedPaths: paths, complete: false, riskDimensions: ["ambiguous"],
+        diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${previousSha}...${nextSha}` }
     }
-    const changedHunks: GitHubCorrectionDelta["changedHunks"] = []
-    for (const file of files) {
-      const hunks = completeChangedHunks(file)
-      if (hunks === null) {
-        return { changedPaths: paths, changedHunks: [], riskDimensions: ["ambiguous"] }
-      }
-      changedHunks.push(...hunks)
-    }
-    if (changedHunks.length === 0) return { changedPaths: paths, changedHunks,
-      riskDimensions: ["ambiguous"] }
-    return { changedPaths: paths, changedHunks,
-      riskDimensions: reviewRiskDimensions(files.map((file) => ({ path: text(file.filename),
-        patch: String(file.patch) }))) }
+    const complete = files.every(completePatchEvidence)
+    return { changedPaths: paths, complete,
+      riskDimensions: complete ? reviewRiskDimensions(files.map((file) => ({
+        path: text(file.filename), patch: String(file.patch) }))) : ["ambiguous"],
+      diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${previousSha}...${nextSha}` }
+  }
+
+  async loadRevisionDiff(repository: string, baseSha: string,
+    headSha: string): Promise<GitHubCorrectionDelta> {
+    return this.loadCorrectionDelta(repository, baseSha, headSha)
   }
 
   async loadHeadChecks(repository: string, headSha: string): Promise<Array<{
@@ -269,12 +266,40 @@ export class GitHubReviewGateway {
     return nodes.filter((node) => node.isResolved !== true).length
   }
 
+  async projectReviewCheck(repository: string, headSha: string,
+    conclusionValue: "success" | "pending" | "failure", description: string): Promise<unknown> {
+    const externalId = `symphony-review:${repository}#${headSha}`
+    const checks = await this.request<Record<string, unknown>>(
+      `/repos/${repository}/commits/${headSha}/check-runs?check_name=${encodeURIComponent(REVIEW_CHECK_NAME)}`)
+    const runs = Array.isArray(checks.check_runs)
+      ? checks.check_runs as Array<Record<string, unknown>> : []
+    const existing = runs.find((run) => text(run.external_id) === externalId &&
+      Number(object(run.app).id) === this.appId && text(object(run.app).slug) === this.publisher)
+    const payload = { name: REVIEW_CHECK_NAME, head_sha: headSha, external_id: externalId,
+      status: conclusionValue === "pending" ? "in_progress" : "completed",
+      ...(conclusionValue === "pending" ? {} : { conclusion: conclusionValue }),
+      output: { title: REVIEW_CHECK_NAME, summary: description.slice(0, 65_000) } }
+    const id = Number(existing?.id)
+    return this.request(Number.isSafeInteger(id) && id > 0
+      ? `/repos/${repository}/check-runs/${id}` : `/repos/${repository}/check-runs`, {
+      method: Number.isSafeInteger(id) && id > 0 ? "PATCH" : "POST",
+      body: JSON.stringify(payload) })
+  }
+
   publishReviewCheck(repository: string, headSha: string,
     accepted: boolean, description: string): Promise<unknown> {
-    return this.request(`/repos/${repository}/check-runs`, {
-      method: "POST", body: JSON.stringify({ name: REVIEW_CHECK_NAME, head_sha: headSha,
-        status: "completed", conclusion: accepted ? "success" : "failure",
-        output: { title: REVIEW_CHECK_NAME, summary: description.slice(0, 65_000) } }) })
+    return this.projectReviewCheck(repository, headSha,
+      accepted ? "success" : "failure", description)
+  }
+
+  async mergePullRequest(repository: string, pullRequestNumber: number,
+    headSha: string): Promise<{ merged: boolean; sha: string | null }> {
+    const result = await this.request<Record<string, unknown>>(
+      `/repos/${repository}/pulls/${pullRequestNumber}/merge`, {
+        method: "PUT", body: JSON.stringify({ sha: headSha }) })
+    return { merged: result.merged === true,
+      sha: typeof result.sha === "string" && /^[0-9a-f]{40}$/.test(result.sha)
+        ? result.sha : null }
   }
 
   private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
@@ -285,37 +310,6 @@ export class GitHubReviewGateway {
     if (!response.ok) throw new Error(`github_review_request_failed:${response.status}`)
     return await response.json() as T
   }
-}
-
-export function parseChangedHunks(path: string, patch: string): ReviewChangedHunk[] {
-  const hunks: ReviewChangedHunk[] = []
-  let current: ReviewChangedHunk | null = null
-  let oldLine = 0
-  const finish = () => { if (current) hunks.push(current); current = null }
-  for (const line of patch.split("\n")) {
-    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line)
-    if (header) {
-      finish()
-      const oldStart = Number(header[1]); const oldCount = Number(header[2] ?? 1)
-      const newStart = Number(header[3]); const newCount = Number(header[4] ?? 1)
-      oldLine = oldStart
-      current = { path, old_start: oldStart,
-        old_end: oldStart + Math.max(oldCount, 1) - 1, new_start: newStart,
-        new_end: newStart + Math.max(newCount, 1) - 1,
-        changed_line_count: 0, changed_line_anchors: [] }
-      continue
-    }
-    if (!current || line.startsWith("\\ No newline at end of file")) continue
-    if (line.startsWith("-")) {
-      current.changed_line_count += 1; current.changed_line_anchors.push(oldLine); oldLine += 1
-    } else if (line.startsWith("+")) {
-      current.changed_line_count += 1; current.changed_line_anchors.push(oldLine)
-    } else {
-      oldLine += 1
-    }
-  }
-  finish()
-  return hunks
 }
 
 function patchChangeCounts(patch: string): { additions: number; deletions: number } {
@@ -331,18 +325,16 @@ function patchChangeCounts(patch: string): { additions: number; deletions: numbe
   return { additions, deletions }
 }
 
-function completeChangedHunks(file: Record<string, unknown>): ReviewChangedHunk[] | null {
-  if (typeof file.patch !== "string") return null
+function completePatchEvidence(file: Record<string, unknown>): boolean {
+  if (typeof file.patch !== "string") return false
   const additions = Number(file.additions)
   const deletions = Number(file.deletions)
   const changes = Number(file.changes)
   const counts = patchChangeCounts(file.patch)
-  const hunks = parseChangedHunks(text(file.filename), file.patch)
   if (![additions, deletions, changes].every((value) =>
     Number.isSafeInteger(value) && value >= 0) || changes !== additions + deletions ||
-    counts.additions !== additions || counts.deletions !== deletions ||
-    hunks.reduce((total, hunk) => total + hunk.changed_line_count, 0) !== changes) return null
-  return hunks
+    counts.additions !== additions || counts.deletions !== deletions) return false
+  return true
 }
 
 function object(value: unknown): Record<string, unknown> {

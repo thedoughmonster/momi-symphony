@@ -28,8 +28,8 @@ export type AgentStateEvidence = {
   linear_writeback_at: string | null
   validation_state: DeliveryEvidenceState
   validation_sha: string | null
-  review_state: DeliveryEvidenceState
-  review_sha: string | null
+  current_review_state: DeliveryEvidenceState
+  current_review_sha: string | null
   release_state: DeliveryEvidenceState
   release_sha: string | null
   head_sha: string | null
@@ -51,22 +51,23 @@ export function deriveAgentState(evidence: AgentStateEvidence): AgentState {
     (evidence.terminal_at && evidence.terminal_disposition === "interrupted")) return "stopped"
   if (evidence.work_status === "dead_letter" || evidence.work_status === "rejected" ||
     evidence.terminal_disposition === "failed" || evidence.readiness_result === "failed" ||
-    evidence.validation_state === "failed" || evidence.review_state === "failed" ||
+    evidence.validation_state === "failed" || evidence.current_review_state === "failed" ||
     evidence.release_state === "failed") return "failed"
 
   if (evidence.terminal_at && evidence.readiness_result === "ready" &&
     evidence.terminal_disposition === "completed" && evidence.linear_writeback_at &&
     obligationComplete(evidence.validation_state) &&
-    obligationComplete(evidence.review_state) &&
+    obligationComplete(evidence.current_review_state) &&
     obligationComplete(evidence.release_state)) return "complete"
 
   if (evidence.release_state === "pending" || evidence.release_state === "running") {
     return "releasing"
   }
-  if (evidence.review_state === "pending" || evidence.review_state === "running") {
+  if (evidence.current_review_state === "pending" ||
+    evidence.current_review_state === "running") {
     return "reviewing"
   }
-  if (evidence.review_state === "inconclusive") return "waiting"
+  if (evidence.current_review_state === "inconclusive") return "waiting"
   if (evidence.validation_state === "pending" || evidence.validation_state === "running") {
     return "validating"
   }
@@ -93,8 +94,8 @@ function exactDeliveryCorrelation(evidence: AgentStateEvidence): void {
     (!evidence.head_sha || evidence.validation_sha !== evidence.head_sha)) {
     throw new Error("agent_state_validation_revision_mismatch")
   }
-  if (evidence.review_state !== "not_required" &&
-    (!evidence.head_sha || evidence.review_sha !== evidence.head_sha)) {
+  if (evidence.current_review_state !== "not_required" &&
+    (!evidence.head_sha || evidence.current_review_sha !== evidence.head_sha)) {
     throw new Error("agent_state_review_revision_mismatch")
   }
   if (evidence.release_state !== "not_required" &&

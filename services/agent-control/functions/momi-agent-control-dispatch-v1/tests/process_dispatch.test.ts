@@ -8,134 +8,32 @@ import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
   capability_token: "00000000-0000-4000-8000-000000000002" }
 
-test("cancellation reconstructs identical targets after implementation terminalization", async () => {
+test("cancellation fences canonical state once and retains its pre-fence cleanup targets", async () => {
   const implementationId = "00000000-0000-4000-8000-000000000003"
   const reviewerId = "00000000-0000-4000-8000-000000000004"
-  const queries: string[] = []; let claimCount = 0
+  const queries: string[] = []
   const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
     const query = strings.join("?"); queries.push(query)
     if (query.includes("claim_dispatch_v6")) {
-      claimCount += 1
       return [{ work_id: input.work_id, action: "cancel-run",
-        delivery_phase: claimCount === 1 ? "cancel_host" : "writeback",
-        cancellation_state: claimCount === 1 ? "requested" : "already_terminal",
-        cancellation_target_ids: claimCount === 1 ? [implementationId] : [] }]
+        delivery_phase: "cancel_host", cancellation_state: "requested",
+        cancellation_target_ids: [implementationId] }]
     }
     if (query.includes("reconstruct_cancellation_targets_v1")) {
       return [{ target_ids: [implementationId, reviewerId] }]
     }
-    if (query.includes("prepare_review_check_revocations_v1")) return []
     if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
+    if (query.includes("select distinct review.repository")) return []
     throw new Error("unexpected_query")
   }
-  const reservedClaim = await claimDispatch(input, sql as never)
-  const replayClaim = await claimDispatch(input, sql as never)
-  assert.deepEqual(reservedClaim?.cancellation_target_ids, [implementationId, reviewerId])
-  assert.deepEqual(replayClaim?.cancellation_target_ids,
-    reservedClaim?.cancellation_target_ids)
-  assert.equal(replayClaim?.delivery_phase, "cancel_host")
-  assert.equal(replayClaim?.cancellation_state, "requested")
+  const claim = await claimDispatch(input, sql as never)
+  assert.deepEqual(claim?.cancellation_target_ids, [implementationId, reviewerId])
+  assert.equal(claim?.delivery_phase, "cancel_host")
+  assert.equal(claim?.cancellation_state, "requested")
   assert.equal(queries.filter((query) =>
-    query.includes("reconstruct_cancellation_targets_v1")).length, 4)
-  assert.equal(queries.some((query) => query.includes("from momi_agent_ops.review_attempts")), false)
-})
-
-test("cancellation publishes and records exact-head revocation before its durable fence", async () => {
-  const implementationId = "00000000-0000-4000-8000-000000000013"
-  const head = "a".repeat(40); const timeline: string[] = []
-  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
-    const query = strings.join("?")
-    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
-      action: "cancel-run", delivery_phase: "cancel_host",
-      cancellation_target_ids: [implementationId] }]
-    if (query.includes("reconstruct_cancellation_targets_v1")) {
-      return [{ target_ids: [implementationId] }]
-    }
-    if (query.includes("prepare_review_check_revocations_v1")) {
-      timeline.push("prepare")
-      return [{ implementation_dispatch_id: implementationId,
-        repository: "thedoughmonster/momi-symphony", head_sha: head,
-        publication_pending: false, revocation_required: true }]
-    }
-    if (query.includes("record_review_check_revocation_v1")) {
-      timeline.push("record-revocation"); return [{ recorded: true }]
-    }
-    if (query.includes("fence_cancellation_v1")) {
-      timeline.push("fence"); return [{ fenced: true }]
-    }
-    if (query.includes("from momi_agent_ops.review_attempts")) return []
-    throw new Error(`unexpected_query:${query}`)
-  }
-  const github = { publishReviewCheck: async (repository: string, sha: string,
-    success: boolean) => {
-    assert.equal(repository, "thedoughmonster/momi-symphony")
-    assert.equal(sha, head); assert.equal(success, false); timeline.push("publish-failure")
-  } }
-  await claimDispatch(input, sql as never, github as never)
-  assert.deepEqual(timeline, ["prepare", "publish-failure", "record-revocation", "fence"])
-})
-
-test("cancellation waits while an exact-head success publication lease is active", async () => {
-  let published = false
-  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
-    const query = strings.join("?")
-    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
-      action: "cancel-run", delivery_phase: "cancel_host",
-      cancellation_target_ids: ["00000000-0000-4000-8000-000000000023"] }]
-    if (query.includes("reconstruct_cancellation_targets_v1")) {
-      return [{ target_ids: ["00000000-0000-4000-8000-000000000023"] }]
-    }
-    if (query.includes("prepare_review_check_revocations_v1")) return [{
-      implementation_dispatch_id: "00000000-0000-4000-8000-000000000023",
-      repository: "thedoughmonster/momi-symphony", head_sha: "a".repeat(40),
-      publication_pending: true, revocation_required: true }]
-    if (query.includes("recover_abandoned_review_check_publication_v1")) {
-      return [{ recovered: false }]
-    }
-    throw new Error("must_not_continue_after_publication_lease")
-  }
-  await assert.rejects(claimDispatch(input, sql as never, {
-    publishReviewCheck: async () => { published = true },
-  } as never), /review_check_publication_pending/)
-  assert.equal(published, false)
-})
-
-test("cancellation recovers an abandoned exact-head publication before revoking", async () => {
-  const implementationId = "00000000-0000-4000-8000-000000000033"
-  const head = "b".repeat(40); const timeline: string[] = []; let prepared = 0
-  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
-    const query = strings.join("?")
-    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
-      action: "cancel-run", delivery_phase: "cancel_host",
-      cancellation_target_ids: [implementationId] }]
-    if (query.includes("reconstruct_cancellation_targets_v1")) {
-      return [{ target_ids: [implementationId] }]
-    }
-    if (query.includes("prepare_review_check_revocations_v1")) {
-      timeline.push("prepare"); prepared += 1
-      return [{ implementation_dispatch_id: implementationId,
-        repository: "thedoughmonster/momi-symphony", head_sha: head,
-        publication_pending: prepared === 1, revocation_required: true }]
-    }
-    if (query.includes("recover_abandoned_review_check_publication_v1")) {
-      timeline.push("recover"); return [{ recovered: true }]
-    }
-    if (query.includes("record_review_check_revocation_v1")) {
-      timeline.push("record-revocation"); return [{ recorded: true }]
-    }
-    if (query.includes("fence_cancellation_v1")) {
-      timeline.push("fence"); return [{ fenced: true }]
-    }
-    if (query.includes("from momi_agent_ops.review_attempts")) return []
-    throw new Error(`unexpected_query:${query}`)
-  }
-  const github = { publishReviewCheck: async (_repository: string, sha: string,
-    success: boolean) => {
-    assert.equal(sha, head); assert.equal(success, false); timeline.push("publish-failure")
-  } }
-  await claimDispatch(input, sql as never, github as never)
-  assert.deepEqual(timeline,
-    ["prepare", "recover", "prepare", "publish-failure", "record-revocation", "fence"])
+    query.includes("reconstruct_cancellation_targets_v1")).length, 1)
+  assert.equal(queries.filter((query) => query.includes("fence_cancellation_v1")).length, 1)
+  assert.equal(queries.some((query) => query.includes("review_check_revocation")), false)
 })
 
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {
@@ -212,8 +110,7 @@ test("active cancellation records the host result and projects the exact target"
     cancellation_state: "requested" } as ClaimedDispatch
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("must_not_start")),
-    callCancel: () => Promise.resolve({ cancellation_state: "requested",
-      review_cancellations: [], unmaterialized_reviewer_dispatch_ids: [] }),
+    callCancel: () => Promise.resolve({ cancellation_state: "requested" }),
     callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), cancellationRecorded: () => {
       recorded = true; return Promise.resolve(true) },
