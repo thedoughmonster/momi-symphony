@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
+import { readFile } from "node:fs/promises"
 import test from "node:test"
 
 import { handleHostRequest } from "../services/agent-control-host/src/handle_host_request.ts"
@@ -15,4 +16,12 @@ test("development health contract remains unauthenticated and stable", async () 
   await handleHostRequest(request as never, response as never, {} as never)
   assert.equal(status, 200)
   assert.deepEqual(JSON.parse(body), { ok: true, service: "momi-agent-control-host" })
+})
+
+test("dispatch readiness includes the mandatory independent-review credential", async () => {
+  const source = await readFile(new URL("../services/agent-control/functions/" +
+    "momi-agent-control-dispatch-v1/src/handle_request_with_dependencies.ts", import.meta.url),
+  "utf8")
+  assert.match(source, /MOMI_CODEX_HOST_SECRET/)
+  assert.match(source, /MOMI_GITHUB_REVIEW_TOKEN/)
 })

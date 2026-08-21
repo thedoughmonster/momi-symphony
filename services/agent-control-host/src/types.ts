@@ -1,5 +1,5 @@
 export type HostDispatch = {
-  schema_version: 1 | 2 | 3
+  schema_version: 1 | 2 | 3 | 4
   work_id: string
   capability_token: string
   issue_id: string
@@ -19,6 +19,35 @@ export type HostDispatch = {
   context_fingerprint?: string
   policy_version?: string
   budget?: HostExecutionBudget
+  runtime_role?: "independent_reviewer"
+  review_subject?: HostReviewSubject
+  review_thread_id?: string
+  review_workspace_id?: string
+}
+
+export type HostReviewSubject = {
+  implementation_dispatch_id: string
+  pull_request_number: number
+  head_sha: string
+  base_sha: string
+  profile: "low" | "standard" | "high"
+  policy_version: string
+}
+
+export type HostReviewFinding = {
+  id: string
+  severity: "blocking" | "nonblocking"
+  category: string
+  path: string
+  line: number | null
+  contract: string
+  required_outcome: string
+  evidence: string
+}
+
+export type HostReviewResult = {
+  result: "accepted" | "changes_requested" | "inconclusive" | "escalate"
+  findings: HostReviewFinding[]
 }
 
 export type HostExecutionBudget = {
@@ -67,6 +96,8 @@ export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
 }
 
+export type HostReviewWorkState = { review_work_state: "running" | "terminal" | "missing" }
+
 export type HostRecovery = {
   schema_version: 1
   work_id: string
@@ -101,13 +132,15 @@ export type HostRecord = {
   workId: string
   fingerprint: string
   capabilityToken: string
-  state: "reserved" | "accepted" | "interactive" | "terminal" | "ambiguous"
+  state: "reserved" | "accepted" | "interactive" | "terminal" | "ambiguous" | "canceled"
   interactionMode?: "one_shot" | "interactive"
   threadId: string | null
   turnId: string | null
   terminal: (TerminalSummary & { archivedAt: string }) | null
   callbackSent: boolean
   cancellationRequestedAt: string | null
+  interruptionRequestedAt?: string | null
+  interruptionConfirmedAt?: string | null
   recoveryRequestedAt?: string | null
   budget?: HostExecutionBudget
   telemetry?: AttemptTelemetry | null
@@ -115,7 +148,29 @@ export type HostRecord = {
   policyVersion?: string
   stablePrefixFingerprint?: string
   contextFingerprint?: string
+  runtimeRole?: "implementation" | "independent_reviewer"
+  reviewSubject?: HostReviewSubject
+  reviewResult?: HostReviewResult | null
+  reviewWorkspaceId?: string
+  reviewWorkspaceCleanedAt?: string | null
   updatedAt: string
+}
+
+export type SealedReviewCredentials = {
+  version: 1
+  algorithm: "aes-256-gcm"
+  initializationVector: string
+  authenticationTag: string
+  ciphertext: string
+}
+
+export type StoredHostRecord = Omit<HostRecord,
+  "capabilityToken" | "threadId" | "turnId" | "reviewSubject"> & {
+  capabilityToken?: string
+  threadId?: string | null
+  turnId?: string | null
+  reviewSubject?: HostReviewSubject
+  sealedReviewCredentials?: SealedReviewCredentials
 }
 
 export type AppServerClient = {
@@ -128,6 +183,8 @@ export type HostConfiguration = {
   workspaceRoot: string
   repository: string
   baseBranch: string
+  reviewRepositoryRoot?: string
+  reviewWorkspaceRoot?: string
 }
 
 export type HostAcceptance = { thread_id: string; turn_id: string }

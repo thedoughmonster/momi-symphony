@@ -57,7 +57,10 @@ Symphony.
 
 Runtime secrets are `SUPABASE_DB_URL`, `LINEAR_WEBHOOK_SECRET`,
 `LINEAER_ACCESS` (with `LINEAR_API_KEY` accepted as a compatibility fallback),
-and `MOMI_CODEX_HOST_SECRET`. The HTTPS host endpoint is private project
+and `MOMI_CODEX_HOST_SECRET`. Independent-review projection additionally requires
+`MOMI_GITHUB_REVIEW_TOKEN`, the exact GitHub App slug in
+`MOMI_GITHUB_REVIEW_PUBLISHER`, and its positive GitHub App id in
+`MOMI_GITHUB_REVIEW_APP_ID`. The HTTPS host endpoint is private project
 configuration in `momi_agent_ops.project_mappings`; host-specific paths are
 not committed. Hosted activation remains a post-review
 release step; no local command applies these migrations or deploys functions.
@@ -78,6 +81,8 @@ and host pump are both disabled by default; see
 The canonical lifecycle reducer and repairable output-only Linear projection are
 documented in
 [`docs/operations/agent-state.md`](../../docs/operations/agent-state.md).
+The mandatory exact-head independent review phase and deterministic merge gate are documented in
+[`docs/operations/independent-review.md`](../../docs/operations/independent-review.md).
 
 ## Exact dead-letter recovery
 

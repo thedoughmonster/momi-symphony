@@ -5,6 +5,7 @@ import type { HostController } from "./host_controller.ts"
 import { parseHostDispatch } from "./parse_host_dispatch.ts"
 import { parseHostCancellation } from "./parse_host_cancellation.ts"
 import { parseHostRecovery } from "./parse_host_recovery.ts"
+import { parseHostReviewStatus } from "./parse_host_review_status.ts"
 import { readNodeBody } from "./read_node_body.ts"
 import { writeNodeJson } from "./write_node_json.ts"
 
@@ -18,7 +19,7 @@ export async function handleHostRequest(
     writeNodeJson(response, 200, { ok: true, service: "momi-agent-control-host" }); return
   }
   if (request.method !== "POST" ||
-    !["/v1/dispatch", "/v1/cancel", "/v1/recover"].includes(path)) {
+    !["/v1/dispatch", "/v1/cancel", "/v1/recover", "/v1/review-status"].includes(path)) {
     writeNodeJson(response, 404, { ok: false }); return
   }
   const secret = process.env.MOMI_CODEX_HOST_SECRET?.trim() ?? ""
@@ -27,6 +28,13 @@ export async function handleHostRequest(
   }
   try {
     const body = await readNodeBody(request)
+    if (path === "/v1/review-status") {
+      const input = parseHostReviewStatus(body)
+      if (!input) { writeNodeJson(response, 400, { ok: false }); return }
+      writeNodeJson(response, 200, { ok: true,
+        ...await controller.reviewWorkState(input.work_id) })
+      return
+    }
     if (path === "/v1/cancel") {
       const input = parseHostCancellation(body)
       if (!input) { writeNodeJson(response, 400, { ok: false }); return }
@@ -45,8 +53,9 @@ export async function handleHostRequest(
     writeNodeJson(response, 200, { ok: true, disposition: "accepted", ...accepted })
   } catch (error) {
     const code = error instanceof Error ? error.message : "host_dispatch_failed"
-    const status = code === "host_dispatch_in_progress" ? 409
+    const status = ["host_dispatch_in_progress", "host_start_ambiguous"].includes(code) ? 409
       : code.includes("refused") || code.includes("conflict") ? 400 : 503
-    writeNodeJson(response, status, { ok: false, disposition: "refused" })
+    writeNodeJson(response, status, { ok: false,
+      disposition: code === "host_start_ambiguous" ? "ambiguous" : "refused" })
   }
 }

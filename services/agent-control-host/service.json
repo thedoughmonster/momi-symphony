@@ -11,6 +11,8 @@
     "provides": [
       "momi.agent_control.host_dispatch.v1",
       "momi.agent_control.host_dispatch.v2",
+      "momi.agent_control.host_review_dispatch.v1",
+      "momi.agent_control.host_review_status.v1",
       "momi.agent_control.host_cancel.v1",
       "momi.agent_control.host_cancel.v2",
       "momi.agent_control.host_recover.v1"
@@ -21,7 +23,7 @@
   },
   "database": {"read": [], "write": []},
   "network": {"outbound_hosts": ["configured:agent_control_callback_url"]},
-  "secrets": ["MOMI_CODEX_HOST_SECRET"],
+  "secrets": ["MOMI_CODEX_HOST_SECRET", "systemd-credential:momi-review-ledger-key"],
   "configuration": [
     "MOMI_AGENT_CONTROL_CALLBACK_URL",
     "MOMI_CODEX_WORKSPACE_ROOT",
@@ -33,7 +35,11 @@
     "MOMI_AGENT_CONTROL_SCHEDULER_ENABLED",
     "MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS",
     "MOMI_AGENT_CONTROL_RELEASE_SHA",
-    "CODEX_HOME"
+    "CODEX_HOME",
+    "MOMI_REVIEW_CODEX_HOME",
+    "MOMI_REVIEW_REPOSITORY_ROOT",
+    "MOMI_REVIEW_WORKSPACE_ROOT",
+    "CREDENTIALS_DIRECTORY"
   ],
   "deployment": {"owns": [], "depends_on": []},
   "runtime_dependencies": [

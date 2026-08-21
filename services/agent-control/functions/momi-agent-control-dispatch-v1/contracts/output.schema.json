@@ -1,29 +1,42 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "oneOf": [
-    {
-      "type": "object",
-      "required": ["ok", "disposition"],
-      "properties": {
-        "ok": {"type": "boolean"},
-        "disposition": {
-          "enum": ["accepted", "active", "completed", "duplicate", "rejected", "retrying", "queued_cancelled", "requested", "already_terminal", "recovered", "already_archived", "no_target", "ambiguous_target", "mapping_mismatch", "operator_intervention"]
-        },
-        "thread_id": {"type": "string"}
-      },
-      "additionalProperties": false
+  "type": "object",
+  "required": ["ok"],
+  "properties": {
+    "ok": {"type": "boolean"},
+    "disposition": {
+      "enum": [
+        "active", "completed", "duplicate", "rejected", "retrying",
+        "queued_cancelled", "requested", "already_terminal", "recovered",
+        "already_archived", "no_target", "ambiguous_target", "mapping_mismatch",
+        "operator_intervention", "recorded", "created", "pending", "accepted",
+        "changes_requested", "inconclusive", "failed", "implementation_identity_refused",
+        "current_dispatch_refused", "focused_validation_required", "already_accepted",
+        "already_pending", "pending_subject_conflict", "parent_attempt_refused",
+        "parent_reviewer_refused", "capacity_wait"
+      ]
     },
-    {
-      "type": "object",
-      "required": ["ok", "routes", "observed", "claimed", "technical_retries"],
-      "properties": {
-        "ok": {"const": true},
-        "routes": {"type": "integer", "minimum": 0},
-        "observed": {"type": "integer", "minimum": 0},
-        "claimed": {"type": "integer", "minimum": 0},
-        "technical_retries": {"type": "integer", "minimum": 0}
-      },
-      "additionalProperties": false
-    }
-  ]
+    "thread_id": {"type": "string"},
+    "review": {"type": "object"},
+    "review_attempt_id": {"type": ["string", "null"], "format": "uuid"},
+    "parent_attempt_id": {"type": ["string", "null"], "format": "uuid"},
+    "reviewer_dispatch_id": {"type": ["string", "null"], "format": "uuid"},
+    "reviewer_thread_id": {"type": ["string", "null"]},
+    "state": {"enum": ["pending", "accepted", "changes_requested", "failed", "canceled"]},
+    "findings": {"type": "array", "maxItems": 100},
+    "failure_reason": {"type": ["string", "null"]},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "merge_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "profile": {"enum": ["low", "standard", "high"]},
+    "policy_version": {"type": "string"},
+    "eligible": {"type": "boolean"},
+    "merged": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "routes": {"type": "integer", "minimum": 0},
+    "observed": {"type": "integer", "minimum": 0},
+    "claimed": {"type": "integer", "minimum": 0},
+    "technical_retries": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
 }

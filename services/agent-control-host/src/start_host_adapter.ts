@@ -2,9 +2,11 @@ import { createServer, type Server } from "node:http"
 import { isAbsolute } from "node:path"
 
 import { CodexAppServerClient } from "./codex_app_server_client.ts"
+import { readAppServerBoundary } from "./app_server_boundary.ts"
 import { handleHostRequest } from "./handle_host_request.ts"
 import { HostController } from "./host_controller.ts"
 import { HostLedger } from "./host_ledger.ts"
+import { loadReviewCredentialBoundary } from "./review_credential_boundary.ts"
 import { readSchedulerPumpConfiguration, SchedulerPump } from "./scheduler_pump.ts"
 
 export async function startHostAdapter(): Promise<Server> {
@@ -17,18 +19,27 @@ export async function startHostAdapter(): Promise<Server> {
   const host = process.env.MOMI_AGENT_CONTROL_HOST?.trim() || "127.0.0.1"
   const port = Number(process.env.MOMI_AGENT_CONTROL_PORT ?? "47931")
   const scheduler = readSchedulerPumpConfiguration(process.env)
+  const appServers = readAppServerBoundary(process.env)
+  const credentialsDirectory = process.env.CREDENTIALS_DIRECTORY?.trim() ?? ""
   let callbackUrl: URL | null = null
   try { callbackUrl = new URL(callback) } catch { /* validated below */ }
   const loopback = callbackUrl
     ? new Set(["localhost", "127.0.0.1", "::1"]).has(callbackUrl.hostname) : false
-  if (!isAbsolute(workspaceRoot) || !isAbsolute(ledgerPath) || !repository ||
+  if (!isAbsolute(workspaceRoot) || !isAbsolute(ledgerPath) ||
+    !isAbsolute(credentialsDirectory) || !credentialsDirectory.startsWith("/run/credentials/") ||
+    !repository ||
     !baseBranch || !secret || !callbackUrl || (!loopback && callbackUrl.protocol !== "https:") ||
     !Number.isInteger(port) || port < 1024 || port > 65535) {
     throw new Error("agent_control_host_configuration_invalid")
   }
-  const ledger = new HostLedger(ledgerPath)
-  const controller = new HostController(new CodexAppServerClient(),
-    ledger, { workspaceRoot, repository, baseBranch })
+  const reviewCredentials = await loadReviewCredentialBoundary(credentialsDirectory)
+  const ledger = new HostLedger(ledgerPath, reviewCredentials)
+  const controller = new HostController(
+    new CodexAppServerClient(appServers.implementationCodexHome), ledger,
+    { workspaceRoot, repository, baseBranch,
+      reviewRepositoryRoot: appServers.reviewRepositoryRoot,
+      reviewWorkspaceRoot: appServers.reviewWorkspaceRoot }, undefined,
+    new CodexAppServerClient(appServers.reviewCodexHome))
   await controller.start()
   const server = createServer((request, response) => {
     void handleHostRequest(request, response, controller)

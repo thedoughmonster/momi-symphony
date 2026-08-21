@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "work_id", "capability_token", "issue_id", "issue_identifier", "issue_url", "project_id", "project_name", "repository", "base_branch", "active_states", "interaction_mode", "thread_name", "stable_instruction", "volatile_context", "stable_prefix_fingerprint", "context_fingerprint", "policy_version", "budget", "runtime_role", "review_workspace_id", "review_subject"],
+  "properties": {
+    "schema_version": {"const": 4},
+    "work_id": {"type": "string", "format": "uuid"},
+    "capability_token": {"type": "string", "format": "uuid"},
+    "issue_id": {"type": "string", "format": "uuid"},
+    "issue_identifier": {"type": "string"},
+    "issue_url": {"type": "string", "format": "uri"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "project_name": {"type": "string"},
+    "repository": {"type": "string"},
+    "base_branch": {"type": "string"},
+    "active_states": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string"}},
+    "interaction_mode": {"const": "one_shot"},
+    "thread_name": {"type": "string", "minLength": 1, "maxLength": 120},
+    "stable_instruction": {"type": "string", "minLength": 40, "maxLength": 8000},
+    "volatile_context": {"type": "string", "minLength": 40, "maxLength": 8000},
+    "stable_prefix_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
+    "context_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
+    "policy_version": {"type": "string", "minLength": 1, "maxLength": 120},
+    "runtime_role": {"const": "independent_reviewer"},
+    "review_thread_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "review_workspace_id": {"type": "string", "format": "uuid"},
+    "review_subject": {
+      "type": "object",
+      "required": ["implementation_dispatch_id", "pull_request_number", "head_sha", "base_sha", "profile", "policy_version"],
+      "properties": {
+        "implementation_dispatch_id": {"type": "string", "format": "uuid"},
+        "pull_request_number": {"type": "integer", "minimum": 1},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "profile": {"enum": ["low", "standard", "high"]},
+        "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "budget": {"$ref": "dispatch.schema.json#/$defs/budget"}
+  },
+  "additionalProperties": false
+}

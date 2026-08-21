@@ -22,4 +22,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Verify reviewer cross-identity ownership
+        run: sudo "$(command -v node)" --test services/agent-control-host/tests/review_workspace_permissions.test.ts
       - run: pnpm test:postgres

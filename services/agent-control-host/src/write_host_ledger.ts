@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { chmod, rename, writeFile } from "node:fs/promises"
 
-import type { HostCancellationRecord, HostRecord, HostRecoveryRecord } from "./types.ts"
+import type { HostCancellationRecord, HostRecoveryRecord, StoredHostRecord } from "./types.ts"
 
 export async function writeHostLedger(
   path: string,
-  records: HostRecord[],
+  records: StoredHostRecord[],
   cancellations: HostCancellationRecord[],
   recoveries: HostRecoveryRecord[],
 ): Promise<void> {

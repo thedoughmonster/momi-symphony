@@ -1,18 +1,26 @@
 [Unit]
 Description=Symphony agent-control Codex host adapter
-After=network-online.target
+After=network-online.target momi-agent-control-review-app-server.service
 Wants=network-online.target
+Requires=momi-agent-control-review-app-server.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/codex-dev/momi-symphony
-EnvironmentFile=/home/codex-dev/.config/momi-agent-control/host.env
-Environment=PATH=/home/codex-dev/.local/bin:/home/codex-dev/.local/share/pnpm/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/codex-dev/.local/share/pnpm/bin/pnpm agent-control:host
+User=momi-agent-control
+Group=momi-agent-control
+SupplementaryGroups=momi-agent-review
+WorkingDirectory=/opt/momi-symphony/current
+EnvironmentFile=/etc/momi-agent-control/host.env
+LoadCredential=momi-review-ledger-key:/etc/momi-agent-control/review-ledger-key
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/momi-symphony/current/services/agent-control-host/main.ts
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
+StateDirectory=momi-agent-control
+StateDirectoryMode=0700
+UMask=0007
 
 [Install]
 WantedBy=default.target

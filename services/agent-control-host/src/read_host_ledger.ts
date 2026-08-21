@@ -1,10 +1,10 @@
 import { mkdir, readFile } from "node:fs/promises"
 import { dirname } from "node:path"
 
-import type { HostCancellationRecord, HostRecord, HostRecoveryRecord } from "./types.ts"
+import type { HostCancellationRecord, HostRecoveryRecord, StoredHostRecord } from "./types.ts"
 
 export async function readHostLedger(path: string): Promise<{
-  records?: HostRecord[]; cancellations?: HostCancellationRecord[]
+  records?: StoredHostRecord[]; cancellations?: HostCancellationRecord[]
   recoveries?: HostRecoveryRecord[]
 }> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })

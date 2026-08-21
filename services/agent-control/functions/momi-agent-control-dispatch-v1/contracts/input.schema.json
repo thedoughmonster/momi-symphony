@@ -23,29 +23,90 @@
         "terminal_disposition": {"enum": ["completed", "failed", "interrupted"]},
         "archived_at": {"type": "string", "format": "date-time"},
         "summary": {"type": "string", "maxLength": 1000},
-        "telemetry": {
-          "type": "object",
-          "required": ["policy_version", "stable_prefix_fingerprint", "context_fingerprint", "input_tokens", "cached_input_tokens", "output_tokens", "model_visible_tool_bytes", "model_turns", "no_progress_cycles", "subagents", "max_subagent_depth", "retries", "repeated_failure_fingerprints", "elapsed_ms", "disposition"],
-          "properties": {
-            "policy_version": {"type": "string", "maxLength": 160},
-            "stable_prefix_fingerprint": {"type": "string", "maxLength": 160},
-            "context_fingerprint": {"type": "string", "maxLength": 160},
-            "input_tokens": {"type": ["integer", "null"], "minimum": 0},
-            "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
-            "output_tokens": {"type": ["integer", "null"], "minimum": 0},
-            "model_visible_tool_bytes": {"type": "integer", "minimum": 0},
-            "model_turns": {"type": "integer", "minimum": 0},
-            "no_progress_cycles": {"type": "integer", "minimum": 0},
-            "subagents": {"type": "integer", "minimum": 0},
-            "max_subagent_depth": {"type": "integer", "minimum": 0},
-            "retries": {"type": "integer", "minimum": 0},
-            "repeated_failure_fingerprints": {"type": "integer", "minimum": 0},
-            "elapsed_ms": {"type": "integer", "minimum": 0},
-            "disposition": {"enum": ["completed", "failed", "interrupted"]}
-          },
-          "additionalProperties": false
-        }
+        "telemetry": {"$ref": "#/$defs/telemetry"}
       },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "repository", "base_branch", "branch_name", "pull_request_number", "phase", "status", "previous_revision_sha", "revision_sha"],
+      "properties": {
+        "event": {"const": "lifecycle_evidence"},
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "thread_id": {"type": "string"}, "turn_id": {"type": "string"},
+        "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "base_branch": {"type": "string"}, "branch_name": {"type": "string"},
+        "pull_request_number": {"type": "integer", "minimum": 1},
+        "phase": {"enum": ["validating", "releasing"]},
+        "status": {"enum": ["pending", "running", "succeeded", "failed"]},
+        "previous_revision_sha": {"oneOf": [
+          {"type": "string", "pattern": "^[0-9a-f]{40}$"}, {"type": "null"}
+        ]},
+        "revision_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "merge_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "workflow_run_id": {"type": "string", "maxLength": 160}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "repository", "base_branch", "branch_name", "pull_request_number"],
+      "properties": {
+        "event": {"const": "review_request"},
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "thread_id": {"type": "string"}, "turn_id": {"type": "string"},
+        "repository": {"type": "string"}, "base_branch": {"type": "string"},
+        "branch_name": {"type": "string"},
+        "pull_request_number": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id"],
+      "properties": {
+        "event": {"const": "review_status"},
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "thread_id": {"type": "string"}, "turn_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "work_id", "capability_token", "thread_id", "turn_id", "repository", "base_branch", "pull_request_number"],
+      "properties": {
+        "event": {"const": "merge_request"},
+        "work_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "thread_id": {"type": "string"}, "turn_id": {"type": "string"},
+        "repository": {"type": "string"}, "base_branch": {"type": "string"},
+        "pull_request_number": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "reviewer_dispatch_id", "capability_token", "runtime_role", "thread_id", "turn_id", "review_subject", "review_result", "terminal_disposition", "archived_at", "telemetry"],
+      "properties": {
+        "event": {"const": "review_terminal"},
+        "reviewer_dispatch_id": {"type": "string", "format": "uuid"},
+        "capability_token": {"type": "string", "format": "uuid"},
+        "runtime_role": {"const": "independent_reviewer"},
+        "thread_id": {"type": "string"}, "turn_id": {"type": "string"},
+        "review_subject": {"$ref": "#/$defs/review_subject"},
+        "review_result": {"oneOf": [{"$ref": "#/$defs/review_result"}, {"type": "null"}]},
+        "terminal_disposition": {"enum": ["completed", "failed", "interrupted"]},
+        "archived_at": {"type": "string", "format": "date-time"},
+        "telemetry": {"$ref": "#/$defs/telemetry"}
+      },
+      "allOf": [
+        {"if": {"properties": {"terminal_disposition": {"const": "completed"}}},
+          "then": {"properties": {"review_result": {"$ref": "#/$defs/review_result"}}},
+          "else": {"properties": {"review_result": {"type": "null"}}}}
+      ],
       "additionalProperties": false
     },
     {
@@ -55,14 +116,93 @@
         "event": {"const": "scheduler_pump"},
         "scheduler_id": {"type": "string", "format": "uuid"},
         "release_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "active_work_ids": {
-          "type": "array",
-          "maxItems": 128,
-          "uniqueItems": true,
-          "items": {"type": "string", "format": "uuid"}
-        }
+        "active_work_ids": {"type": "array", "maxItems": 128, "uniqueItems": true,
+          "items": {"type": "string", "format": "uuid"}}
       },
       "additionalProperties": false
     }
-  ]
+  ],
+  "$defs": {
+    "review_subject": {
+      "type": "object",
+      "required": ["implementation_dispatch_id", "pull_request_number", "head_sha", "base_sha", "profile", "policy_version"],
+      "properties": {
+        "implementation_dispatch_id": {"type": "string", "format": "uuid"},
+        "pull_request_number": {"type": "integer", "minimum": 1},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "profile": {"enum": ["low", "standard", "high"]},
+        "policy_version": {"type": "string", "minLength": 1, "maxLength": 120}
+      },
+      "additionalProperties": false
+    },
+    "review_result": {
+      "type": "object",
+      "required": ["result", "findings"],
+      "properties": {
+        "result": {"enum": ["accepted", "changes_requested", "inconclusive", "escalate"]},
+        "findings": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/review_finding"}}
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": ["result", "findings"],
+              "properties": {
+                "result": {"const": "accepted"},
+                "findings": {
+                  "items": {"properties": {"severity": {"const": "nonblocking"}}}
+                }
+              }
+            },
+            {
+              "required": ["result"],
+              "properties": {
+                "result": {"enum": ["changes_requested", "inconclusive", "escalate"]}
+              }
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "review_finding": {
+      "type": "object",
+      "required": ["id", "severity", "category", "path", "line", "contract", "required_outcome", "evidence"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$"},
+        "severity": {"enum": ["blocking", "nonblocking"]},
+        "category": {"type": "string", "maxLength": 120},
+        "path": {"type": "string", "minLength": 1, "maxLength": 500,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+        "line": {"type": ["integer", "null"], "minimum": 1},
+        "contract": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "required_outcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "additionalProperties": false
+    },
+    "telemetry": {
+      "type": "object",
+      "required": ["policy_version", "stable_prefix_fingerprint", "context_fingerprint", "input_tokens", "cached_input_tokens", "output_tokens", "model_visible_tool_bytes", "model_turns", "no_progress_cycles", "subagents", "max_subagent_depth", "retries", "repeated_failure_fingerprints", "elapsed_ms", "disposition"],
+      "properties": {
+        "policy_version": {"type": "string", "maxLength": 160},
+        "stable_prefix_fingerprint": {"type": "string", "maxLength": 160},
+        "context_fingerprint": {"type": "string", "maxLength": 160},
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "model_visible_tool_bytes": {"type": "integer", "minimum": 0},
+        "model_turns": {"type": "integer", "minimum": 0},
+        "no_progress_cycles": {"type": "integer", "minimum": 0},
+        "subagents": {"type": "integer", "minimum": 0},
+        "max_subagent_depth": {"type": "integer", "minimum": 0},
+        "retries": {"type": "integer", "minimum": 0},
+        "repeated_failure_fingerprints": {"type": "integer", "minimum": 0},
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "disposition": {"enum": ["completed", "failed", "interrupted"]}
+      },
+      "additionalProperties": false
+    }
+  }
 }

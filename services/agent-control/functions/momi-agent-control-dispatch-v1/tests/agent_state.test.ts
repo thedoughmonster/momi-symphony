@@ -14,7 +14,7 @@ function evidence(overrides: Partial<AgentStateEvidence> = {}): AgentStateEviden
     cancellation_state: "not_requested", cancelled_at: null, readiness_result: "pending",
     terminal_disposition: null, terminal_at: null, linear_writeback_at: null,
     validation_state: "not_required", validation_sha: null,
-    review_state: "not_required", review_sha: null,
+    current_review_state: "not_required", current_review_sha: null,
     release_state: "not_required", release_sha: null,
     head_sha: null, merge_sha: null, has_active_children: false,
     ...overrides,
@@ -37,11 +37,21 @@ test("exact delivery receipts drive validating, reviewing, and releasing", () =>
     validation_state: "running", validation_sha: head })), "validating")
   assert.equal(deriveAgentState(evidence({ work_status: "active", head_sha: head,
     validation_state: "succeeded", validation_sha: head,
-    review_state: "pending", review_sha: head })), "reviewing")
+    current_review_state: "pending", current_review_sha: head })), "reviewing")
   assert.equal(deriveAgentState(evidence({ work_status: "active", head_sha: head,
     merge_sha: merge, validation_state: "succeeded", validation_sha: head,
-    review_state: "succeeded", review_sha: head,
+    current_review_state: "succeeded", current_review_sha: head,
     release_state: "running", release_sha: merge })), "releasing")
+})
+
+test("review rework resumes working while inconclusive evidence waits", () => {
+  const head = "a".repeat(40)
+  assert.equal(deriveAgentState(evidence({ head_sha: head,
+    current_review_state: "changes_requested", current_review_sha: head,
+    work_status: "active" })), "working")
+  assert.equal(deriveAgentState(evidence({ head_sha: head,
+    current_review_state: "inconclusive", current_review_sha: head,
+    work_status: "active" })), "waiting")
 })
 
 test("terminal state requires applicable obligations and Linear writeback", () => {

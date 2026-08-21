@@ -38,11 +38,61 @@ export type LifecycleEvidenceInput = DispatchInput & {
   base_branch: string
   branch_name: string
   pull_request_number: number
-  phase: "validating" | "reviewing" | "releasing"
+  phase: "validating" | "releasing"
   status: "pending" | "running" | "succeeded" | "failed"
+  previous_revision_sha: string | null
   revision_sha: string
   merge_sha?: string
   workflow_run_id?: string
+}
+
+export type ReviewRequestInput = DispatchInput & {
+  event: "review_request"
+  thread_id: string
+  turn_id: string
+  repository: string
+  base_branch: string
+  branch_name: string
+  pull_request_number: number
+}
+
+export type ReviewStatusInput = DispatchInput & {
+  event: "review_status"
+  thread_id: string
+  turn_id: string
+}
+
+export type MergeRequestInput = DispatchInput & {
+  event: "merge_request"
+  thread_id: string
+  turn_id: string
+  repository: string
+  base_branch: string
+  pull_request_number: number
+}
+
+export type ReviewTerminalInput = {
+  event: "review_terminal"
+  reviewer_dispatch_id: string
+  capability_token: string
+  runtime_role: "independent_reviewer"
+  thread_id: string
+  turn_id: string
+  review_subject: {
+    implementation_dispatch_id: string
+    pull_request_number: number
+    head_sha: string
+    base_sha: string
+    profile: "low" | "standard" | "high"
+    policy_version: string
+  }
+  review_result: null | {
+    result: "accepted" | "changes_requested" | "inconclusive" | "escalate"
+    findings: Array<Record<string, unknown>>
+  }
+  terminal_disposition: "completed" | "failed" | "interrupted"
+  archived_at: string
+  telemetry: AttemptTelemetry
 }
 
 export type AttemptTelemetry = {

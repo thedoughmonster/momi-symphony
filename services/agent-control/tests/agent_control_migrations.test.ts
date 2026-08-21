@@ -14,6 +14,8 @@ const efficiencyPath = "supabase/migrations/20260820070000_add_execution_efficie
 const lifecyclePath = "supabase/migrations/20260820130000_add_canonical_agent_state_lifecycle.sql"
 const nativeCancellationPath =
   "supabase/migrations/20260820143000_retire_action_labels_and_native_cancellation.sql"
+const independentReviewPath =
+  "supabase/migrations/20260820160000_add_independent_pr_review_gate.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -222,4 +224,38 @@ test("native cancellation retires routine labels and fences the exact lifecycle"
   assert.match(migration, /request escalated validation/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+})
+
+test("independent review state is minimal, exact-subject, private, and immutable", async () => {
+  const migration = await readFile(independentReviewPath, "utf8")
+  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.match(migration, /create table momi_agent_ops\.review_attempts/)
+  for (const field of ["implementation_dispatch_id", "reviewer_dispatch_id",
+    "reviewer_callback_capability_hash", "repository", "pull_request_number",
+    "head_sha", "base_sha", "policy_version", "profile", "reviewer_identity",
+    "reviewer_thread_id", "reviewer_turn_id", "findings"]) {
+    assert.match(migration, new RegExp(field))
+  }
+  assert.match(migration,
+    /state in \([\s\S]*'pending',[\s\S]*'accepted',[\s\S]*'changes_requested',[\s\S]*'failed',[\s\S]*'canceled'/)
+  assert.match(migration, /review_attempts_one_pending_idx/)
+  assert.match(migration, /review_attempts_one_accepted_subject_idx/)
+  assert.match(migration, /reviewer_dispatch_id <> implementation_dispatch_id/)
+  assert.match(migration, /reviewer_identity_not_independent/)
+  assert.match(migration, /review_attempt_history_immutable/)
+  assert.match(migration, /jsonb_path_exists[\s\S]+severity == "blocking"/)
+  for (const obsolete of ["run_records_review_receipt_fk", "merge_preflight",
+    "review_check_sha", "publication", "revocation", "cancellation_receipt",
+    "review_model", "reasoning_effort", "budget_fingerprint",
+    "subject_attempt_number", "packet_fingerprint", "rules_fingerprint",
+    "risk_dimensions", "escalation_depth"]) {
+    assert.doesNotMatch(migration, new RegExp(obsolete))
+  }
+  assert.doesNotMatch(migration, /\bgeneration\s+(?:integer|bigint|text)/)
+  assert.doesNotMatch(migration,
+    /state[^;]+(?:'stale'|'superseded'|'reserved'|'running'|'ambiguous'|'inconclusive')/s)
+  assert.doesNotMatch(migration, /alter table momi_agent_ops\.run_records/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+  assert.match(migration, /from public, anon, authenticated, service_role/)
 })

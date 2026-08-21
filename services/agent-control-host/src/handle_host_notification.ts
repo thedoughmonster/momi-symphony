@@ -9,10 +9,11 @@ export async function handleHostNotification(
   ledger: HostLedger,
   callback: (record: HostRecord) => Promise<void>,
   finalize: (record: HostRecord, turn: TurnShape) => Promise<void>,
+  runtimeRole?: "implementation" | "independent_reviewer",
 ): Promise<void> {
   const archivedThread = parseThreadArchived(notification)
   if (archivedThread) {
-    const record = ledger.findByThread(archivedThread)
+    const record = ledger.findByThread(archivedThread, runtimeRole)
     if (record?.state === "interactive" && !record.cancellationRequestedAt &&
       !record.recoveryRequestedAt) {
       await finishInteractiveArchive(ledger, record, callback)
@@ -22,6 +23,7 @@ export async function handleHostNotification(
   const terminal = parseTerminalNotification(notification)
   if (!terminal) return
   const record = ledger.recoverable().find((candidate) =>
-    candidate.threadId === terminal.threadId && candidate.turnId === terminal.turn.id)
+    candidate.threadId === terminal.threadId && candidate.turnId === terminal.turn.id &&
+    (!runtimeRole || (candidate.runtimeRole ?? "implementation") === runtimeRole))
   if (record) await finalize(record, terminal.turn)
 }

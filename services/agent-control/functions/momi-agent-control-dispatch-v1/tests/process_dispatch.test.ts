@@ -1,11 +1,40 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { claimDispatch } from "../src/claim_dispatch.ts"
 import { processDispatch } from "../src/process_dispatch.ts"
 import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 
 const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
   capability_token: "00000000-0000-4000-8000-000000000002" }
+
+test("cancellation fences canonical state once and retains its pre-fence cleanup targets", async () => {
+  const implementationId = "00000000-0000-4000-8000-000000000003"
+  const reviewerId = "00000000-0000-4000-8000-000000000004"
+  const queries: string[] = []
+  const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
+    const query = strings.join("?"); queries.push(query)
+    if (query.includes("claim_dispatch_v6")) {
+      return [{ work_id: input.work_id, action: "cancel-run",
+        delivery_phase: "cancel_host", cancellation_state: "requested",
+        cancellation_target_ids: [implementationId] }]
+    }
+    if (query.includes("reconstruct_cancellation_targets_v1")) {
+      return [{ target_ids: [implementationId, reviewerId] }]
+    }
+    if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
+    if (query.includes("select distinct review.implementation_dispatch_id")) return []
+    throw new Error("unexpected_query")
+  }
+  const claim = await claimDispatch(input, sql as never)
+  assert.deepEqual(claim?.cancellation_target_ids, [implementationId, reviewerId])
+  assert.equal(claim?.delivery_phase, "cancel_host")
+  assert.equal(claim?.cancellation_state, "requested")
+  assert.equal(queries.filter((query) =>
+    query.includes("reconstruct_cancellation_targets_v1")).length, 1)
+  assert.equal(queries.filter((query) => query.includes("fence_cancellation_v1")).length, 1)
+  assert.equal(queries.some((query) => query.includes("review_check_revocation")), false)
+})
 
 test("one claimed dispatch creates one host task and replay is duplicate", async () => {
   let claimCount = 0; let hostCount = 0; let writebacks = 0

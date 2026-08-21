@@ -21,6 +21,9 @@
     "stable_prefix_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
     "context_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
     "policy_version": {"type": "string", "minLength": 1, "maxLength": 120},
+    "budget": {"$ref": "#/$defs/budget"}
+  },
+  "$defs": {
     "budget": {
       "type": "object",
       "required": ["model_turns", "no_progress_cycles", "subagents", "subagent_depth", "model_visible_tool_bytes", "elapsed_ms"],

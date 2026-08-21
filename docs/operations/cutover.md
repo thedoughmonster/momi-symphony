@@ -16,13 +16,35 @@
    global history, and report only the expected pending mapping migration.
 2. Run the `runtime` phase at the same commit to deploy both Edge Functions
    without applying migrations.
-3. Back up the current ledger, user unit, and environment file without exposing
+3. Back up the current ledger, host unit, and environment file without exposing
    their contents.
-4. Install `ops/systemd/momi-agent-control-host.service` in the user unit directory
-   and set the host repository/base values to `thedoughmonster/momi-symphony` and
-   `main`.
-5. Reload and restart the host service; verify `/health` locally and through the
-   private route.
+4. Provision distinct `momi-agent-control` host and `momi-agent-reviewer`
+   reviewer identities plus a `momi-agent-review` group containing only those
+   identities. Provision a root-owned
+   mode-0400 `/etc/momi-agent-control/review-ledger-key` containing exactly 32
+   random bytes, and a root-owned mode-0600 `/etc/momi-agent-control/host.env`.
+   Keep `/var/lib/momi-agent-control` mode 0700 and owned only by the host.
+   Keep `/var/lib/momi-agent-reviewer` mode 0750 and owned by the reviewer and
+   narrow review group. Keep `codex-home/app-server-control` owned by the
+   reviewer and keep `repository` and `workspaces` owned by the trusted host;
+   all three use the narrow review group and mode 2770 so host-created content
+   inherits that group. The reviewer service supplies protected command-scope
+   Git trust only for that exact repository and the workspaces subtree; never
+   configure `safe.directory=*`. Provision reviewer auth/config only beneath its
+   `codex-home`, and create a private canonical clone at `repository`. Install the exact
+   protected release root-owned at `/opt/momi-symphony/current` and install the
+   reviewed Codex binary root-owned at `/usr/local/bin/codex`. Grant
+   only the repository and implementation App Server socket access required by
+   the adapter. Install both repository-owned systemd units, set `CODEX_HOME` to
+   the implementation daemon home, `MOMI_REVIEW_CODEX_HOME` to
+   `/var/lib/momi-agent-reviewer/codex-home`,
+   `MOMI_REVIEW_REPOSITORY_ROOT` to
+   `/var/lib/momi-agent-reviewer/repository`,
+   `MOMI_REVIEW_WORKSPACE_ROOT` to `/var/lib/momi-agent-reviewer/workspaces`, and set
+   the host repository/base values to `thedoughmonster/momi-symphony` and `main`.
+5. Reload systemd, restart the reviewer App Server and host services, verify the
+   two sockets have different owning identities/state roots, then verify
+   `/health` locally and through the private route.
 6. Run the `mapping` phase at the same commit. It repeats the no-write private
    ledger plan before applying the mapping migration and its ledger row in one
    locked transaction, after the new repository and host are ready.

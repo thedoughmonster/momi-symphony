@@ -26,7 +26,10 @@ repair.
 Authenticated structural receipts use the existing dispatch callback boundary
 with `event=lifecycle_evidence`. A receipt is bound to the durable work,
 capability, host thread/turn, repository/base, branch, pull request number, and
-exact revision. Validation and review receipts must match the recorded head SHA;
+exact revision. Each receipt carries the authoritative prior revision (null only
+before the first head); controlled head changes compare-and-set that value while
+holding the same per-issue transaction fence used by new dispatch creation.
+Validation and review receipts must match the recorded head SHA;
 release receipts must match the merge SHA. Conflicting identities, terminal
 receipt rewrites, stale generations, and unrelated workflow activity fail
 closed. Receipt details remain private in `momi_agent_ops`; Linear receives only

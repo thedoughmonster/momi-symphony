@@ -8,12 +8,12 @@ import { WebSocketServer } from "ws"
 
 import { CodexAppServerClient } from "../src/codex_app_server_client.ts"
 
-test("connects to the managed daemon over its private Unix WebSocket", async () => {
+test("connects only to its configured App Server identity socket", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "momi-codex-daemon-"))
   const socketDirectory = join(codexHome, "app-server-control")
   const socketPath = join(socketDirectory, "app-server-control.sock")
   const server = createServer(); const webSocketServer = new WebSocketServer({ server })
-  const previousCodexHome = process.env.CODEX_HOME; const methods: string[] = []
+  const methods: string[] = []
   try {
     await mkdir(socketDirectory)
     await new Promise<void>((resolve, reject) => {
@@ -29,15 +29,12 @@ test("connects to the managed daemon over its private Unix WebSocket", async () 
             ? { thread: { id: "thread-managed" } } : {} }))
       })
     })
-    process.env.CODEX_HOME = codexHome
-    const client = new CodexAppServerClient(); await client.connect()
+    const client = new CodexAppServerClient(codexHome); await client.connect()
     const result = await client.request<{ thread: { id: string } }>(
       "thread/read", { threadId: "thread-managed" })
     assert.equal(result.thread.id, "thread-managed")
     assert.deepEqual(methods, ["initialize", "initialized", "thread/read"])
   } finally {
-    if (previousCodexHome === undefined) delete process.env.CODEX_HOME
-    else process.env.CODEX_HOME = previousCodexHome
     for (const socket of webSocketServer.clients) socket.terminate()
     await new Promise<void>((resolve) => webSocketServer.close(() => resolve()))
     await new Promise<void>((resolve) => server.close(() => resolve()))

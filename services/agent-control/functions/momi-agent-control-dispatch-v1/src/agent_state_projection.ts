@@ -61,7 +61,15 @@ export async function loadAgentStateEvidence(
       work.host_accepted_at::text, work.cancellation_state, work.cancelled_at::text,
       run.readiness_result, run.terminal_disposition, run.terminal_at::text,
       run.linear_writeback_at::text, run.validation_state, run.validation_sha,
-      run.review_state, run.review_sha, run.release_state, run.release_sha,
+      case current_review.state
+        when 'pending' then 'pending'
+        when 'accepted' then 'succeeded'
+        when 'changes_requested' then 'changes_requested'
+        when 'failed' then 'failed'
+        else 'not_required'
+      end as current_review_state,
+      current_review.head_sha as current_review_sha,
+      run.release_state, run.release_sha,
       run.head_sha, run.merge_sha,
       exists (
         select 1 from momi_agent_ops.dispatches child
@@ -70,6 +78,15 @@ export async function loadAgentStateEvidence(
       ) as has_active_children
     from momi_agent_ops.dispatches work
     join momi_agent_ops.run_records run on run.dispatch_id = work.dispatch_id
+    left join lateral (
+      select review.state, review.head_sha
+      from momi_agent_ops.review_attempts review
+      where review.implementation_dispatch_id = work.dispatch_id
+        and review.repository = work.mapped_repository
+        and review.pull_request_number = run.pull_request_number
+        and review.head_sha = run.head_sha
+      order by review.created_at desc, review.review_attempt_id desc limit 1
+    ) current_review on true
     join lateral (
       select newest.dispatch_id
       from momi_agent_ops.dispatches newest

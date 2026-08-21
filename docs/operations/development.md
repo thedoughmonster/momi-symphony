@@ -16,7 +16,8 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
 - The private migration runner uses the linked Management API query command after
   link validation. It never reads or requires a managed database password.
 - Existing Supabase function secrets remain managed in Supabase and are never printed.
-- Host secrets remain in `/home/codex-dev/.config/momi-agent-control/host.env`.
+- Host secrets remain in root-owned mode-0600 `/etc/momi-agent-control/host.env`; reviewer
+  App Server state remains under group-restricted `/var/lib/momi-agent-reviewer`.
 
 ## Release
 

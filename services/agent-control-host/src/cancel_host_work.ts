@@ -2,10 +2,12 @@ import { cancellationFingerprint } from "./cancellation_fingerprint.ts"
 import { buildSyntheticTelemetry } from "./attempt_telemetry.ts"
 import type { HostLedger } from "./host_ledger.ts"
 import type { AppServerClient, HostCancellation, HostCancellationResult,
-  HostConfiguration } from "./types.ts"
+  HostConfiguration, HostRecord } from "./types.ts"
+
+export type HostClientResolver = AppServerClient | ((record: HostRecord) => AppServerClient)
 
 export async function cancelHostWork(
-  client: AppServerClient,
+  client: HostClientResolver,
   ledger: HostLedger,
   config: HostConfiguration,
   input: HostCancellation,
@@ -20,32 +22,65 @@ export async function cancelHostWork(
   }
   let requested = false
   for (const targetWorkId of input.target_work_ids) {
-    const target = ledger.get(targetWorkId)
-    if (!target) throw new Error("host_cancel_target_missing")
+    let target = ledger.get(targetWorkId)
+    if (!target) {
+      requested = true
+      continue
+    }
     if (target.state === "terminal") continue
     requested = true
+    const targetClient = typeof client === "function" ? client(target) : client
+    if (target.runtimeRole === "independent_reviewer" && target.state !== "interactive") {
+      const fenced = await ledger.fenceCanceledStart(target.workId)
+      await interruptClaimed(targetClient, ledger, fenced.record, fenced.interruptionClaimed)
+      continue
+    }
+    if (target.state === "reserved" && !target.threadId && !target.turnId) {
+      await ledger.fenceCanceledStart(target.workId)
+      continue
+    }
+    if (target.state === "ambiguous" && (!target.threadId || !target.turnId)) {
+      await ledger.fenceCanceledStart(target.workId)
+      continue
+    }
     if (target.state === "interactive") {
-      if (!target.threadId) throw new Error("host_cancel_target_ambiguous")
+      if (!target.threadId) continue
       if (!target.cancellationRequestedAt) {
         await ledger.cancellationRequested(target.workId)
-        await client.request("thread/archive", { threadId: target.threadId })
-        await ledger.recordTelemetry(target.workId,
-          buildSyntheticTelemetry(target, "interrupted"))
-        await ledger.terminal(target.workId, { readiness_result: "ready",
-          terminal_disposition: "interrupted",
-          summary: "Interactive discovery task canceled and archived." },
-        new Date().toISOString())
+        try {
+          await targetClient.request("thread/archive", { threadId: target.threadId })
+          await ledger.recordTelemetry(target.workId,
+            buildSyntheticTelemetry(target, "interrupted"))
+          await ledger.terminal(target.workId, { readiness_result: "ready",
+            terminal_disposition: "interrupted",
+            summary: "Interactive discovery task canceled and archived." },
+          new Date().toISOString())
+        } catch { /* Durable database cancellation remains authoritative. */ }
       }
       continue
     }
-    if (!target.threadId || !target.turnId) throw new Error("host_cancel_target_ambiguous")
+    if (!target.threadId || !target.turnId) {
+      await ledger.fenceCanceledStart(target.workId)
+      continue
+    }
     if (target.cancellationRequestedAt) continue
-    await client.request("turn/interrupt", {
-      threadId: target.threadId, turnId: target.turnId,
-    })
-    await ledger.cancellationRequested(target.workId)
+    const fenced = await ledger.fenceCanceledStart(target.workId)
+    await interruptClaimed(targetClient, ledger, fenced.record, fenced.interruptionClaimed)
   }
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)
   return { cancellation_state: state }
+}
+
+async function interruptClaimed(client: AppServerClient, ledger: HostLedger,
+  record: HostRecord, claimed: boolean): Promise<void> {
+  if (!claimed || !record.threadId || !record.turnId) return
+  try {
+    await client.request("turn/interrupt", {
+      threadId: record.threadId, turnId: record.turnId,
+    })
+    await ledger.interruptionConfirmed(record.workId)
+  } catch (error) {
+    await ledger.interruptionFailed(record.workId)
+  }
 }

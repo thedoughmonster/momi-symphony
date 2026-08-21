@@ -1,4 +1,6 @@
-import type { HostCancellationRecord, HostRecord, HostRecoveryRecord, TerminalSummary } from "./types.ts"
+import { ReviewCredentialBoundary } from "./review_credential_boundary.ts"
+import type { HostCancellationRecord, HostRecord, HostRecoveryRecord, StoredHostRecord,
+  TerminalSummary } from "./types.ts"
 import { readHostLedger } from "./read_host_ledger.ts"
 import { writeHostLedger } from "./write_host_ledger.ts"
 
@@ -8,22 +10,38 @@ export class HostLedger {
   private recoveries = new Map<string, HostRecoveryRecord>()
   private queue: Promise<void> = Promise.resolve()
   private readonly path: string
-  constructor(path: string) { this.path = path }
+  private readonly reviewCredentials?: ReviewCredentialBoundary
+  constructor(path: string, reviewCredentials?: ReviewCredentialBoundary) {
+    this.path = path; this.reviewCredentials = reviewCredentials
+  }
   async load(): Promise<void> {
     const parsed = await readHostLedger(this.path)
-    for (const record of parsed.records ?? []) this.records.set(record.workId, record)
+    let rewriteLegacyReviewCredentials = false
+    for (const stored of parsed.records ?? []) {
+      const record = this.restore(stored)
+      rewriteLegacyReviewCredentials ||= record.runtimeRole === "independent_reviewer" &&
+        !stored.sealedReviewCredentials
+      this.records.set(record.workId, record)
+    }
     for (const record of parsed.cancellations ?? []) {
       record.targetWorkIds ??= record.targetWorkId ? [record.targetWorkId] : []
       this.cancellations.set(record.workId, record)
     }
     for (const record of parsed.recoveries ?? []) this.recoveries.set(record.workId, record)
+    if (rewriteLegacyReviewCredentials) await this.persist()
   }
   get(workId: string): HostRecord | null { return this.records.get(workId) ?? null }
   getCancellation(workId: string): HostCancellationRecord | null {
     return this.cancellations.get(workId) ?? null }
   getRecovery(workId: string): HostRecoveryRecord | null { return this.recoveries.get(workId) ?? null }
-  findByThread(threadId: string): HostRecord | null {
-    return [...this.records.values()].find((record) => record.threadId === threadId) ?? null }
+  findByThread(threadId: string,
+    runtimeRole?: "implementation" | "independent_reviewer"): HostRecord | null {
+    return [...this.records.values()].find((record) => record.threadId === threadId &&
+      (!runtimeRole || (record.runtimeRole ?? "implementation") === runtimeRole)) ?? null }
+  recordsForImplementation(implementationDispatchId: string): HostRecord[] {
+    return [...this.records.values()].filter((record) =>
+      record.reviewSubject?.implementation_dispatch_id === implementationDispatchId)
+  }
   async reserveCancellation(workId: string, fingerprint: string,
     targetWorkIds: string[]): Promise<HostCancellationRecord | null> {
     const existing = this.cancellations.get(workId)
@@ -63,7 +81,10 @@ export class HostLedger {
     return [...this.records.values()].filter((record) =>
       record.state === "accepted" || record.state === "interactive" ||
       (record.state === "ambiguous" && Boolean(record.threadId && record.turnId)) ||
-      (record.state === "terminal" && !record.callbackSent))
+      (record.state === "terminal" && (!record.callbackSent ||
+        (record.runtimeRole === "independent_reviewer" &&
+          record.reviewResult?.result !== "changes_requested" &&
+          Boolean(record.reviewWorkspaceId) && !record.reviewWorkspaceCleanedAt))))
   }
   activeWorkIds(): string[] {
     return [...this.records.values()]
@@ -74,11 +95,19 @@ export class HostLedger {
       .sort()
       .slice(0, 128)
   }
+  pendingInterruptions(): HostRecord[] {
+    return [...this.records.values()].filter((record) => record.state === "canceled" &&
+      Boolean(record.threadId && record.turnId) && !record.interruptionConfirmedAt)
+  }
   async reserve(workId: string, fingerprint: string, token: string,
     interactionMode: "one_shot" | "interactive" = "one_shot",
     dispatch?: Pick<import("./types.ts").HostDispatch, "budget" | "policy_version" |
-      "stable_prefix_fingerprint" | "context_fingerprint">,
+      "stable_prefix_fingerprint" | "context_fingerprint" | "runtime_role" |
+      "review_subject" | "review_workspace_id">,
   ): Promise<HostRecord> {
+    if (dispatch?.runtime_role === "independent_reviewer" && !this.reviewCredentials) {
+      throw new Error("review_credential_boundary_required")
+    }
     const existing = this.records.get(workId)
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("host_idempotency_conflict")
@@ -90,10 +119,15 @@ export class HostLedger {
     }
     const record: HostRecord = { workId, fingerprint, capabilityToken: token,
       state: "reserved", interactionMode, threadId: null, turnId: null, terminal: null,
-      callbackSent: false, cancellationRequestedAt: null, recoveryRequestedAt: null,
+      callbackSent: false, cancellationRequestedAt: null, interruptionRequestedAt: null,
+      interruptionConfirmedAt: null, recoveryRequestedAt: null,
       budget: dispatch?.budget, policyVersion: dispatch?.policy_version,
       stablePrefixFingerprint: dispatch?.stable_prefix_fingerprint,
       contextFingerprint: dispatch?.context_fingerprint,
+      runtimeRole: dispatch?.runtime_role ?? "implementation",
+      reviewSubject: dispatch?.review_subject, reviewResult: null,
+      reviewWorkspaceId: dispatch?.review_workspace_id,
+      reviewWorkspaceCleanedAt: null,
       telemetry: null, startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString() }
     this.records.set(workId, record)
@@ -103,20 +137,77 @@ export class HostLedger {
     const record = this.require(workId)
     if ((record.threadId && record.threadId !== threadId) ||
       (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
-    record.state = "accepted"; record.threadId = threadId; record.turnId = turnId
+    record.state = record.state === "canceled" || record.cancellationRequestedAt
+      ? "canceled" : "accepted"
+    record.threadId = threadId; record.turnId = turnId
     record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
-  async ambiguous(workId: string): Promise<void> {
-    const record = this.require(workId); record.state = "ambiguous"
-    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async threadStarted(workId: string, threadId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.threadId && record.threadId !== threadId) throw new Error("host_idempotency_conflict")
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.threadId = threadId
+    record.updatedAt = new Date().toISOString(); await this.persist()
+  }
+  async turnStarted(workId: string, threadId: string, turnId: string): Promise<void> {
+    const record = this.require(workId)
+    if ((record.threadId && record.threadId !== threadId) ||
+      (record.turnId && record.turnId !== turnId)) throw new Error("host_idempotency_conflict")
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.threadId = threadId; record.turnId = turnId
+    record.updatedAt = new Date().toISOString(); await this.persist()
+  }
+  async releaseReserved(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (record.state !== "reserved" || record.threadId || record.turnId) return
+    if (record.cancellationRequestedAt) {
+      record.state = "canceled"; record.updatedAt = new Date().toISOString()
+      await this.persist(); return
+    }
+    this.records.delete(workId); await this.persist()
+  }
+  async ambiguous(workId: string): Promise<HostRecord> {
+    const record = this.require(workId)
+    if (record.state !== "canceled") {
+      record.state = record.cancellationRequestedAt ? "canceled" : "ambiguous"
+    }
+    record.updatedAt = new Date().toISOString(); await this.persist(); return record }
+  async fenceCanceledStart(workId: string): Promise<{
+    record: HostRecord; interruptionClaimed: boolean
+  }> {
+    const record = this.require(workId)
+    if (!["reserved", "ambiguous", "accepted", "canceled"].includes(record.state)) {
+      throw new Error("host_cancel_target_not_retirable")
+    }
+    const now = new Date().toISOString()
+    record.cancellationRequestedAt ??= now
+    record.state = "canceled"; record.reviewResult = null
+    const interruptionClaimed = Boolean(record.threadId && record.turnId) &&
+      !record.interruptionConfirmedAt && !record.interruptionRequestedAt
+    if (interruptionClaimed) record.interruptionRequestedAt = now
+    record.updatedAt = now
+    await this.persist(); return { record, interruptionClaimed }
+  }
   async retainInteractive(workId: string): Promise<void> {
     const record = this.require(workId)
     if (record.interactionMode !== "interactive") throw new Error("host_interaction_mode_conflict")
     record.state = "interactive"; record.updatedAt = new Date().toISOString(); await this.persist()
   }
-  async terminal(workId: string, result: TerminalSummary, archivedAt: string): Promise<HostRecord> {
+  async terminal(workId: string, result: TerminalSummary, archivedAt: string,
+    reviewResult?: import("./types.ts").HostReviewResult | null): Promise<HostRecord> {
     const record = this.require(workId)
+    if (record.runtimeRole === "independent_reviewer" &&
+      (record.state === "canceled" || record.cancellationRequestedAt)) {
+      record.state = "canceled"; record.terminal = null; record.reviewResult = null
+      record.callbackSent = false; record.updatedAt = new Date().toISOString()
+      await this.persist(); return record
+    }
     record.state = "terminal"; record.terminal = { ...result, archivedAt }
+    record.reviewResult = reviewResult ?? null
     record.callbackSent = false; record.updatedAt = new Date().toISOString(); await this.persist(); return record
   }
   async recordTelemetry(workId: string,
@@ -127,8 +218,25 @@ export class HostLedger {
   async callbackSent(workId: string): Promise<void> {
     const record = this.require(workId); record.callbackSent = true
     record.updatedAt = new Date().toISOString(); await this.persist() }
+  async reviewWorkspaceCleaned(workId: string): Promise<void> {
+    const record = this.require(workId); record.reviewWorkspaceCleanedAt = new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
   async cancellationRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.cancellationRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionRequested(workId: string): Promise<void> {
+    const record = this.require(workId); record.interruptionRequestedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionConfirmed(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (!record.threadId || !record.turnId || !record.interruptionRequestedAt) {
+      throw new Error("host_interruption_not_requested")
+    }
+    record.interruptionConfirmedAt ??= new Date().toISOString()
+    record.updatedAt = new Date().toISOString(); await this.persist() }
+  async interruptionFailed(workId: string): Promise<void> {
+    const record = this.require(workId)
+    if (!record.interruptionConfirmedAt) record.interruptionRequestedAt = null
     record.updatedAt = new Date().toISOString(); await this.persist() }
   async recoveryRequested(workId: string): Promise<void> {
     const record = this.require(workId); record.recoveryRequestedAt ??= new Date().toISOString()
@@ -137,8 +245,32 @@ export class HostLedger {
     const record = this.records.get(workId); if (!record) throw new Error("host_record_missing")
     return record }
   private async persist(): Promise<void> {
-    this.queue = this.queue.then(() => writeHostLedger(this.path, [...this.records.values()],
+    this.queue = this.queue.then(() => writeHostLedger(this.path,
+      [...this.records.values()].map((record) => this.store(record)),
       [...this.cancellations.values()], [...this.recoveries.values()]))
     await this.queue
+  }
+  private store(record: HostRecord): StoredHostRecord {
+    if (record.runtimeRole !== "independent_reviewer") return record
+    if (!this.reviewCredentials || !record.reviewSubject) {
+      throw new Error("review_credential_boundary_required")
+    }
+    const { capabilityToken, threadId, turnId, reviewSubject, ...durable } = record
+    return { ...durable, sealedReviewCredentials: this.reviewCredentials.seal(
+      record.workId, record.fingerprint,
+      { capabilityToken, threadId, turnId, reviewSubject }) }
+  }
+  private restore(stored: StoredHostRecord): HostRecord {
+    if (stored.runtimeRole !== "independent_reviewer") return stored as HostRecord
+    if (!this.reviewCredentials) throw new Error("review_credential_boundary_required")
+    if (stored.sealedReviewCredentials) {
+      const credentials = this.reviewCredentials.open(
+        stored.workId, stored.fingerprint, stored.sealedReviewCredentials)
+      const { sealedReviewCredentials: _sealed, ...durable } = stored
+      return { ...durable, ...credentials } as HostRecord
+    }
+    if (!stored.capabilityToken || stored.threadId === undefined || stored.turnId === undefined ||
+      !stored.reviewSubject) throw new Error("review_credential_envelope_invalid")
+    return stored as HostRecord
   }
 }

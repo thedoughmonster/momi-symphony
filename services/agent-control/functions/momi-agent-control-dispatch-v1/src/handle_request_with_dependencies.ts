@@ -18,6 +18,8 @@ import { recordLinearWriteback } from "./record_linear_writeback.ts"
 import { recordTerminal } from "./record_terminal.ts"
 import { retryDispatch } from "./retry_dispatch.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
+import { processMergeRequest, processReviewRequest, processReviewStatus,
+  processReviewTerminal } from "./review_controller.ts"
 import type { DispatchDependencies, TerminalInput } from "./types.ts"
 
 export async function handleRequestWithDependencies(
@@ -30,6 +32,10 @@ export async function handleRequestWithDependencies(
 ): Promise<Response> {
   if (request.method === "GET") {
     const ready = Boolean(Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() &&
+      Deno.env.get("MOMI_GITHUB_REVIEW_TOKEN")?.trim() &&
+      Deno.env.get("MOMI_GITHUB_REVIEW_PUBLISHER")?.trim() &&
+      Number.isSafeInteger(Number(Deno.env.get("MOMI_GITHUB_REVIEW_APP_ID")?.trim())) &&
+      Number(Deno.env.get("MOMI_GITHUB_REVIEW_APP_ID")?.trim()) > 0 &&
       readLinearAccessToken())
     return Response.json({ ok: ready, function_key: "momi.agent_control.dispatch.v1" })
   }
@@ -46,6 +52,10 @@ export async function handleRequestWithDependencies(
         const result = await (injected?.schedulerPump ?? processReadyLeafSchedulerPump)(input)
         return Response.json(result)
       }
+      if (input.event === "review_request") return Response.json(await processReviewRequest(input))
+      if (input.event === "review_status") return Response.json(await processReviewStatus(input))
+      if (input.event === "review_terminal") return Response.json(await processReviewTerminal(input))
+      if (input.event === "merge_request") return Response.json(await processMergeRequest(input))
       if (input.event === "lifecycle_evidence") {
         return Response.json(await processLifecycleEvidence(input))
       }
@@ -66,7 +76,8 @@ export async function handleRequestWithDependencies(
       retry: retryDispatch, project: reconcileAgentState }
     return Response.json(await processDispatch(input, dependencies))
   } catch (error) {
-    const requestId = "work_id" in input ? input.work_id : input.scheduler_id
+    const requestId = "work_id" in input ? input.work_id
+      : "reviewer_dispatch_id" in input ? input.reviewer_dispatch_id : input.scheduler_id
     console.error("Agent control delivery failed", requestId,
       error instanceof Error ? error.message : "unknown")
     return Response.json({ ok: false, disposition: "retrying" }, { status: 503 })

@@ -6,6 +6,7 @@ import test from "node:test"
 
 import { HostController } from "../src/host_controller.ts"
 import { HostLedger } from "../src/host_ledger.ts"
+import { ReviewCredentialBoundary } from "../src/review_credential_boundary.ts"
 import type { AppServerClient, HostDispatch, HostRecord } from "../src/types.ts"
 
 class FakeAppServer implements AppServerClient {
@@ -32,10 +33,59 @@ class FakeAppServer implements AppServerClient {
       }
       return { thread: { turns: this.resumeTurns } } as T
     }
+    if (method === "thread/read") return { thread: { turns: this.resumeTurns } } as T
     return {} as T
   }
   emit(notification: Record<string, unknown>): void { this.listener(notification) }
 }
+
+test("review start ledger releases definite prestart work and fences ambiguous identities", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-agent-control-start-"))
+  const ledger = new HostLedger(join(directory, "ledger.json"))
+  try {
+    await ledger.reserve("prestart", "fingerprint", "token")
+    await ledger.releaseReserved("prestart")
+    assert.equal(ledger.get("prestart"), null)
+    await ledger.reserve("ambiguous", "fingerprint", "token")
+    await ledger.threadStarted("ambiguous", "thread-known")
+    await ledger.releaseReserved("ambiguous")
+    assert.equal(ledger.get("ambiguous")?.state, "ambiguous")
+    assert.equal(ledger.get("ambiguous")?.threadId, "thread-known")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("thread-only ambiguous review start is always missing and cannot reuse an old turn", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-review-status-"))
+  const implementationClient = new FakeAppServer()
+  const reviewClient = new FakeAppServer()
+  const ledger = new HostLedger(join(directory, "ledger.json"),
+    new ReviewCredentialBoundary(Buffer.alloc(32, 7)))
+  const controller = new HostController(implementationClient, ledger, {
+    workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+    baseBranch: "main",
+  }, async () => undefined, reviewClient)
+  const reviewWork = "00000000-0000-4000-8000-000000000021"
+  try {
+    await ledger.reserve(reviewWork, "fingerprint", "token", "one_shot", {
+      runtime_role: "independent_reviewer", review_subject: {
+        implementation_dispatch_id: "00000000-0000-4000-8000-000000000022",
+        pull_request_number: 16, head_sha: "a".repeat(40), base_sha: "b".repeat(40),
+        profile: "high", policy_version: "independent-review-v1" },
+      review_workspace_id: reviewWork })
+    await ledger.threadStarted(reviewWork, "review-thread")
+    assert.deepEqual(await controller.reviewWorkState(reviewWork),
+      { review_work_state: "missing" })
+    reviewClient.resumeTurns = [{ id: "old-review-turn", status: "completed", items: [] }]
+    assert.deepEqual(await controller.reviewWorkState(reviewWork),
+      { review_work_state: "missing" })
+    assert.equal(ledger.get(reviewWork)?.turnId, null)
+    assert.equal(reviewClient.requests.some((request) => request.method === "thread/read"), false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test("one canonical dispatch creates one App Server task and archives it once", async () => {
   const directory = await mkdtemp(join(tmpdir(), "momi-agent-control-"))
