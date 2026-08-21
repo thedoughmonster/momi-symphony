@@ -997,7 +997,7 @@ async (context) => {
     select publication_pending, revocation_required
     from momi_agent_ops.prepare_review_check_revocations_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)`
-  assert.deepEqual(ready, [{ publication_pending: false, revocation_required: true }])
+  assert.deepEqual([...ready], [{ publication_pending: false, revocation_required: true }])
   const [revoked] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_review_check_revocation_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid,
