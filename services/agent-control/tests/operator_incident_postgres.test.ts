@@ -110,6 +110,31 @@ test("qualifying terminal failure opens one bounded incident across callback rep
     })
   })
 
+test("a retained unready terminal opens one typed operator incident", async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  await seedImplementation(database.sql)
+  const telemetry = { policy_version: "mox-execution-efficiency-v1",
+    stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+    context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 10,
+    cached_input_tokens: 0, output_tokens: 2, model_visible_tool_bytes: 100,
+    model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+    retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1000,
+    disposition: "completed" }
+  await database.sql`
+    select * from momi_agent_ops.record_terminal_v6(
+      ${dispatchId}::uuid, ${capability}::uuid, 'implementation-thread',
+      'implementation-turn', 'unready', 'completed', 'bounded operator action', now(),
+      ${database.sql.json(telemetry)}::jsonb)`
+  const incidents = await database.sql<Array<Record<string, unknown>>>`
+    select category, lifecycle_state, lifecycle_phase, guidance_code
+    from momi_agent_ops.operator_incidents`
+  assert.deepEqual({ ...incidents[0] }, {
+    category: "retained_task_ambiguous", lifecycle_state: "ambiguous",
+    lifecycle_phase: "terminal", guidance_code: "reconcile_retained_task",
+  })
+})
+
 async function seedImplementation(sql: Sql) {
   await sql`
     insert into momi_agent_ops.raw_webhook_envelopes (

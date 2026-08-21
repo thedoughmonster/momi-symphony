@@ -311,7 +311,10 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
       ${attempt.reviewer_dispatch_id}::uuid,
       ${attempt.reviewer_callback_capability}::uuid,
       'independent_reviewer', ${accepted.thread_id}, ${accepted.turn_id}) as recorded`
-  if (started[0]?.recorded !== true) throw new Error("reviewer_start_record_refused")
+  if (started[0]?.recorded !== true) {
+    await recordReviewAmbiguity(sql, input, attempt.review_attempt_id)
+    throw new Error("reviewer_start_record_refused")
+  }
   await reconcileReviewCheck(sql, args.github, { implementationDispatchId: input.work_id,
     repository: input.repository, pullRequestNumber: subject.pullRequestNumber,
     headSha: subject.headSha, baseSha: subject.baseSha,

@@ -250,6 +250,14 @@ begin
       'run:' || run.run_id::text, 'terminal', 'inspect_terminal_failure',
       null, null, run.terminal_at
     );
+  elsif terminal.action = ('exec' || 'ute-run') and not coalesce(canceled, false)
+    and run.readiness_result = 'unready'
+    and run.terminal_disposition = 'completed' then
+    perform momi_agent_ops.record_operator_incident_v1(
+      p_dispatch_id, p_capability_token, 'retained_task_ambiguous',
+      'run:' || run.run_id::text, 'terminal', 'reconcile_retained_task',
+      null, null, run.terminal_at
+    );
   elsif terminal.action = ('exec' || 'ute-run')
     and (coalesce(canceled, false)
       or (run.readiness_result = 'ready' and run.terminal_disposition = 'completed')) then
