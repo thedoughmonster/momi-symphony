@@ -17,8 +17,10 @@ export async function claimDispatch(input: DispatchInput,
     )
   `
   const claimed = rows[0] ?? null
-  if (claimed?.delivery_phase !== "cancel_host" ||
-    !claimed.cancellation_target_ids?.length) return claimed
+  if (!claimed || claimed.action !== "cancel-run" || claimed.rejection_code) return claimed
+  const initialTargets = await reconstructCancellationTargets(sql, input)
+  if (!initialTargets.length) return claimed
+  claimed.cancellation_state = "requested"
   let revocations = await sql<{ implementation_dispatch_id: string;
     repository: string; head_sha: string; publication_pending: boolean;
     revocation_required: boolean }[]>`
@@ -67,15 +69,17 @@ export async function claimDispatch(input: DispatchInput,
       ${input.work_id}::uuid, ${input.capability_token}::uuid
     ) as fenced`
   if (fenced[0]?.fenced !== true) throw new Error("cancellation_fence_refused")
-  const reviewers = await sql<{ reviewer_dispatch_id: string }[]>`
-    select reviewer_dispatch_id::text
-    from momi_agent_ops.review_attempts
-    where implementation_dispatch_id = any(${claimed.cancellation_target_ids}::uuid[])
-      and state in ('reserved', 'running', 'changes_requested', 'ambiguous', 'canceled')
-    order by reviewer_dispatch_id`
-  claimed.cancellation_target_ids = [...new Set([
-    ...claimed.cancellation_target_ids,
-    ...reviewers.map((review) => review.reviewer_dispatch_id),
-  ])].sort()
+  const fencedTargets = await reconstructCancellationTargets(sql, input)
+  if (!fencedTargets.length) throw new Error("cancellation_targets_refused")
+  claimed.cancellation_target_ids = fencedTargets
+  claimed.delivery_phase = "cancel_host"
   return claimed
+}
+
+async function reconstructCancellationTargets(sql: ReturnType<typeof getDatabase>,
+  input: DispatchInput): Promise<string[]> {
+  const rows = await sql<{ target_ids: string[] | null }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${input.work_id}::uuid, ${input.capability_token}::uuid)::text[] as target_ids`
+  return rows[0]?.target_ids ?? []
 }

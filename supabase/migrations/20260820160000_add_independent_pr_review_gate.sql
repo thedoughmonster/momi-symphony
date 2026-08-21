@@ -1215,6 +1215,95 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.reconstruct_cancellation_targets_v1(
+  p_dispatch_id uuid, p_capability_token uuid
+) returns uuid[] language plpgsql security invoker set search_path = '' as $$
+declare selected_target uuid;
+declare selected momi_agent_ops.dispatches%rowtype;
+declare issue record;
+declare targets uuid[];
+declare reviewer_reconciliation_required boolean;
+begin
+  select work.target_dispatch_id into selected_target
+  from momi_agent_ops.dispatches work
+  join momi_agent_ops.project_mappings mapping
+    on mapping.linear_project_id = work.linear_project_id and mapping.active
+    and mapping.repository = work.mapped_repository
+    and mapping.base_branch = work.mapped_base_branch
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state in ('requested', 'already_terminal');
+  if not found or selected_target is null then return null; end if;
+  for issue in with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  ) select distinct work.linear_issue_id from momi_agent_ops.dispatches work
+    where work.dispatch_id in (select owned.dispatch_id from lifecycle owned)
+    order by work.linear_issue_id loop
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+      'momi_agent_ops.dispatch_generation:' || issue.linear_issue_id::text, 0));
+  end loop;
+  select work.* into selected
+  from momi_agent_ops.dispatches work
+  join momi_agent_ops.project_mappings mapping
+    on mapping.linear_project_id = work.linear_project_id and mapping.active
+    and mapping.repository = work.mapped_repository
+    and mapping.base_branch = work.mapped_base_branch
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.target_dispatch_id = selected_target
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state in ('requested', 'already_terminal')
+  for update of work;
+  if not found then return null; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  ) select exists (select 1 from momi_agent_ops.review_attempts review
+    where review.implementation_dispatch_id in (
+      select owned.dispatch_id from lifecycle owned)
+      and review.state in (
+        'reserved', 'running', 'changes_requested', 'ambiguous', 'canceled', 'superseded'
+      )) into reviewer_reconciliation_required;
+  if selected.cancellation_state = 'already_terminal'
+    and not reviewer_reconciliation_required then return null; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  ), complete_targets as (
+    select work.dispatch_id from momi_agent_ops.dispatches work
+    where work.dispatch_id in (select owned.dispatch_id from lifecycle owned)
+      and work.codex_thread_id is not null and work.codex_turn_id is not null
+    union
+    select review.reviewer_dispatch_id from momi_agent_ops.review_attempts review
+    where review.implementation_dispatch_id in (
+      select owned.dispatch_id from lifecycle owned)
+      and review.state in (
+        'reserved', 'running', 'changes_requested', 'ambiguous', 'canceled', 'superseded'
+      )
+  ) select coalesce(array_agg(target.dispatch_id order by target.dispatch_id), '{}'::uuid[])
+    into targets from complete_targets target;
+  if cardinality(targets) not between 1 and 128 then return null; end if;
+  update momi_agent_ops.dispatches work set cancellation_state = 'requested'
+  where work.dispatch_id = p_dispatch_id
+    and work.cancellation_state in ('requested', 'already_terminal');
+  if not found then return null; end if;
+  return targets;
+end;
+$$;
+
 create function momi_agent_ops.prepare_review_check_revocations_v1(
   p_dispatch_id uuid, p_capability_token uuid
 ) returns table (
@@ -1524,6 +1613,7 @@ revoke all on function momi_agent_ops.fence_current_dispatch_generation_v1(uuid)
     uuid, uuid, text, text, text, text, text, bigint, text, text, text, text, text, text
   ),
   momi_agent_ops.prepare_review_check_revocations_v1(uuid, uuid),
+  momi_agent_ops.reconstruct_cancellation_targets_v1(uuid, uuid),
   momi_agent_ops.recover_abandoned_review_check_publication_v1(uuid, uuid, uuid, text),
   momi_agent_ops.record_review_check_revocation_v1(uuid, uuid, uuid, text),
   momi_agent_ops.fence_cancellation_v1(uuid, uuid),

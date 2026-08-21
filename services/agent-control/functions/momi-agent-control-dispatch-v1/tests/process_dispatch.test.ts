@@ -8,33 +8,36 @@ import type { ClaimedDispatch, DispatchInput } from "../src/types.ts"
 const input: DispatchInput = { work_id: "00000000-0000-4000-8000-000000000001",
   capability_token: "00000000-0000-4000-8000-000000000002" }
 
-test("authenticated cancellation keeps reserved and receipted reviewer targets stable", async () => {
+test("cancellation reconstructs identical targets after implementation terminalization", async () => {
   const implementationId = "00000000-0000-4000-8000-000000000003"
   const reviewerId = "00000000-0000-4000-8000-000000000004"
-  const queries: string[] = []; let reviewerState = "reserved"
+  const queries: string[] = []; let claimCount = 0
   const sql = async (strings: TemplateStringsArray): Promise<unknown[]> => {
     const query = strings.join("?"); queries.push(query)
-    if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
-      action: "cancel-run", delivery_phase: "cancel_host",
-      cancellation_target_ids: [implementationId] }]
+    if (query.includes("claim_dispatch_v6")) {
+      claimCount += 1
+      return [{ work_id: input.work_id, action: "cancel-run",
+        delivery_phase: claimCount === 1 ? "cancel_host" : "writeback",
+        cancellation_state: claimCount === 1 ? "requested" : "already_terminal",
+        cancellation_target_ids: claimCount === 1 ? [implementationId] : [] }]
+    }
+    if (query.includes("reconstruct_cancellation_targets_v1")) {
+      return [{ target_ids: [implementationId, reviewerId] }]
+    }
     if (query.includes("prepare_review_check_revocations_v1")) return []
     if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
-    if (query.includes("from momi_agent_ops.review_attempts")) {
-      return query.includes(`'${reviewerState}'`) ? [{ reviewer_dispatch_id: reviewerId }] : []
-    }
     throw new Error("unexpected_query")
   }
   const reservedClaim = await claimDispatch(input, sql as never)
-  reviewerState = "canceled"
   const replayClaim = await claimDispatch(input, sql as never)
   assert.deepEqual(reservedClaim?.cancellation_target_ids, [implementationId, reviewerId])
   assert.deepEqual(replayClaim?.cancellation_target_ids,
     reservedClaim?.cancellation_target_ids)
-  for (const query of [queries[3], queries[7]]) {
-    assert.match(query,
-      /state in \('reserved', 'running', 'changes_requested', 'ambiguous', 'canceled'\)/)
-    assert.doesNotMatch(query, /reviewer_thread_id is not null/)
-  }
+  assert.equal(replayClaim?.delivery_phase, "cancel_host")
+  assert.equal(replayClaim?.cancellation_state, "requested")
+  assert.equal(queries.filter((query) =>
+    query.includes("reconstruct_cancellation_targets_v1")).length, 4)
+  assert.equal(queries.some((query) => query.includes("from momi_agent_ops.review_attempts")), false)
 })
 
 test("cancellation publishes and records exact-head revocation before its durable fence", async () => {
@@ -45,6 +48,9 @@ test("cancellation publishes and records exact-head revocation before its durabl
     if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
       action: "cancel-run", delivery_phase: "cancel_host",
       cancellation_target_ids: [implementationId] }]
+    if (query.includes("reconstruct_cancellation_targets_v1")) {
+      return [{ target_ids: [implementationId] }]
+    }
     if (query.includes("prepare_review_check_revocations_v1")) {
       timeline.push("prepare")
       return [{ implementation_dispatch_id: implementationId,
@@ -76,6 +82,9 @@ test("cancellation waits while an exact-head success publication lease is active
     if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
       action: "cancel-run", delivery_phase: "cancel_host",
       cancellation_target_ids: ["00000000-0000-4000-8000-000000000023"] }]
+    if (query.includes("reconstruct_cancellation_targets_v1")) {
+      return [{ target_ids: ["00000000-0000-4000-8000-000000000023"] }]
+    }
     if (query.includes("prepare_review_check_revocations_v1")) return [{
       implementation_dispatch_id: "00000000-0000-4000-8000-000000000023",
       repository: "thedoughmonster/momi-symphony", head_sha: "a".repeat(40),
@@ -99,6 +108,9 @@ test("cancellation recovers an abandoned exact-head publication before revoking"
     if (query.includes("claim_dispatch_v6")) return [{ work_id: input.work_id,
       action: "cancel-run", delivery_phase: "cancel_host",
       cancellation_target_ids: [implementationId] }]
+    if (query.includes("reconstruct_cancellation_targets_v1")) {
+      return [{ target_ids: [implementationId] }]
+    }
     if (query.includes("prepare_review_check_revocations_v1")) {
       timeline.push("prepare"); prepared += 1
       return [{ implementation_dispatch_id: implementationId,

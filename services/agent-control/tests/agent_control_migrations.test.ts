@@ -276,6 +276,10 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /begin_review_check_publication_v1/)
   assert.match(migration, /finish_review_check_publication_v1/)
   assert.match(migration, /prepare_review_check_revocations_v1/)
+  assert.match(migration, /reconstruct_cancellation_targets_v1/)
+  assert.match(migration, /'reserved', 'running', 'changes_requested', 'ambiguous', 'canceled', 'superseded'/)
+  assert.match(migration, /array_agg\(target\.dispatch_id order by target\.dispatch_id\)/)
+  assert.match(migration, /cardinality\(targets\) not between 1 and 128/)
   assert.match(migration, /recover_abandoned_review_check_publication_v1/)
   assert.match(migration, /publication_started_at > now\(\) - interval '5 minutes'/)
   assert.match(migration, /record_review_check_revocation_v1/)
@@ -317,6 +321,7 @@ test("independent review receipts are private, exact-revision, and author-proof"
       `${routine} generation fence missing`)
   }
   for (const routine of ["record_review_cancellation_receipt_v1",
+    "reconstruct_cancellation_targets_v1",
     "recover_abandoned_review_check_publication_v1"]) {
     const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
     const body = migration.slice(start, migration.indexOf("\n$$;", start))

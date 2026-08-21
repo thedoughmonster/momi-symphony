@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { recordTerminal } from "../functions/momi-agent-control-dispatch-v1/src/record_terminal.ts"
 import { schedulerHarness } from "./ready_leaf_scheduler_postgres/harness.ts"
 
 const currentDispatchId = "30000000-0000-4000-8000-000000000001"
@@ -771,7 +772,15 @@ test("parent cancellation retires reserved review capacity across receipt replay
   const capacityDispatchId = "31600000-0000-4000-8000-000000000009"
   const capacityIssueId = "31600000-0000-4000-8000-000000000010"
   const capacityCallback = "31600000-0000-4000-8000-000000000011"
+  const projectId = "31600000-0000-4000-8000-000000000012"
   const head = "9".repeat(40)
+  await database.sql`
+    insert into momi_agent_ops.project_mappings (
+      linear_project_id, linear_project_name, repository, base_branch,
+      active_states, active, host_dispatch_url
+    ) values (${projectId}::uuid, 'Symphony Control Plane',
+      'thedoughmonster/momi-symphony', 'main', array['In Progress'], true,
+      'https://host.example/v1/dispatch')`
   await database.sql`
     insert into momi_agent_ops.raw_webhook_envelopes (
       delivery_id, raw_body, payload, payload_sha256, auth_result
@@ -785,7 +794,8 @@ test("parent cancellation retires reserved review capacity across receipt replay
   await database.sql`
     insert into momi_agent_ops.dispatches (
       dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
-      linear_issue_identifier, linear_issue_url, action, changed_fields,
+      linear_issue_identifier, linear_issue_url, linear_project_id,
+      linear_project_name, action, changed_fields,
       mapped_repository, mapped_base_branch, active_states, work_status,
       capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id,
       cancellation_state, target_dispatch_id
@@ -793,21 +803,24 @@ test("parent cancellation retires reserved review capacity across receipt replay
       (${dispatchId}::uuid, ${deliveryId}::uuid, 'cancel-ambiguous-parent',
         ${issueId}::uuid, 'MOX-260',
         'https://linear.app/moxx-workboard/issue/MOX-260/cancel-ambiguous-parent',
-        ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        ${projectId}::uuid, 'Symphony Control Plane', ${"execute-run"}, '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main',
         array['In Progress'], 'active', ${"4".repeat(64)},
         encode(extensions.digest(convert_to(${callback}, 'UTF8'), 'sha256'), 'hex'),
         'implementation-thread', 'implementation-turn', 'not_requested', null),
       (${cancelDispatchId}::uuid, ${cancelDeliveryId}::uuid, 'cancel-ambiguous-request',
         ${issueId}::uuid, 'MOX-260',
         'https://linear.app/moxx-workboard/issue/MOX-260/cancel-ambiguous-request',
-        'cancel-run', '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        ${projectId}::uuid, 'Symphony Control Plane', 'cancel-run', '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main',
         array['In Progress'], 'claimed',
         encode(extensions.digest(convert_to(${cancelCapability}, 'UTF8'), 'sha256'), 'hex'),
         null, null, null, 'requested', ${dispatchId}::uuid),
       (${capacityDispatchId}::uuid, ${capacityDeliveryId}::uuid, 'capacity-after-cancel',
         ${capacityIssueId}::uuid, 'MOX-999',
         'https://linear.app/moxx-workboard/issue/MOX-999/capacity-after-cancel',
-        ${"execute-run"}, '{}'::jsonb, 'thedoughmonster/momi-symphony', 'main',
+        ${projectId}::uuid, 'Symphony Control Plane', ${"execute-run"}, '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main',
         array['In Progress'], 'active', ${"5".repeat(64)},
         encode(extensions.digest(convert_to(${capacityCallback}, 'UTF8'), 'sha256'), 'hex'),
         'capacity-thread', 'capacity-turn', 'not_requested', null)
@@ -830,6 +843,11 @@ test("parent cancellation retires reserved review capacity across receipt replay
       'review://MOX-260/cancel-ambiguous', 'fnv1a64:2222222222222222',
       array['scheduler_recovery_cancellation'], array['scheduler_recovery_cancellation'], null, 1)
   `
+  const completeTargets = [dispatchId, created.reviewer_dispatch_id].sort()
+  const [initialTargets] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(initialTargets.target_ids, completeTargets)
   const revocations = await database.sql<{
     implementation_dispatch_id: string; head_sha: string;
     publication_pending: boolean; revocation_required: boolean
@@ -849,6 +867,38 @@ test("parent cancellation retires reserved review capacity across receipt replay
     select momi_agent_ops.fence_cancellation_v1(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid) as fenced`
   assert.equal(fenced.fenced, true)
+  const [fencedTargets] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(fencedTargets.target_ids, completeTargets)
+  const terminal = await recordTerminal({ event: "terminal", work_id: dispatchId,
+    capability_token: callback, thread_id: "implementation-thread",
+    turn_id: "implementation-turn", readiness_result: "ready",
+    terminal_disposition: "interrupted", archived_at: "2026-08-21T02:00:00.000Z",
+    summary: "Cancellation terminalized before reviewer receipt persistence.",
+    telemetry: { policy_version: "execution-efficiency.v1",
+      stable_prefix_fingerprint: "cancel-replay-stable-prefix",
+      context_fingerprint: "cancel-replay-context", input_tokens: 1,
+      cached_input_tokens: 0, output_tokens: 1, model_visible_tool_bytes: 1,
+      model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+      retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1,
+      disposition: "interrupted" } }, database.sql)
+  assert.equal(terminal?.issue_identifier, "MOX-260")
+  await database.sql`update momi_agent_ops.dispatches set
+    lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${cancelDispatchId}::uuid`
+  const [transientRetry] = await database.sql<{
+    delivery_phase: string; cancellation_state: string; cancellation_target_ids: string[]
+  }[]>`
+    select delivery_phase, cancellation_state, cancellation_target_ids::text[]
+    from momi_agent_ops.claim_dispatch_v6(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)`
+  assert.deepEqual(transientRetry, { delivery_phase: "writeback",
+    cancellation_state: "already_terminal", cancellation_target_ids: [] })
+  const [reconstructedRetry] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(reconstructedRetry.target_ids, completeTargets)
   const [blockedParent] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_cancellation_v3(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
@@ -909,10 +959,18 @@ test("parent cancellation retires reserved review capacity across receipt replay
       ${created.reviewer_capability_token}::uuid,
       'canceled', 'canceled', false, false) as recorded`
   assert.equal(downgradedReceipt.recorded, false)
+  const [receiptCrashReplay] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${cancelDispatchId}::uuid, ${cancelCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(receiptCrashReplay.target_ids, completeTargets)
   const [recorded] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_cancellation_v3(
       ${cancelDispatchId}::uuid, ${cancelCapability}::uuid, 'requested') as recorded`
   assert.equal(recorded.recorded, true)
+  const [attemptCount] = await database.sql<{ count: number }[]>`
+    select count(*)::integer as count from momi_agent_ops.review_attempts
+    where implementation_dispatch_id = ${dispatchId}::uuid`
+  assert.equal(attemptCount.count, 1)
   const [lateResult] = await database.sql<{ recorded: boolean }[]>`
     select momi_agent_ops.record_review_result_v1(
       ${created.reviewer_dispatch_id}::uuid, ${created.reviewer_capability_token}::uuid,
