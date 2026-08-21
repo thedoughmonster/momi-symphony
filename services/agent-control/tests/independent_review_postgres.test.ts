@@ -1433,6 +1433,8 @@ async (context) => {
     insert into momi_agent_ops.run_records (dispatch_id) values
       (${cancelFirstDispatchId}::uuid), (${cancelFirstCancelId}::uuid),
       (${escalationFirstDispatchId}::uuid), (${escalationFirstCancelId}::uuid)`
+  await database.sql`update momi_agent_ops.run_records set head_sha = ${head}
+    where dispatch_id = ${escalationFirstDispatchId}::uuid`
   await database.sql`
     insert into momi_agent_ops.review_attempts (
       review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
