@@ -1472,14 +1472,14 @@ async (context) => {
     reportCancelFenced(); await cancelRelease
   })
   await cancelFenced
-  const refusedEscalation = database.sql<{ disposition: string;
+  const refusedEscalation = (async () => await database.sql<{ disposition: string;
     reviewer_dispatch_id: string | null }[]>`
-    select disposition, reviewer_dispatch_id::text
-    from momi_agent_ops.create_escalated_review_attempt_v1(
-      ${cancelFirstReviewerId}::uuid, ${cancelFirstReviewerCapability}::uuid,
-      'cancel-first-review-thread', 'cancel-first-review-turn',
-      'fnv1a64:5555555555555555', 'review://MOX-972/cancel-first-replay',
-      'fnv1a64:6666666666666666', array['concurrency'], 4)`
+      select disposition, reviewer_dispatch_id::text
+      from momi_agent_ops.create_escalated_review_attempt_v1(
+        ${cancelFirstReviewerId}::uuid, ${cancelFirstReviewerCapability}::uuid,
+        'cancel-first-review-thread', 'cancel-first-review-turn',
+        'fnv1a64:5555555555555555', 'review://MOX-972/cancel-first-replay',
+        'fnv1a64:6666666666666666', array['concurrency'], 4)`)()
   try {
     await waitForAdvisoryWaiters(database.sql, 1)
   } finally {
@@ -1522,9 +1522,9 @@ async (context) => {
     reportChildCreated(child); await escalationRelease
   })
   const child = await childCreated
-  const waitingCancellation = database.sql<{ fenced: boolean }[]>`
+  const waitingCancellation = (async () => await database.sql<{ fenced: boolean }[]>`
     select momi_agent_ops.fence_cancellation_v1(
-      ${escalationFirstCancelId}::uuid, ${escalationFirstCapability}::uuid) as fenced`
+      ${escalationFirstCancelId}::uuid, ${escalationFirstCapability}::uuid) as fenced`)()
   try {
     await waitForAdvisoryWaiters(database.sql, 1)
   } finally {
