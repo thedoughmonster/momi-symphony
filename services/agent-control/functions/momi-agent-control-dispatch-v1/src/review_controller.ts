@@ -290,15 +290,23 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
           pull_request_number: subject.pullRequestNumber, head_sha: subject.headSha,
           base_sha: subject.baseSha, profile, policy_version: REVIEW_POLICY_VERSION } }),
       signal: AbortSignal.timeout(10_000) })
-  } catch { throw new Error("review_host_delivery_ambiguous") }
+  } catch {
+    await recordReviewAmbiguity(sql, input, attempt.review_attempt_id,
+      attempt.reviewer_callback_capability)
+    throw new Error("review_host_delivery_ambiguous")
+  }
   const accepted = await response.json().catch(() => null) as Record<string, unknown> | null
   if (!response.ok) {
     if (accepted?.disposition !== "ambiguous") await recordAttemptFailure(sql, attempt,
       "review_host_delivery_refused")
+    else await recordReviewAmbiguity(sql, input, attempt.review_attempt_id,
+      attempt.reviewer_callback_capability)
     throw new Error(accepted?.disposition === "ambiguous"
       ? "review_host_delivery_ambiguous" : "review_host_delivery_refused")
   }
   if (typeof accepted?.thread_id !== "string" || typeof accepted.turn_id !== "string") {
+    await recordReviewAmbiguity(sql, input, attempt.review_attempt_id,
+      attempt.reviewer_callback_capability)
     throw new Error("review_host_delivery_ambiguous")
   }
   const started = await sql<{ recorded: boolean }[]>`
@@ -306,7 +314,11 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
       ${attempt.reviewer_dispatch_id}::uuid,
       ${attempt.reviewer_callback_capability}::uuid,
       'independent_reviewer', ${accepted.thread_id}, ${accepted.turn_id}) as recorded`
-  if (started[0]?.recorded !== true) throw new Error("reviewer_start_record_refused")
+  if (started[0]?.recorded !== true) {
+    await recordReviewAmbiguity(sql, input, attempt.review_attempt_id,
+      attempt.reviewer_callback_capability)
+    throw new Error("reviewer_start_record_refused")
+  }
   await reconcileReviewCheck(sql, args.github, { implementationDispatchId: input.work_id,
     repository: input.repository, pullRequestNumber: subject.pullRequestNumber,
     headSha: subject.headSha, baseSha: subject.baseSha,
@@ -321,6 +333,17 @@ async function recordAttemptFailure(sql: Sql, attempt: CreatedAttempt, reason: s
   await sql`select momi_agent_ops.record_review_failure_v1(
     ${attempt.reviewer_dispatch_id}::uuid,
     ${attempt.reviewer_callback_capability}::uuid, ${reason})`
+}
+
+async function recordReviewAmbiguity(sql: Sql, input: ReviewRequestInput,
+  reviewAttemptId: string, reviewCapability: string) {
+  const rows = await sql<{ incident_id: string | null }[]>`
+    select momi_agent_ops.record_operator_incident_v1(
+      ${input.work_id}::uuid, ${reviewCapability}::uuid,
+      'reviewer_ambiguous', ${`review:${reviewAttemptId}`}, 'reviewing',
+      'reconcile_reviewer_start', ${reviewAttemptId}::uuid, null, now()
+    )::text as incident_id`
+  if (!rows[0]?.incident_id) throw new Error("review_incident_record_refused")
 }
 
 function reviewHostSecret(): string {
