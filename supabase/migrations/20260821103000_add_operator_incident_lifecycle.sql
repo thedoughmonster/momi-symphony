@@ -309,6 +309,9 @@ declare phase text;
 declare guidance text;
 declare generation text;
 declare identity text;
+declare initial_state text := 'ambiguous';
+declare initial_resolution_code text;
+declare initial_superseded_at timestamptz;
 begin
   if new.action <> ('exec' || 'ute-run') then return new; end if;
   select current_run.* into run from momi_agent_ops.run_records current_run
@@ -331,33 +334,61 @@ begin
     return new;
   end if;
   if new.work_status <> 'dead_letter' or old.work_status = 'dead_letter' then return new; end if;
-  incident_category := case when run.terminal_at is null
-    then 'run_ambiguous' else 'callback_ambiguous' end;
-  phase := case when run.terminal_at is null then 'working' else 'callback' end;
-  guidance := case when run.terminal_at is null
-    then 'recover_dispatch' else 'retry_terminal_callback' end;
+  incident_category := case
+    when new.source_kind = 'ready_leaf_scheduler' then 'retained_task_ambiguous'
+    when run.terminal_at is null then 'run_ambiguous'
+    else 'callback_ambiguous' end;
+  phase := case
+    when new.source_kind = 'ready_leaf_scheduler' then 'scheduler'
+    when run.terminal_at is null then 'working'
+    else 'callback' end;
+  guidance := case
+    when new.source_kind = 'ready_leaf_scheduler' then 'reconcile_retained_task'
+    when run.terminal_at is null then 'recover_dispatch'
+    else 'retry_terminal_callback' end;
   generation := 'dead-letter:' || new.attempt_count::text || ':' || coalesce(
     ((extract(epoch from new.dead_letter_recovered_at) * 1000000)::bigint)::text,
     'initial');
   identity := encode(extensions.digest(convert_to(
     new.dispatch_id::text || ':' || run.run_id::text || ':' || incident_category || ':' ||
       generation, 'UTF8'), 'sha256'), 'hex');
-  update momi_agent_ops.operator_incidents incident set
-    lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
-    superseded_at = now(), updated_at = now()
-  where incident.implementation_dispatch_id = new.dispatch_id
-    and incident.category = incident_category and incident.incident_identity <> identity
-    and incident.lifecycle_state in ('active', 'ambiguous');
+  if exists (select 1 from momi_agent_ops.dispatches newer
+    join momi_agent_ops.project_mappings mapping
+      on mapping.linear_project_id = newer.linear_project_id
+      and mapping.active and mapping.repository = newer.mapped_repository
+      and mapping.base_branch = newer.mapped_base_branch
+    where newer.linear_issue_id = new.linear_issue_id
+      and newer.linear_project_id = new.linear_project_id
+      and newer.action = ('exec' || 'ute-run')
+      and newer.rejection_code is null
+      and newer.mapped_repository = new.mapped_repository
+      and newer.mapped_base_branch = new.mapped_base_branch
+      and (newer.created_at, newer.dispatch_id) >
+        (new.created_at, new.dispatch_id)) then
+    initial_state := 'superseded';
+    initial_resolution_code := 'generation_superseded';
+    initial_superseded_at := now();
+  else
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
+      superseded_at = now(), updated_at = now()
+    where incident.implementation_dispatch_id = new.dispatch_id
+      and incident.category = incident_category
+      and incident.incident_identity <> identity
+      and incident.lifecycle_state in ('active', 'ambiguous');
+  end if;
   insert into momi_agent_ops.operator_incidents as incident (
     incident_identity, implementation_dispatch_id, run_id, generation_key,
     linear_issue_id, linear_issue_identifier, linear_issue_url, lifecycle_phase,
     category, lifecycle_state, repository, base_branch, pull_request_number,
-    head_sha, dispatch_id, first_observed_at, last_progress_at, guidance_code
+    head_sha, dispatch_id, first_observed_at, last_progress_at, guidance_code,
+    resolution_code, superseded_at
   ) values (
     identity, new.dispatch_id, run.run_id, generation, new.linear_issue_id,
-    new.linear_issue_identifier, new.linear_issue_url, phase, incident_category, 'ambiguous',
+    new.linear_issue_identifier, new.linear_issue_url, phase, incident_category, initial_state,
     new.mapped_repository, new.mapped_base_branch, run.pull_request_number,
-    run.head_sha, new.dispatch_id, now(), now(), guidance
+    run.head_sha, new.dispatch_id, now(), now(), guidance,
+    initial_resolution_code, initial_superseded_at
   ) on conflict (incident_identity) do update set
     last_progress_at = greatest(incident.last_progress_at, excluded.last_progress_at),
     observation_count = least(incident.observation_count + 1, 1000000),

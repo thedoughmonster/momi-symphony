@@ -3,6 +3,8 @@ import test from "node:test"
 import type { Sql } from "postgres"
 
 import { schedulerHarness } from "./ready_leaf_scheduler_postgres/harness.ts"
+import { acquire, claim, configure, ownerOne, reconcile,
+  releaseSha } from "./ready_leaf_scheduler_postgres/contract.ts"
 
 const dispatchId = "67000000-0000-4000-8000-000000000001"
 const issueId = "67000000-0000-4000-8000-000000000002"
@@ -175,6 +177,45 @@ test("dead-letter recovery epochs open a fresh incident after re-exhaustion", as
   assert.equal(incidents[1]?.lifecycle_state, "ambiguous")
   assert.notEqual(incidents[0]?.generation_key, incidents[1]?.generation_key)
 })
+
+test("dead-letter incidents stay fenced and scheduler work is not recoverable",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+
+    await seedImplementation(database.sql)
+    await seedAdditionalDispatch(database.sql, {
+      dispatchId: "67000000-0000-4000-8000-000000000024",
+      deliveryId: "67000000-0000-4000-8000-000000000025", rejected: false })
+    await database.sql`
+      update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
+      where dispatch_id = ${dispatchId}::uuid`
+    const stale = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state, resolution_code from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${dispatchId}::uuid`
+    assert.deepEqual(stale.map((row) => ({ ...row })), [{
+      lifecycle_state: "superseded", resolution_code: "generation_superseded",
+    }])
+
+    await configure(database.sql, "enabled")
+    const candidate = await reconcile(database.sql, 267)
+    const leader = await acquire(database.sql, ownerOne, releaseSha)
+    assert.ok(leader)
+    const scheduled = await claim(database.sql, ownerOne,
+      leader.fencing_generation, candidate, releaseSha)
+    assert.ok(scheduled.dispatch_id)
+    await database.sql`
+      update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
+      where dispatch_id = ${scheduled.dispatch_id}::uuid`
+    const retained = await database.sql<Array<Record<string, unknown>>>`
+      select category, lifecycle_phase, lifecycle_state, guidance_code
+      from momi_agent_ops.operator_incidents
+      where implementation_dispatch_id = ${scheduled.dispatch_id}::uuid`
+    assert.deepEqual(retained.map((row) => ({ ...row })), [{
+      category: "retained_task_ambiguous", lifecycle_phase: "scheduler",
+      lifecycle_state: "ambiguous", guidance_code: "reconcile_retained_task",
+    }])
+  })
 
 test("rejected and delayed older dispatches cannot displace canonical guidance",
   async (context) => {
