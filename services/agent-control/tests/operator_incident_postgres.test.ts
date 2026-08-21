@@ -47,7 +47,7 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
     assert.deepEqual(repeated, [{ lifecycle_state: "ambiguous",
       category: "reviewer_ambiguous", generation_key: `review:${reviewOne}`,
       observation_count: 2, guidance_code: "reconcile_reviewer_start",
-      repository, pull_request_number: 17, head_sha: head }])
+      repository, pull_request_number: "17", head_sha: head }])
 
     await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
