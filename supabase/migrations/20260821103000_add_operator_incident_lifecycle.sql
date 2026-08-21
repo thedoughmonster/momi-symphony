@@ -137,10 +137,16 @@ begin
   select selected.* into work from momi_agent_ops.dispatches selected
   where selected.dispatch_id = p_dispatch_id
     and selected.action = ('exec' || 'ute-run')
-    and encode(extensions.digest(
+    and (encode(extensions.digest(
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex') in (
-        selected.capability_token_hash, selected.host_callback_token_hash
-      )
+        selected.capability_token_hash, selected.host_callback_token_hash)
+      or (p_category = 'reviewer_ambiguous' and p_review_attempt_id is not null
+        and exists (select 1 from momi_agent_ops.review_attempts incident_review
+          where incident_review.review_attempt_id = p_review_attempt_id
+            and incident_review.implementation_dispatch_id = selected.dispatch_id
+            and incident_review.reviewer_callback_capability_hash =
+              encode(extensions.digest(convert_to(
+                p_capability_token::text, 'UTF8'), 'sha256'), 'hex'))))
   for update;
   if not found then return null; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
@@ -342,6 +348,9 @@ begin
   if new.work_status <> 'dead_letter' or old.work_status = 'dead_letter' then return new; end if;
   incident_category := case
     when new.source_kind = 'ready_leaf_scheduler' then 'retained_task_ambiguous'
+    when run.terminal_at is null and (new.host_accepted_at is not null
+      or new.codex_thread_id is not null or new.codex_turn_id is not null
+      or new.host_callback_token_hash is not null) then 'retained_task_ambiguous'
     when run.terminal_at is null then 'run_ambiguous'
     else 'callback_ambiguous' end;
   phase := case
@@ -350,6 +359,9 @@ begin
     else 'callback' end;
   guidance := case
     when new.source_kind = 'ready_leaf_scheduler' then 'reconcile_retained_task'
+    when run.terminal_at is null and (new.host_accepted_at is not null
+      or new.codex_thread_id is not null or new.codex_turn_id is not null
+      or new.host_callback_token_hash is not null) then 'reconcile_retained_task'
     when run.terminal_at is null then 'recover_dispatch'
     else 'retry_terminal_callback' end;
   generation := 'dead-letter:' || new.attempt_count::text || ':' || coalesce(

@@ -12,6 +12,8 @@ const deliveryId = "67000000-0000-4000-8000-000000000003"
 const capability = "67000000-0000-4000-8000-000000000004"
 const reviewOne = "67000000-0000-4000-8000-000000000005"
 const reviewTwo = "67000000-0000-4000-8000-000000000006"
+const reviewCapabilityOne = "67000000-0000-4000-8000-000000000009"
+const reviewCapabilityTwo = "67000000-0000-4000-8000-000000000010"
 const repository = "thedoughmonster/momi-symphony"
 const projectId = "de0dbcdb-9025-4ccc-8b3c-56f23d7367d5"
 const head = "a".repeat(40)
@@ -35,7 +37,7 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const opened = await database.sql<{ incident_id: string | null }[]>`
         select momi_agent_ops.record_operator_incident_v1(
-          ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+          ${dispatchId}::uuid, ${reviewCapabilityOne}::uuid, 'reviewer_ambiguous',
           ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
           ${reviewOne}::uuid, null, now()
         )::text as incident_id`
@@ -58,7 +60,7 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
     await seedReview(database.sql, reviewTwo, "67000000-0000-4000-8000-000000000008")
     await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
-        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${dispatchId}::uuid, ${reviewCapabilityTwo}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewTwo}`}, 'reviewing', 'reconcile_reviewer_start',
         ${reviewTwo}::uuid, null, now())`
     const generations = await database.sql<Array<Record<string, unknown>>>`
@@ -75,7 +77,7 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
 
     const delayed = await database.sql<{ incident_id: string | null }[]>`
       select momi_agent_ops.record_operator_incident_v1(
-        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${dispatchId}::uuid, ${reviewCapabilityOne}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
         ${reviewOne}::uuid, null, now())::text as incident_id`
     assert.equal(delayed[0]?.incident_id, null)
@@ -183,6 +185,22 @@ test("dead-letter recovery epochs open a fresh incident after re-exhaustion", as
   assert.notEqual(incidents[0]?.generation_key, incidents[1]?.generation_key)
 })
 
+test("accepted-host dead letters require retained-task reconciliation", async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  await seedImplementation(database.sql)
+  await database.sql`
+    update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
+    where dispatch_id = ${dispatchId}::uuid`
+  const incidents = await database.sql<Array<Record<string, unknown>>>`
+    select category, lifecycle_phase, guidance_code
+    from momi_agent_ops.operator_incidents`
+  assert.deepEqual(incidents.map((row) => ({ ...row })), [{
+    category: "retained_task_ambiguous", lifecycle_phase: "working",
+    guidance_code: "reconcile_retained_task",
+  }])
+})
+
 test("dead-letter incidents stay fenced and scheduler work is not recoverable",
   async (context) => {
     const database = await schedulerHarness.start()
@@ -282,7 +300,7 @@ test("rejected and delayed older dispatches cannot displace canonical guidance",
     await seedReview(database.sql, reviewOne, "67000000-0000-4000-8000-000000000007")
     await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
-        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${dispatchId}::uuid, ${reviewCapabilityOne}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
         ${reviewOne}::uuid, null, now())`
     await seedAdditionalDispatch(database.sql, {
@@ -298,7 +316,7 @@ test("rejected and delayed older dispatches cannot displace canonical guidance",
       deliveryId: "67000000-0000-4000-8000-000000000023", rejected: false })
     await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
-        ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
+        ${dispatchId}::uuid, ${reviewCapabilityOne}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
         ${reviewOne}::uuid, null, now())`
     current = await database.sql<Array<Record<string, unknown>>>`
@@ -369,6 +387,10 @@ async function seedReview(sql: Parameters<typeof seedImplementation>[0],
       reviewer_callback_capability_hash, repository, pull_request_number,
       head_sha, base_sha, policy_version, profile
     ) values (${reviewAttemptId}::uuid, ${dispatchId}::uuid,
-      ${reviewerDispatchId}::uuid, ${"2".repeat(64)}, ${repository}, 17, ${head}, ${base},
+      ${reviewerDispatchId}::uuid,
+      encode(extensions.digest(convert_to(
+        ${reviewAttemptId === reviewOne ? reviewCapabilityOne : reviewCapabilityTwo}::uuid::text,
+        'UTF8'), 'sha256'), 'hex'),
+      ${repository}, 17, ${head}, ${base},
       'independent-review-v1', 'high')`
 }
