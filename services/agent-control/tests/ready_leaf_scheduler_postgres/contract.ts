@@ -60,6 +60,20 @@ export async function acquire(
   return rows[0] ?? null
 }
 
+export async function hasImplementationCapacity(
+  sql: Sql,
+  owner: string,
+  leaderGeneration: number,
+  sha = releaseSha,
+): Promise<boolean> {
+  const [row] = await sql<{ available: boolean }[]>`
+    select momi_agent_ops.scheduler_route_has_implementation_capacity_v1(
+      ${routeKey}, ${owner}::uuid, ${sha}, ${leaderGeneration}
+    ) as available
+  `
+  return row?.available === true
+}
+
 export async function claim(
   sql: Sql,
   owner: string,

@@ -58,6 +58,7 @@ function dependencies(options: {
   capacity?: number
   fetchFailure?: boolean
   refreshFailure?: LinearGraphqlError
+  projectableIds?: string[]
 }) {
   const dispatched = new Set<string>()
   const active = new Set<string>()
@@ -65,22 +66,32 @@ function dependencies(options: {
   const generations = new Map<string, number>()
   const lastEligible = new Map<string, boolean>()
   const retryCodes: string[] = []
+  let fetchCalls = 0
+  let heartbeatCalls = 0
+  let providerSuccesses = 0
+  const projected: string[] = []
   let maxActive = 0
   const selectedRoute = { ...route, mode: options.mode ?? "enabled",
     acceptanceIssueIds: options.acceptanceIssueIds ?? [] }
   const deps: ReadyLeafSchedulerDependencies = {
     routes: () => Promise.resolve([selectedRoute]),
     acquireLeader: () => Promise.resolve({ routeKey: route.routeKey, generation: 1 }),
-    fetchCandidates: () => options.fetchFailure
-      ? Promise.reject(new LinearAdapterError("tracker_response", "provider_down"))
-      : Promise.resolve([...options.issues.values()]),
+    hasImplementationCapacity: () => Promise.resolve(
+      active.size < (options.capacity ?? 20)
+    ),
+    fetchCandidates: () => {
+      fetchCalls += 1
+      return options.fetchFailure
+        ? Promise.reject(new LinearAdapterError("tracker_response", "provider_down"))
+        : Promise.resolve([...options.issues.values()])
+    },
     refresh: (_route, ids) => options.refreshFailure
       ? Promise.reject(options.refreshFailure)
       : Promise.resolve(ids.flatMap((id) => {
       const issue = options.issues.get(id); return issue ? [issue] : []
       })),
     candidateIds: () => Promise.resolve([...options.issues.keys()]),
-    projectable: () => Promise.resolve([]),
+    projectable: () => Promise.resolve(options.projectableIds ?? []),
     reconcile: (_route, issue) => {
       const previous = lastEligible.get(issue.id) ?? false
       if (issue.dispatchable && !previous) {
@@ -108,12 +119,14 @@ function dependencies(options: {
       maxActive = Math.max(maxActive, active.size)
       return { dispatchId: candidate.candidateId }
     },
-    project: () => Promise.resolve(),
-    heartbeat: () => Promise.resolve(),
+    project: (dispatchId) => { projected.push(dispatchId); return Promise.resolve() },
+    heartbeat: () => { heartbeatCalls += 1; return Promise.resolve() },
     providerRetry: (_routeKey, code) => { retryCodes.push(code); return Promise.resolve() },
-    providerSuccess: () => Promise.resolve(),
+    providerSuccess: () => { providerSuccesses += 1; return Promise.resolve() },
   }
-  return { deps, dispatched, active, retryCodes, maxActive: () => maxActive }
+  return { deps, dispatched, active, retryCodes, projected,
+    fetchCalls: () => fetchCalls, heartbeatCalls: () => heartbeatCalls,
+    providerSuccesses: () => providerSuccesses, maxActive: () => maxActive }
 }
 
 test("blocked leaf consumes no task or slot and later unblocks without a state change", async () => {
@@ -163,6 +176,39 @@ test("provider outage fails closed as technical retry without a claim", async ()
   assert.equal(receipt.technical_retries, 1)
   assert.equal(receipt.claimed, 0)
   assert.deepEqual(fixture.retryCodes, ["tracker_response"])
+  assert.equal(fixture.providerSuccesses(), 0)
+})
+
+test("full implementation capacity suppresses only candidate reads and dispatch", async () => {
+  const candidate = normalized(6)
+  const activeDispatch = "00000000-0000-4000-8000-000000000099"
+  const fixture = dependencies({ issues: new Map([[candidate.id, candidate]]),
+    capacity: 1, projectableIds: [activeDispatch] })
+  fixture.active.add(activeDispatch)
+
+  const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
+    scheduler_id: owner, release_sha: releaseSha,
+    active_work_ids: [activeDispatch] }, fixture.deps)
+
+  assert.deepEqual(receipt, { ok: true, routes: 1, observed: 0, claimed: 0,
+    technical_retries: 0 })
+  assert.equal(fixture.fetchCalls(), 0)
+  assert.equal(fixture.dispatched.size, 0)
+  assert.equal(fixture.active.size, 1)
+  assert.equal(fixture.heartbeatCalls(), 1)
+  assert.deepEqual(fixture.projected, [activeDispatch])
+  assert.equal(fixture.providerSuccesses(), 0)
+  assert.deepEqual(fixture.retryCodes, [])
+})
+
+test("available capacity preserves candidate reads and provider retry reset", async () => {
+  const candidate = normalized(7)
+  const fixture = dependencies({ issues: new Map([[candidate.id, candidate]]), capacity: 1 })
+  const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
+    scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
+  assert.equal(receipt.claimed, 1)
+  assert.equal(fixture.fetchCalls(), 1)
+  assert.equal(fixture.providerSuccesses(), 1)
 })
 
 test("observe mode preserves a bounded typed tracker failure in its count-only receipt", async () => {

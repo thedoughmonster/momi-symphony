@@ -87,6 +87,21 @@ export async function acquireSchedulerLeader(
     : null
 }
 
+export async function schedulerRouteHasImplementationCapacity(
+  route: SchedulerRoute,
+  ownerId: string,
+  releaseSha: string,
+  leader: SchedulerLeader,
+): Promise<boolean> {
+  const sql = getDatabase()
+  const rows = await sql<{ available: boolean }[]>`
+    select momi_agent_ops.scheduler_route_has_implementation_capacity_v1(
+      ${route.routeKey}, ${ownerId}::uuid, ${releaseSha}, ${leader.generation}
+    ) as available
+  `
+  return rows[0]?.available === true
+}
+
 export async function listSchedulerCandidateIds(route: SchedulerRoute): Promise<string[]> {
   const sql = getDatabase()
   const rows = await sql<{ linear_issue_id: string }[]>`

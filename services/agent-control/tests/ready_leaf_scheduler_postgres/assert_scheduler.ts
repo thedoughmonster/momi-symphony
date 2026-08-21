@@ -6,6 +6,7 @@ import {
   acquire,
   claim,
   configure,
+  hasImplementationCapacity,
   issueId,
   ownerOne,
   ownerThree,
@@ -117,11 +118,15 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   for (let index = 10; index < 30; index += 1) {
     candidates.push(await reconcile(sql, index))
   }
+  assert.equal(await hasImplementationCapacity(sql, ownerThree, 3), true)
 
   const firstWave = await Promise.all(candidates.map((candidate) =>
     claim(sql, ownerThree, 3, candidate)))
   assert.equal(firstWave.filter((result) => result.claimed).length, 3)
   assert.equal(await activeCount(sql), 3)
+  assert.equal(await hasImplementationCapacity(sql, ownerThree, 3), false)
+  assert.equal(await hasImplementationCapacity(sql, ownerTwo, 2), false)
+  assert.equal(await hasImplementationCapacity(sql, ownerThree, 3, wrongReleaseSha), false)
   let maximum = 3
 
   while (true) {
@@ -133,6 +138,7 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     `
     if (count === candidates.length) break
     assert.equal(await releaseOne(sql), true)
+    assert.equal(await hasImplementationCapacity(sql, ownerThree, 3), true)
     const wave = await Promise.all(candidates.map((candidate) =>
       claim(sql, ownerThree, 3, candidate)))
     assert.ok(wave.filter((result) => result.claimed).length <= 1)
@@ -174,6 +180,7 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   `
   assert.equal(heartbeat.quarantined, 1)
   const waiting = await reconcile(sql, 32)
+  assert.equal(await hasImplementationCapacity(sql, ownerThree, 3), false)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
   const [extended] = await sql<{ extended: number }[]>`
     select extended from momi_agent_ops.heartbeat_scheduler_slots_v1(
@@ -186,6 +193,7 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
+  assert.equal(await hasImplementationCapacity(sql, ownerThree, 3), true)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
 }
 

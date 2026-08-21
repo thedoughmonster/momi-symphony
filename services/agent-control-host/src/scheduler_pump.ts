@@ -19,7 +19,7 @@ export function readSchedulerPumpConfiguration(
 ): SchedulerPumpConfiguration {
   const enabled = environment.MOMI_AGENT_CONTROL_SCHEDULER_ENABLED?.trim() === "true"
   const configuredInterval = Number(
-    environment.MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS ?? "15000",
+    environment.MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS ?? "60000",
   )
   const validInterval = Number.isInteger(configuredInterval) &&
     configuredInterval >= 10_000 && configuredInterval <= 60_000
@@ -27,7 +27,7 @@ export function readSchedulerPumpConfiguration(
   if (enabled && (!validInterval || !/^[0-9a-f]{40}$/.test(releaseSha ?? ""))) {
     throw new Error("agent_control_scheduler_configuration_invalid")
   }
-  return { enabled, intervalMs: validInterval ? configuredInterval : 15_000, releaseSha }
+  return { enabled, intervalMs: validInterval ? configuredInterval : 60_000, releaseSha }
 }
 
 export class SchedulerPump {
