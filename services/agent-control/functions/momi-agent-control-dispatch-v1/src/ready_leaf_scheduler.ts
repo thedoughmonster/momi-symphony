@@ -13,6 +13,7 @@ import {
   reconcileSchedulerCandidate,
   recordSchedulerProviderRetry,
   recordSchedulerProviderSuccess,
+  schedulerRouteHasImplementationCapacity,
   type SchedulerCandidate,
   type SchedulerClaim,
   type SchedulerLeader,
@@ -26,6 +27,8 @@ export type ReadyLeafSchedulerDependencies = {
   routes: () => Promise<SchedulerRoute[]>
   acquireLeader: (routeKey: string, ownerId: string,
     releaseSha: string) => Promise<SchedulerLeader | null>
+  hasImplementationCapacity: (route: SchedulerRoute, ownerId: string,
+    releaseSha: string, leader: SchedulerLeader) => Promise<boolean>
   fetchCandidates: (route: SchedulerRoute) => Promise<NormalizedLinearIssue[]>
   refresh: (route: SchedulerRoute, issueIds: readonly string[]) => Promise<NormalizedLinearIssue[]>
   candidateIds: (route: SchedulerRoute) => Promise<string[]>
@@ -62,6 +65,7 @@ function defaultDependencies(): ReadyLeafSchedulerDependencies {
   return {
     routes: listSchedulerRoutes,
     acquireLeader: acquireSchedulerLeader,
+    hasImplementationCapacity: schedulerRouteHasImplementationCapacity,
     fetchCandidates: (route) => fetchLinearCandidateIssues(
       route.activeStates,
       adapterProfile(route),
@@ -168,9 +172,14 @@ export async function processReadyLeafSchedulerPump(
     )
     if (!leader) continue
     try {
+      let providerRead = false
       if (route.mode === "observe") {
+        providerRead = true
         observed += await processObservedRoute(route, dependencies)
-      } else {
+      } else if (await dependencies.hasImplementationCapacity(
+        route, input.scheduler_id, input.release_sha, leader,
+      )) {
+        providerRead = true
         const receipt = await processEnabledRoute(
           route, input.scheduler_id, input.release_sha, leader, dependencies,
         )
@@ -180,7 +189,7 @@ export async function processReadyLeafSchedulerPump(
       for (const dispatchId of await dependencies.projectable(route)) {
         await dependencies.project(dispatchId)
       }
-      await dependencies.providerSuccess(route.routeKey)
+      if (providerRead) await dependencies.providerSuccess(route.routeKey)
     } catch (error) {
       technicalRetries += 1
       await dependencies.providerRetry(route.routeKey, technicalCode(error))

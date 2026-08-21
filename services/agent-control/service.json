@@ -136,6 +136,7 @@
       "momi_agent_ops.retry_dispatch_v1",
       "momi_agent_ops.run_dispatch_recovery_v1",
       "momi_agent_ops.acquire_scheduler_leader_v1",
+      "momi_agent_ops.scheduler_route_has_implementation_capacity_v1",
       "momi_agent_ops.reconcile_scheduler_candidate_v1",
       "momi_agent_ops.mark_scheduler_candidate_stale_v1",
       "momi_agent_ops.claim_scheduler_candidate_v1",

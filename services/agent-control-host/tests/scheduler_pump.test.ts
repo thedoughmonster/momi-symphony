@@ -15,12 +15,12 @@ const receipt = { ok: true as const, routes: 1, observed: 1, claimed: 0,
 
 test("scheduler pump remains disabled unless explicitly enabled", () => {
   assert.deepEqual(readSchedulerPumpConfiguration({}), {
-    enabled: false, intervalMs: 15_000, releaseSha: null,
+    enabled: false, intervalMs: 60_000, releaseSha: null,
   })
   assert.deepEqual(readSchedulerPumpConfiguration({
     MOMI_AGENT_CONTROL_SCHEDULER_ENABLED: "True",
     MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS: "invalid",
-  }), { enabled: false, intervalMs: 15_000, releaseSha: null })
+  }), { enabled: false, intervalMs: 60_000, releaseSha: null })
   assert.deepEqual(readSchedulerPumpConfiguration({
     MOMI_AGENT_CONTROL_SCHEDULER_ENABLED: "true",
     MOMI_AGENT_CONTROL_SCHEDULER_INTERVAL_MS: "10000",
