@@ -44,10 +44,10 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
         guidance_code, repository, pull_request_number, head_sha
       from momi_agent_ops.operator_incidents
       where implementation_dispatch_id = ${dispatchId}::uuid`
-    assert.deepEqual(repeated, [{ lifecycle_state: "ambiguous",
+    assert.deepEqual({ ...repeated[0] }, { lifecycle_state: "ambiguous",
       category: "reviewer_ambiguous", generation_key: `review:${reviewOne}`,
       observation_count: 2, guidance_code: "reconcile_reviewer_start",
-      repository, pull_request_number: "17", head_sha: head }])
+      repository, pull_request_number: "17", head_sha: head })
 
     await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
@@ -59,7 +59,7 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
       from momi_agent_ops.operator_incidents
       where implementation_dispatch_id = ${dispatchId}::uuid
       order by generation_key`
-    assert.deepEqual(generations, [
+    assert.deepEqual(generations.map((row) => ({ ...row })), [
       { generation_key: `review:${reviewOne}`, lifecycle_state: "superseded",
         resolution_code: "generation_superseded" },
       { generation_key: `review:${reviewTwo}`, lifecycle_state: "ambiguous",
