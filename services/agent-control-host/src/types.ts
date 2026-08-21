@@ -96,6 +96,8 @@ export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
 }
 
+export type HostReviewWorkState = { review_work_state: "running" | "terminal" | "missing" }
+
 export type HostRecovery = {
   schema_version: 1
   work_id: string

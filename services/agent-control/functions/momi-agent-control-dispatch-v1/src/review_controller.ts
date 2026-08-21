@@ -11,6 +11,7 @@ import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
 import { GitHubReviewGateway, type GitHubMergeFacts,
   type GitHubReviewSubject } from "./github_review_gateway.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
+import { reconcileReviewCheck } from "./reconcile_review_check.ts"
 import type { MergeRequestInput, ReviewRequestInput, ReviewStatusInput,
   ReviewTerminalInput } from "./types.ts"
 
@@ -162,8 +163,7 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
         ${input.reviewer_dispatch_id}::uuid, ${input.capability_token}::uuid,
         'reviewer_terminal_without_valid_result') as recorded`
     if (failed[0]?.recorded !== true) throw new Error("review_failure_record_refused")
-    await github.projectReviewCheck(repository, subject.head_sha, "failure",
-      "Independent review did not return a valid result")
+    await reconcileReviewCheck(sql, github, projectionSubject(subject, repository))
     await reconcile(subject.implementation_dispatch_id)
     return { ok: true, disposition: "failed" }
   }
@@ -176,9 +176,7 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
       ${subject.policy_version}, ${subject.profile}, ${result.result},
       ${sql.json(result.findings as never)}::jsonb) as recorded`
   if (recorded[0]?.recorded !== true) throw new Error("review_result_record_refused")
-  await github.projectReviewCheck(repository, subject.head_sha,
-    result.result === "accepted" ? "success" : "failure",
-    `Independent review: ${result.result}`)
+  await reconcileReviewCheck(sql, github, projectionSubject(subject, repository))
   await reconcile(subject.implementation_dispatch_id)
   if (result.result !== "escalate") return { ok: true, disposition: result.result }
   const nextProfile = promoteReviewProfile(subject.profile)
@@ -217,7 +215,8 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
   parentAttemptId: string | null; reuseParentReviewer: boolean;
   unresolvedFindings: Array<Pick<ReviewFinding, "id" | "path" | "line" | "required_outcome">>;
   correction: { previous_head_sha: string; complete_diff_artifact_ref: string } | undefined;
-  sql: Sql; github: GitHubReviewGateway; fetchImpl: typeof fetch
+  sql: Sql; github: GitHubReviewGateway; fetchImpl: typeof fetch;
+  recoveryAttempted?: boolean
 }): Promise<Record<string, unknown>> {
   const { input, subject, profile, route, applicableRules, headCi, issue, sql, fetchImpl } = args
   const placeholder: ReviewSubject = { implementation_dispatch_id: input.work_id,
@@ -236,9 +235,27 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
       ${args.reuseParentReviewer}, 4)`
   const attempt = created[0]
   if (!attempt) throw new Error("review_attempt_not_created")
-  if (attempt.disposition !== "created") return { ok: true,
-    disposition: attempt.disposition, review_attempt_id: attempt.review_attempt_id,
-    reviewer_dispatch_id: attempt.reviewer_dispatch_id }
+  if (attempt.disposition !== "created") {
+    if (attempt.disposition === "already_pending" && attempt.review_attempt_id &&
+      attempt.reviewer_dispatch_id && !args.recoveryAttempted) {
+      const host = reviewHost(route.url)
+      const secret = reviewHostSecret()
+      const state = await loadHostReviewState(host, attempt.reviewer_dispatch_id,
+        secret, fetchImpl)
+      if (state === "missing") {
+        const recovered = await sql<{ recovered: boolean }[]>`
+          select momi_agent_ops.recover_missing_review_attempt_v1(
+            ${input.work_id}::uuid, ${input.capability_token}::uuid,
+            ${input.thread_id}, ${input.turn_id},
+            ${attempt.review_attempt_id}::uuid) as recovered`
+        if (recovered[0]?.recovered === true) return launchReview({ ...args,
+          recoveryAttempted: true })
+      }
+    }
+    return { ok: true, disposition: attempt.disposition,
+      review_attempt_id: attempt.review_attempt_id,
+      reviewer_dispatch_id: attempt.reviewer_dispatch_id }
+  }
   if (!attempt.review_attempt_id || !attempt.reviewer_dispatch_id ||
     !attempt.reviewer_callback_capability) throw new Error("review_attempt_identity_missing")
   const exactSubject = { ...placeholder, reviewer_dispatch_id: attempt.reviewer_dispatch_id }
@@ -250,13 +267,8 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
     ci: headCi, unresolved_findings: args.unresolvedFindings, correction: args.correction })
   const prompt = reviewerPrompt(packet, profile, Boolean(attempt.reviewer_thread_id),
     subject.baseSha, applicableRules)
-  const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
-  if (!secret) throw new Error("review_host_secret_unconfigured")
-  const hostUrl = new URL(route.url)
-  const loopback = new Set(["localhost", "127.0.0.1", "::1"]).has(hostUrl.hostname)
-  if ((!loopback && hostUrl.protocol !== "https:") || !hostUrl.pathname.endsWith("/v1/dispatch")) {
-    throw new Error("review_host_route_refused")
-  }
+  const secret = reviewHostSecret()
+  const hostUrl = reviewHost(route.url)
   let response: Response
   try {
     response = await fetchImpl(hostUrl, { method: "POST",
@@ -295,8 +307,10 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
       ${attempt.reviewer_callback_capability}::uuid,
       'independent_reviewer', ${accepted.thread_id}, ${accepted.turn_id}) as recorded`
   if (started[0]?.recorded !== true) throw new Error("reviewer_start_record_refused")
-  await args.github.projectReviewCheck(input.repository, subject.headSha, "pending",
-    "Independent review is pending for this exact head")
+  await reconcileReviewCheck(sql, args.github, { implementationDispatchId: input.work_id,
+    repository: input.repository, pullRequestNumber: subject.pullRequestNumber,
+    headSha: subject.headSha, baseSha: subject.baseSha,
+    policyVersion: REVIEW_POLICY_VERSION, profile })
   await reconcileAgentState(input.work_id)
   return { ok: true, disposition: "pending", review_attempt_id: attempt.review_attempt_id,
     reviewer_dispatch_id: attempt.reviewer_dispatch_id, profile }
@@ -307,6 +321,44 @@ async function recordAttemptFailure(sql: Sql, attempt: CreatedAttempt, reason: s
   await sql`select momi_agent_ops.record_review_failure_v1(
     ${attempt.reviewer_dispatch_id}::uuid,
     ${attempt.reviewer_callback_capability}::uuid, ${reason})`
+}
+
+function reviewHostSecret(): string {
+  const secret = Deno.env.get("MOMI_CODEX_HOST_SECRET")?.trim() ?? ""
+  if (!secret) throw new Error("review_host_secret_unconfigured")
+  return secret
+}
+
+function reviewHost(routeUrl: string): URL {
+  const url = new URL(routeUrl)
+  const loopback = new Set(["localhost", "127.0.0.1", "::1"]).has(url.hostname)
+  if ((!loopback && url.protocol !== "https:") || !url.pathname.endsWith("/v1/dispatch")) {
+    throw new Error("review_host_route_refused")
+  }
+  return url
+}
+
+async function loadHostReviewState(dispatchUrl: URL, reviewerDispatchId: string,
+  secret: string, fetchImpl: typeof fetch): Promise<"running" | "terminal" | "missing" | null> {
+  const statusUrl = new URL(dispatchUrl)
+  statusUrl.pathname = statusUrl.pathname.replace(/\/v1\/dispatch$/, "/v1/review-status")
+  try {
+    const response = await fetchImpl(statusUrl, { method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ work_id: reviewerDispatchId }),
+      signal: AbortSignal.timeout(10_000) })
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null
+    return response.ok && ["running", "terminal", "missing"].includes(
+      String(body?.review_work_state))
+      ? body!.review_work_state as "running" | "terminal" | "missing" : null
+  } catch { return null }
+}
+
+function projectionSubject(subject: ReviewTerminalInput["review_subject"], repository: string) {
+  return { implementationDispatchId: subject.implementation_dispatch_id, repository,
+    pullRequestNumber: subject.pull_request_number, headSha: subject.head_sha,
+    baseSha: subject.base_sha, policyVersion: subject.policy_version,
+    profile: subject.profile }
 }
 
 async function priorReview(sql: Sql, dispatchId: string): Promise<PriorReview | null> {

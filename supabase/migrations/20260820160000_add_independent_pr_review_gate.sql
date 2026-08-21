@@ -408,6 +408,42 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.recover_missing_review_attempt_v1(
+  p_dispatch_id uuid, p_capability_token uuid, p_thread_id text, p_turn_id text,
+  p_review_attempt_id uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare attempt momi_agent_ops.review_attempts%rowtype;
+begin
+  select review.* into attempt from momi_agent_ops.review_attempts review
+  where review.review_attempt_id = p_review_attempt_id
+    and review.implementation_dispatch_id = p_dispatch_id
+    and review.state = 'pending';
+  if not found or not momi_agent_ops.lock_current_review_subject_v1(
+    p_dispatch_id, attempt.repository, attempt.pull_request_number
+  ) then return false; end if;
+  if not exists (
+    select 1 from momi_agent_ops.dispatches work
+    join momi_agent_ops.run_records run on run.dispatch_id = work.dispatch_id
+    where work.dispatch_id = p_dispatch_id
+      and work.host_callback_token_hash = encode(extensions.digest(
+        convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+      and work.codex_thread_id = p_thread_id and work.codex_turn_id = p_turn_id
+      and work.mapped_repository = attempt.repository
+      and work.action = ('exec' || 'ute-run')
+      and work.work_status in ('writeback_pending', 'active')
+      and work.cancellation_requested_at is null and work.cancelled_at is null
+      and run.pull_request_number = attempt.pull_request_number
+      and run.head_sha = attempt.head_sha
+      and run.validation_state = 'succeeded' and run.validation_sha = attempt.head_sha
+  ) then return false; end if;
+  update momi_agent_ops.review_attempts review set state = 'failed',
+    failure_reason = 'review_host_missing', terminal_at = now(), updated_at = now()
+  where review.review_attempt_id = attempt.review_attempt_id
+    and review.state = 'pending';
+  return found;
+end;
+$$;
+
 create function momi_agent_ops.record_review_result_v1(
   p_reviewer_dispatch_id uuid, p_callback_capability uuid,
   p_thread_id text, p_turn_id text, p_repository text,
@@ -711,16 +747,7 @@ begin
         or current_run.merge_sha is null
         or current_run.release_state <> 'succeeded'
         or current_run.release_sha is distinct from current_run.merge_sha
-        or not exists (
-          select 1 from momi_agent_ops.review_attempts review
-          where review.implementation_dispatch_id = p_dispatch_id
-            and review.repository = selected.mapped_repository
-            and review.pull_request_number = current_run.pull_request_number
-            and review.head_sha = current_run.head_sha
-            and review.state = 'accepted'
-            and not exists (select 1 from jsonb_array_elements(review.findings) finding
-              where finding->>'severity' = 'blocking')
-        ) then return; end if;
+        then return; end if;
     end if;
   end if;
   return query select terminal.issue_id, terminal.issue_identifier,
@@ -749,6 +776,7 @@ revoke all on function momi_agent_ops.serialize_dispatch_generation_v1(),
   ),
   momi_agent_ops.record_reviewer_start_v1(uuid, uuid, text, text, text),
   momi_agent_ops.record_review_failure_v1(uuid, uuid, text),
+  momi_agent_ops.recover_missing_review_attempt_v1(uuid, uuid, text, text, uuid),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, bigint, text, text, text, text, text, jsonb
   ),

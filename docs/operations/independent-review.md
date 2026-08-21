@@ -33,16 +33,21 @@ exact expected head SHA. No merge-preflight receipt is persisted.
 The GitHub review check is a deterministic projection and enforcement backstop, never review
 authority. Its external ID is stable for repository and head; reconciliation updates the owned
 check to in-progress, success, or failure from current database state. There are no publication
-leases, check mirrors, revocation receipts, or proof-of-proof records.
+leases, check mirrors, revocation receipts, or proof-of-proof records. Every update holds the
+shared subject lock while it rereads canonical authority and publishes, so an older success cannot
+finish after a cancellation or other loss of authority.
 
 Head change and lifecycle cancellation acquire the same lock domain used by merge, atomically
 cancel pending attempts, and make current authority false before committing. Host interruption
 and failure-check projection follow as idempotent best-effort cleanup. A late callback must still
 win the `state = pending` compare-and-set and all current-parent/current-subject checks, so it
-cannot restore canceled or obsolete authority. Recovery reports observed host state and never
-synthesizes acceptance.
+cannot restore canceled or obsolete authority. Recovery reports observed host state as running,
+terminal, or missing. Running remains pending, terminal schedules callback replay, and only an
+authenticated implementation retry after an observed missing record may fail the pending attempt
+and create one replacement. Recovery never synthesizes acceptance.
 
 Agent State derives `reviewing` from the current exact-head attempt rather than a copied review
-mirror. Successful terminalization requires exact-head validation, accepted independent review,
-an actual merge SHA, and successful release evidence. Development rollout uses only
+mirror. The merge path alone consumes canonical review authority; successful terminalization
+requires its resulting actual merge SHA and successful release evidence rather than rebuilding a
+second review predicate. Development rollout uses only
 `.github/workflows/deploy-dev.yml`; production promotion is not authorized by this procedure.

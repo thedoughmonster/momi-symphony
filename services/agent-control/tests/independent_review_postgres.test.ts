@@ -12,6 +12,7 @@ const head = "a".repeat(40)
 const nextHead = "b".repeat(40)
 const base = "c".repeat(40)
 const repository = "thedoughmonster/momi-symphony"
+const implementationCapability = "30000000-0000-4000-8000-000000000011"
 
 test("minimal review schema enforces independence, exact-subject uniqueness, and history",
   async (context) => {
@@ -35,13 +36,19 @@ test("minimal review schema enforces independence, exact-subject uniqueness, and
         ${issueId}::uuid, 'MOX-260',
         'https://linear.app/moxx-workboard/issue/MOX-260/review-schema',
         ${"execute-run"}, '{}'::jsonb, ${repository}, 'main', array['In Progress'],
-        'active', ${"1".repeat(64)}, ${"2".repeat(64)},
+        'active', ${"1".repeat(64)}, encode(extensions.digest(convert_to(
+          ${implementationCapability}::uuid::text, 'UTF8'), 'sha256'), 'hex'),
         'implementation-thread', 'implementation-turn'
       )
     `
     await database.sql`
       insert into momi_agent_ops.run_records (dispatch_id)
       values (${implementationDispatchId}::uuid)
+    `
+    await database.sql`
+      update momi_agent_ops.run_records set pull_request_number = 16,
+        head_sha = ${head}, validation_state = 'succeeded', validation_sha = ${head}
+      where dispatch_id = ${implementationDispatchId}::uuid
     `
 
     await assert.rejects(database.sql`
@@ -86,11 +93,18 @@ test("minimal review schema enforces independence, exact-subject uniqueness, and
       where review_attempt_id = ${pendingAttemptId}::uuid
     `, /reviewer_identity_not_independent/)
 
-    await database.sql`
-      update momi_agent_ops.review_attempts set state = 'canceled', terminal_at = now(),
-        updated_at = now()
+    const recovered = await database.sql<{ recovered: boolean }[]>`
+      select momi_agent_ops.recover_missing_review_attempt_v1(
+        ${implementationDispatchId}::uuid, ${implementationCapability}::uuid,
+        'implementation-thread', 'implementation-turn',
+        ${pendingAttemptId}::uuid) as recovered
+    `
+    assert.equal(recovered[0]?.recovered, true)
+    const failed = await database.sql<{ state: string; failure_reason: string }[]>`
+      select state, failure_reason from momi_agent_ops.review_attempts
       where review_attempt_id = ${pendingAttemptId}::uuid
     `
+    assert.deepEqual(failed[0], { state: "failed", failure_reason: "review_host_missing" })
 
     await assert.rejects(database.sql`
       insert into momi_agent_ops.review_attempts (

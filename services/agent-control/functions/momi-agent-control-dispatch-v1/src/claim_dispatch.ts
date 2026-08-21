@@ -1,5 +1,6 @@
 import { getDatabase } from "../../../src/database.ts"
 import { GitHubReviewGateway } from "./github_review_gateway.ts"
+import { reconcileReviewCheck } from "./reconcile_review_check.ts"
 import type { ClaimedDispatch, DispatchInput } from "./types.ts"
 
 export async function claimDispatch(input: DispatchInput,
@@ -26,16 +27,23 @@ export async function claimDispatch(input: DispatchInput,
       ${input.work_id}::uuid, ${input.capability_token}::uuid
     ) as fenced`
   if (fenced[0]?.fenced !== true) throw new Error("cancellation_fence_refused")
-  const projections = await sql<{ repository: string; head_sha: string }[]>`
-    select distinct review.repository, review.head_sha
+  const projections = await sql<Array<{ implementation_dispatch_id: string;
+    repository: string; pull_request_number: number; head_sha: string; base_sha: string;
+    policy_version: string; profile: "low" | "standard" | "high" }>>`
+    select distinct review.implementation_dispatch_id::text,
+      review.repository, review.pull_request_number, review.head_sha,
+      review.base_sha, review.policy_version, review.profile
     from momi_agent_ops.review_attempts review
     where review.implementation_dispatch_id = any(${initialTargets}::uuid[])
       or review.reviewer_dispatch_id = any(${initialTargets}::uuid[])`
   for (const projection of projections) {
     try {
-      await (github ??= new GitHubReviewGateway()).projectReviewCheck(
-        projection.repository, projection.head_sha,
-        "failure", "Independent review authority was canceled")
+      await reconcileReviewCheck(sql, github ??= new GitHubReviewGateway(), {
+        implementationDispatchId: projection.implementation_dispatch_id,
+        repository: projection.repository,
+        pullRequestNumber: projection.pull_request_number,
+        headSha: projection.head_sha, baseSha: projection.base_sha,
+        policyVersion: projection.policy_version, profile: projection.profile })
     } catch { /* Canonical database cancellation is already committed. */ }
   }
   claimed.cancellation_target_ids = initialTargets

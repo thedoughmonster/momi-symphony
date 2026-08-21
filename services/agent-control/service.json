@@ -22,6 +22,7 @@
     "consumes": [
       {"service": "agent-control-host", "contract": "momi.agent_control.host_dispatch.v2"},
       {"service": "agent-control-host", "contract": "momi.agent_control.host_review_dispatch.v1"},
+      {"service": "agent-control-host", "contract": "momi.agent_control.host_review_status.v1"},
       {"service": "agent-control-host", "contract": "momi.agent_control.host_cancel.v2"},
       {"service": "agent-control-host", "contract": "momi.agent_control.host_recover.v1"}
     ]
@@ -121,6 +122,7 @@
       "momi_agent_ops.create_review_attempt_v1",
       "momi_agent_ops.record_reviewer_start_v1",
       "momi_agent_ops.record_review_failure_v1",
+      "momi_agent_ops.recover_missing_review_attempt_v1",
       "momi_agent_ops.record_review_result_v1",
       "momi_agent_ops.get_review_status_v1",
       "momi_agent_ops.current_review_authority_v1",

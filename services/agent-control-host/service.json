@@ -12,6 +12,7 @@
       "momi.agent_control.host_dispatch.v1",
       "momi.agent_control.host_dispatch.v2",
       "momi.agent_control.host_review_dispatch.v1",
+      "momi.agent_control.host_review_status.v1",
       "momi.agent_control.host_cancel.v1",
       "momi.agent_control.host_cancel.v2",
       "momi.agent_control.host_recover.v1"

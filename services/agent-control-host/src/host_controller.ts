@@ -148,6 +148,17 @@ export class HostController {
     }
     return result
   }
+  reviewWorkState(workId: string): import("./types.ts").HostReviewWorkState {
+    const record = this.ledger.get(workId)
+    if (!record || record.runtimeRole !== "independent_reviewer") {
+      return { review_work_state: "missing" }
+    }
+    if (record.state === "terminal" || record.callbackSent) {
+      if (!record.callbackSent) this.scheduleCallback(record)
+      return { review_work_state: "terminal" }
+    }
+    return { review_work_state: record.state === "canceled" ? "terminal" : "running" }
+  }
   recoverDiscovery(input: HostRecovery): Promise<HostRecoveryResult> {
     return recoverDiscoveryWork(this.client, this.ledger, input, this.callback) }
   private handleNotification(notification: Record<string, unknown>,

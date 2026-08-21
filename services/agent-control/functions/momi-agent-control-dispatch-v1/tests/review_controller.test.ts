@@ -48,6 +48,8 @@ test("terminal accepted result atomically records authority then projects succes
   const sql = sqlFake((query) => {
     if (query.includes("mapped_repository")) return [{ repository }]
     if (query.includes("record_review_result_v1")) return [{ recorded: true }]
+    if (query.includes("lock_current_review_subject_v1")) return [{ locked: true }]
+    if (query.includes("current_review_authority_v1")) return [{ authorized: true }]
     return []
   })
   const github = { projectReviewCheck: (_repo: string, _head: string, state: string) => {

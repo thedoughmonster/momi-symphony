@@ -23,7 +23,7 @@ test("cancellation fences canonical state once and retains its pre-fence cleanup
       return [{ target_ids: [implementationId, reviewerId] }]
     }
     if (query.includes("fence_cancellation_v1")) return [{ fenced: true }]
-    if (query.includes("select distinct review.repository")) return []
+    if (query.includes("select distinct review.implementation_dispatch_id")) return []
     throw new Error("unexpected_query")
   }
   const claim = await claimDispatch(input, sql as never)
