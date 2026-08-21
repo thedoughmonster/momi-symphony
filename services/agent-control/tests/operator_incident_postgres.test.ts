@@ -23,7 +23,6 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
     context.after(() => schedulerHarness.stop(database))
     await seedImplementation(database.sql)
     await seedReview(database.sql, reviewOne, "67000000-0000-4000-8000-000000000007")
-    await seedReview(database.sql, reviewTwo, "67000000-0000-4000-8000-000000000008")
 
     const invalid = await database.sql<{ incident_id: string | null }[]>`
       select momi_agent_ops.record_operator_incident_v1(
@@ -53,6 +52,11 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
       repository, pull_request_number: "17", head_sha: head })
 
     await database.sql`
+      update momi_agent_ops.review_attempts set state = 'failed',
+        failure_reason = 'review_host_missing', terminal_at = now(), updated_at = now()
+      where review_attempt_id = ${reviewOne}::uuid`
+    await seedReview(database.sql, reviewTwo, "67000000-0000-4000-8000-000000000008")
+    await database.sql`
       select momi_agent_ops.record_operator_incident_v1(
         ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewTwo}`}, 'reviewing', 'reconcile_reviewer_start',
@@ -63,17 +67,18 @@ test("operator incidents deduplicate exact generations, supersede new ones, and 
       where implementation_dispatch_id = ${dispatchId}::uuid
       order by generation_key`
     assert.deepEqual(generations.map((row) => ({ ...row })), [
-      { generation_key: `review:${reviewOne}`, lifecycle_state: "superseded",
-        resolution_code: "generation_superseded" },
+      { generation_key: `review:${reviewOne}`, lifecycle_state: "resolved",
+        resolution_code: "automatic_recovery" },
       { generation_key: `review:${reviewTwo}`, lifecycle_state: "ambiguous",
         resolution_code: null },
     ])
 
-    await database.sql`
+    const delayed = await database.sql<{ incident_id: string | null }[]>`
       select momi_agent_ops.record_operator_incident_v1(
         ${dispatchId}::uuid, ${capability}::uuid, 'reviewer_ambiguous',
         ${`review:${reviewOne}`}, 'reviewing', 'reconcile_reviewer_start',
-        ${reviewOne}::uuid, null, now())`
+        ${reviewOne}::uuid, null, now())::text as incident_id`
+    assert.equal(delayed[0]?.incident_id, null)
     const afterDelayedOlderObservation = await database.sql<Array<Record<string, unknown>>>`
       select generation_key, lifecycle_state, resolution_code
       from momi_agent_ops.operator_incidents
@@ -362,8 +367,8 @@ async function seedReview(sql: Parameters<typeof seedImplementation>[0],
     insert into momi_agent_ops.review_attempts (
       review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
       reviewer_callback_capability_hash, repository, pull_request_number,
-      head_sha, base_sha, policy_version, profile, state, failure_reason, terminal_at
+      head_sha, base_sha, policy_version, profile
     ) values (${reviewAttemptId}::uuid, ${dispatchId}::uuid,
       ${reviewerDispatchId}::uuid, ${"2".repeat(64)}, ${repository}, 17, ${head}, ${base},
-      'independent-review-v1', 'high', 'failed', 'review_host_missing', now())`
+      'independent-review-v1', 'high')`
 }

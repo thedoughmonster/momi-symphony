@@ -164,7 +164,9 @@ begin
   if p_category = 'reviewer_ambiguous' then
     select selected.* into review from momi_agent_ops.review_attempts selected
     where selected.review_attempt_id = p_review_attempt_id
-      and selected.implementation_dispatch_id = p_dispatch_id;
+      and selected.implementation_dispatch_id = p_dispatch_id
+      and selected.state = 'pending'
+    for update;
     if not found or p_scheduler_slot_id is not null then return null; end if;
     select incident.incident_id into created_incident_id
     from momi_agent_ops.operator_incidents incident
