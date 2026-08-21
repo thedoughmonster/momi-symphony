@@ -19,12 +19,21 @@ export async function cancelHostWork(
     input.work_id, cancellationFingerprint(input), input.target_work_ids)
   if (prior?.state !== undefined && prior.state !== "reserved") {
     return { cancellation_state: prior.state,
-      review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids) }
+      review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids),
+      unmaterialized_reviewer_dispatch_ids:
+        prior.unmaterializedReviewerDispatchIds ?? [] }
   }
   let requested = false
   for (const targetWorkId of input.target_work_ids) {
-    const target = ledger.get(targetWorkId)
-    if (!target) throw new Error("host_cancel_target_missing")
+    let target = ledger.get(targetWorkId)
+    if (!target) {
+      if (await ledger.fenceUnmaterializedCancellationTarget(input.work_id, targetWorkId)) {
+        requested = true
+        continue
+      }
+      target = ledger.get(targetWorkId)
+      if (!target) throw new Error("host_cancel_target_missing")
+    }
     if (target.state === "terminal") continue
     requested = true
     const targetClient = typeof client === "function" ? client(target) : client
@@ -67,7 +76,9 @@ export async function cancelHostWork(
   const state = requested ? "requested" : "already_terminal"
   await ledger.completeCancellation(input.work_id, state)
   return { cancellation_state: state,
-    review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids) }
+    review_cancellations: reviewCancellationReceipts(ledger, input.target_work_ids),
+    unmaterialized_reviewer_dispatch_ids:
+      ledger.getCancellation(input.work_id)?.unmaterializedReviewerDispatchIds ?? [] }
 }
 
 function reviewCancellationReceipts(ledger: HostLedger,

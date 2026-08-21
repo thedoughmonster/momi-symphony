@@ -27,8 +27,28 @@ test("records authenticated reviewer cancellation receipts before parent complet
   }) as unknown as Sql
   assert.equal(await recordCancellation(input, {
     cancellation_state: "requested", review_cancellations: [receipt],
+    unmaterialized_reviewer_dispatch_ids: [],
   }, sql), true)
   assert.deepEqual(timeline, ["review-receipt", "parent-cancellation"])
+})
+
+test("records host-proven unmaterialized reservations before parent completion", async () => {
+  const timeline: string[] = []
+  const sql = (async (strings: TemplateStringsArray) => {
+    const query = strings.join("?")
+    if (query.includes("record_unmaterialized_review_cancellation_v1")) {
+      timeline.push("unmaterialized-review"); return [{ recorded: true }]
+    }
+    if (query.includes("record_cancellation_v3")) {
+      timeline.push("parent-cancellation"); return [{ recorded: true }]
+    }
+    throw new Error(`unexpected_sql:${query}`)
+  }) as unknown as Sql
+  assert.equal(await recordCancellation(input, {
+    cancellation_state: "requested", review_cancellations: [],
+    unmaterialized_reviewer_dispatch_ids: [reviewerId],
+  }, sql), true)
+  assert.deepEqual(timeline, ["unmaterialized-review", "parent-cancellation"])
 })
 
 test("replays a receipt-persisted cancellation without changing reviewer authority", async () => {
@@ -48,12 +68,12 @@ test("replays a receipt-persisted cancellation without changing reviewer authori
     throw new Error(`unexpected_sql:${query}`)
   }) as unknown as Sql
   const result = { cancellation_state: "requested" as const,
-    review_cancellations: [receipt] }
+    review_cancellations: [receipt], unmaterialized_reviewer_dispatch_ids: [] }
   await assert.rejects(recordCancellation(input, result, sql),
     /simulated_parent_recording_crash/)
   const enrichedResult = { cancellation_state: "requested" as const,
     review_cancellations: [{ ...receipt, identities_complete: true,
-      interruption_confirmed: true }] }
+      interruption_confirmed: true }], unmaterialized_reviewer_dispatch_ids: [] }
   assert.equal(await recordCancellation(input, enrichedResult, sql), true)
   assert.deepEqual(receipts, [
     ["reserved", false, false],
@@ -72,6 +92,7 @@ test("fails closed before parent completion when a reviewer receipt is refused",
   }) as unknown as Sql
   assert.equal(await recordCancellation(input, {
     cancellation_state: "requested", review_cancellations: [receipt],
+    unmaterialized_reviewer_dispatch_ids: [],
   }, sql), false)
   assert.equal(parentRecorded, false)
 })

@@ -12,7 +12,8 @@ import { startHostTask } from "../src/start_host_task.ts"
 import type { AppServerClient, HostCancellation, HostDispatch } from "../src/types.ts"
 
 const cancellationResult = (state: "requested" | "already_terminal" = "requested") =>
-  ({ cancellation_state: state, review_cancellations: [] })
+  ({ cancellation_state: state, review_cancellations: [],
+    unmaterialized_reviewer_dispatch_ids: [] })
 const reviewCancellationResult = (reviewerDispatchId: string, capabilityToken: string,
   identitiesComplete: boolean, interruptionConfirmed: boolean) => ({
   cancellation_state: "requested" as const,
@@ -20,6 +21,7 @@ const reviewCancellationResult = (reviewerDispatchId: string, capabilityToken: s
     capability_token: capabilityToken, host_state: "canceled" as const,
     identities_complete: identitiesComplete,
     interruption_confirmed: interruptionConfirmed }],
+  unmaterialized_reviewer_dispatch_ids: [],
 })
 
 class FakeAppServer implements AppServerClient {
@@ -169,6 +171,46 @@ test("active, replayed, and terminal cancellation are idempotent", async () => {
     assert.deepEqual(await controller.cancel({ ...input,
       work_id: "00000000-0000-4000-8000-000000000004" }),
     cancellationResult("already_terminal"))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("missing reviewer reservations are durably fenced before any late host start", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "momi-review-cancel-unmaterialized-"))
+  const ledgerPath = join(directory, "ledger.json")
+  const boundary = new ReviewCredentialBoundary(Buffer.alloc(32, 19))
+  const target = "00000000-0000-4000-8000-000000000011"
+  const input: HostCancellation = { schema_version: 2,
+    work_id: "00000000-0000-4000-8000-000000000012",
+    capability_token: "00000000-0000-4000-8000-000000000013",
+    target_work_ids: [target], repository: "thedoughmonster/momi-symphony",
+    base_branch: "main" }
+  const expected = { cancellation_state: "requested" as const,
+    review_cancellations: [], unmaterialized_reviewer_dispatch_ids: [target] }
+  try {
+    const implementationClient = new FakeAppServer(); const reviewClient = new FakeAppServer()
+    const ledger = new HostLedger(ledgerPath, boundary)
+    const controller = new HostController(implementationClient, ledger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
+    }, () => Promise.resolve(), reviewClient)
+    await controller.start()
+    assert.deepEqual(await controller.cancel(input), expected)
+    assert.deepEqual(await controller.cancel(input), expected)
+    await assert.rejects(controller.dispatch(reviewDispatch(target)), /host_dispatch_canceled/)
+    assert.equal(reviewClient.requests.some((request) => request.method === "thread/start"), false)
+
+    const restartedClient = new FakeAppServer()
+    const restartedLedger = new HostLedger(ledgerPath, boundary)
+    const restarted = new HostController(new FakeAppServer(), restartedLedger, {
+      workspaceRoot: "/workspace", repository: "thedoughmonster/momi-symphony",
+      baseBranch: "main",
+    }, () => Promise.resolve(), restartedClient)
+    await restarted.start()
+    assert.deepEqual(await restarted.cancel(input), expected)
+    await assert.rejects(restarted.dispatch(reviewDispatch(target)), /host_dispatch_canceled/)
+    assert.equal(restartedClient.requests.some((request) => request.method === "thread/start"), false)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

@@ -119,6 +119,7 @@ create table momi_agent_ops.review_attempts (
       cancellation_receipt_fingerprint ~ '^sha256:[0-9a-f]{64}$'
   ),
   cancellation_receipt_at timestamptz,
+  host_unmaterialized_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (implementation_dispatch_id, generation)
@@ -313,6 +314,8 @@ begin
     reviewer_capability_token := null; generation := null; reviewer_thread_id := null;
     disposition := 'reviewer_interruption_pending'; return next; return;
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.review_capacity', 0));
   select count(*) into active_reviews from momi_agent_ops.review_attempts attempt
   where attempt.state in ('reserved', 'running', 'ambiguous');
   if active_reviews >= p_review_limit then
@@ -482,6 +485,8 @@ begin
     generation := source.generation; profile := source.profile;
     return next; return;
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.review_capacity', 0));
   select count(*) into active_reviews from momi_agent_ops.review_attempts attempt
   where attempt.state in ('reserved', 'running', 'ambiguous');
   if active_reviews >= p_review_limit then
@@ -548,6 +553,7 @@ begin
     and review.reviewer_capability_token_hash = encode(extensions.digest(
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
     and (review.state = 'reserved' or (review.state in ('canceled', 'superseded')
+      and review.host_unmaterialized_at is null
       and review.reviewer_thread_id is null and review.reviewer_turn_id is null));
   if not found or p_runtime_role <> 'independent_reviewer'
     or p_thread_id is null or p_turn_id is null then return false; end if;
@@ -558,6 +564,7 @@ begin
     and review.reviewer_capability_token_hash = encode(extensions.digest(
       convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
     and (review.state = 'reserved' or (review.state in ('canceled', 'superseded')
+      and review.host_unmaterialized_at is null
       and review.reviewer_thread_id is null and review.reviewer_turn_id is null)) for update;
   if not found then return false; end if;
   select work.codex_thread_id,
@@ -1304,6 +1311,79 @@ begin
 end;
 $$;
 
+create function momi_agent_ops.record_unmaterialized_review_cancellation_v1(
+  p_dispatch_id uuid, p_capability_token uuid, p_reviewer_dispatch_id uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare selected_target uuid;
+declare implementation_id uuid;
+declare issue_id uuid;
+declare attempt momi_agent_ops.review_attempts%rowtype;
+declare receipt_fingerprint text;
+begin
+  select work.target_dispatch_id into selected_target
+  from momi_agent_ops.dispatches work
+  join momi_agent_ops.project_mappings mapping
+    on mapping.linear_project_id = work.linear_project_id and mapping.active
+    and mapping.repository = work.mapped_repository
+    and mapping.base_branch = work.mapped_base_branch
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state = 'requested';
+  if not found or selected_target is null then return false; end if;
+  with recursive lifecycle as (
+    select selected_target as dispatch_id
+    union all
+    select child.dispatch_id from momi_agent_ops.dispatches child
+    join lifecycle parent on child.parent_dispatch_id = parent.dispatch_id
+    where child.action = ('exec' || 'ute-run')
+  ) select review.implementation_dispatch_id, work.linear_issue_id
+    into implementation_id, issue_id
+  from momi_agent_ops.review_attempts review
+  join momi_agent_ops.dispatches work
+    on work.dispatch_id = review.implementation_dispatch_id
+  where review.reviewer_dispatch_id = p_reviewer_dispatch_id
+    and review.implementation_dispatch_id in (
+      select owned.dispatch_id from lifecycle owned);
+  if not found then return false; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || issue_id::text, 0));
+  perform 1 from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id and work.action = 'cancel-run'
+    and work.target_dispatch_id = selected_target
+    and work.capability_token_hash = encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex')
+    and work.work_status in ('claimed', 'writeback_pending')
+    and work.cancellation_state = 'requested'
+  for update;
+  if not found then return false; end if;
+  select review.* into attempt from momi_agent_ops.review_attempts review
+  where review.reviewer_dispatch_id = p_reviewer_dispatch_id
+    and review.implementation_dispatch_id = implementation_id
+  for update;
+  if not found then return false; end if;
+  receipt_fingerprint := 'sha256:' || encode(extensions.digest(convert_to(
+    p_dispatch_id::text || ':' || p_reviewer_dispatch_id::text || ':unmaterialized',
+    'UTF8'), 'sha256'), 'hex');
+  if attempt.state = 'canceled'
+    and attempt.cancellation_receipt_fingerprint = receipt_fingerprint then return true; end if;
+  if attempt.state <> 'reserved' or attempt.reviewer_thread_id is not null
+    or attempt.reviewer_turn_id is not null
+    or attempt.cancellation_receipt_fingerprint is not null then return false; end if;
+  update momi_agent_ops.review_attempts review set state = 'canceled',
+    cancellation_receipt_fingerprint = receipt_fingerprint,
+    cancellation_receipt_at = now(), host_unmaterialized_at = now(),
+    canceled_at = coalesce(review.canceled_at, now()),
+    terminal_at = coalesce(review.terminal_at, now()), updated_at = now()
+  where review.review_attempt_id = attempt.review_attempt_id
+    and review.state = 'reserved' and review.reviewer_thread_id is null
+    and review.reviewer_turn_id is null
+    and review.cancellation_receipt_fingerprint is null;
+  return found;
+end;
+$$;
+
 create function momi_agent_ops.prepare_review_check_revocations_v1(
   p_dispatch_id uuid, p_capability_token uuid
 ) returns table (
@@ -1598,6 +1678,7 @@ revoke all on function momi_agent_ops.fence_current_dispatch_generation_v1(uuid)
   momi_agent_ops.record_review_cancellation_receipt_v1(
     uuid, uuid, text, text, boolean, boolean
   ),
+  momi_agent_ops.record_unmaterialized_review_cancellation_v1(uuid, uuid, uuid),
   momi_agent_ops.record_review_result_v1(
     uuid, uuid, text, text, text, text, bigint, text, text, integer, text, text,
     text, text, text, text, jsonb, text, text, jsonb

@@ -35,6 +35,17 @@ export function parseReviewCancellationReceipts(value: unknown,
   return receipts
 }
 
+export function parseUnmaterializedReviewerDispatchIds(value: unknown,
+  targetWorkIds: string[], receiptIds: string[]): string[] | null {
+  if (!Array.isArray(value) || value.length > 128) return null
+  const targets = new Set(targetWorkIds)
+  const receipts = new Set(receiptIds)
+  if (!value.every((id) => typeof id === "string" && uuid.test(id) &&
+    targets.has(id) && !receipts.has(id)) || new Set(value).size !== value.length ||
+    value.join("\n") !== [...value].sort().join("\n")) return null
+  return value as string[]
+}
+
 export async function recordReviewCancellationReceipt(sql: Sql,
   receipt: ReviewCancellationReceipt, expectedState: string): Promise<boolean> {
   if (!["reserved", "running", "ambiguous", "changes_requested", "superseded", "canceled"]

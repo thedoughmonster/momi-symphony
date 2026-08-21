@@ -101,6 +101,7 @@ export type HostCancellation = {
 export type HostCancellationResult = {
   cancellation_state: "requested" | "already_terminal"
   review_cancellations: HostReviewCancellationReceipt[]
+  unmaterialized_reviewer_dispatch_ids: string[]
 }
 
 export type HostReviewCancellationReceipt = {
@@ -127,6 +128,7 @@ export type HostCancellationRecord = {
   workId: string
   fingerprint: string
   targetWorkIds: string[]
+  unmaterializedReviewerDispatchIds?: string[]
   // Read compatibility for durable schema-v1 host ledgers.
   targetWorkId?: string
   state: "reserved" | "requested" | "already_terminal"

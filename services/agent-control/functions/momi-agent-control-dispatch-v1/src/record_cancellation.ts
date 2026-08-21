@@ -8,6 +8,14 @@ export async function recordCancellation(
   result: HostCancellation,
   sql: Sql = getDatabase(),
 ): Promise<boolean> {
+  for (const reviewerDispatchId of result.unmaterialized_reviewer_dispatch_ids) {
+    const rows = await sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_unmaterialized_review_cancellation_v1(
+        ${input.work_id}::uuid, ${input.capability_token}::uuid,
+        ${reviewerDispatchId}::uuid
+      ) as recorded`
+    if (rows[0]?.recorded !== true) return false
+  }
   for (const receipt of result.review_cancellations) {
     const states = await sql<{ state: string }[]>`
       select state from momi_agent_ops.review_attempts

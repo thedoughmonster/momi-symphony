@@ -213,7 +213,7 @@ test("active cancellation records the host result and projects the exact target"
   const result = await processDispatch(input, { claim: () => Promise.resolve(work),
     callHost: () => Promise.reject(new Error("must_not_start")),
     callCancel: () => Promise.resolve({ cancellation_state: "requested",
-      review_cancellations: [] }),
+      review_cancellations: [], unmaterialized_reviewer_dispatch_ids: [] }),
     callRecovery: () => Promise.reject(new Error("must_not_recover")),
     hostAccepted: () => Promise.resolve(true), cancellationRecorded: () => {
       recorded = true; return Promise.resolve(true) },

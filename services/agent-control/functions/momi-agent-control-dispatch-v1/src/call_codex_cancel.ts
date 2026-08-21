@@ -1,5 +1,6 @@
 import type { ClaimedDispatch, HostCancellation } from "./types.ts"
-import { parseReviewCancellationReceipts } from "./review_cancellation_receipt.ts"
+import { parseReviewCancellationReceipts,
+  parseUnmaterializedReviewerDispatchIds } from "./review_cancellation_receipt.ts"
 
 export async function callCodexCancel(
   work: ClaimedDispatch,
@@ -28,10 +29,16 @@ export async function callCodexCancel(
   const state = body?.cancellation_state
   const receipts = parseReviewCancellationReceipts(body?.review_cancellations,
     work.cancellation_target_ids)
+  const unmaterialized = parseUnmaterializedReviewerDispatchIds(
+    body?.unmaterialized_reviewer_dispatch_ids, work.cancellation_target_ids,
+    receipts?.map((receipt) => receipt.reviewer_dispatch_id) ?? [])
   if (!response.ok || !["requested", "already_terminal"].includes(String(state))) {
     throw new Error("codex_host_cancellation_failed")
   }
-  if (!receipts) throw new Error("codex_host_cancellation_receipt_invalid")
+  if (!receipts || !unmaterialized) {
+    throw new Error("codex_host_cancellation_receipt_invalid")
+  }
   return { cancellation_state: state as HostCancellation["cancellation_state"],
-    review_cancellations: receipts }
+    review_cancellations: receipts,
+    unmaterialized_reviewer_dispatch_ids: unmaterialized }
 }

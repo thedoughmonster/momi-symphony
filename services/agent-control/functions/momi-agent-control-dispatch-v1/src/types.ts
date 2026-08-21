@@ -148,7 +148,8 @@ export type ClaimedDispatch = {
 export type HostAcceptance = { thread_id: string; turn_id: string }
 
 export type HostCancellation = { cancellation_state: "requested" | "already_terminal";
-  review_cancellations: import("./review_cancellation_receipt.ts").ReviewCancellationReceipt[] }
+  review_cancellations: import("./review_cancellation_receipt.ts").ReviewCancellationReceipt[];
+  unmaterialized_reviewer_dispatch_ids: string[] }
 
 export type HostRecovery = { recovery_state: Exclude<RecoveryState,
   "not_requested" | "requested"> }

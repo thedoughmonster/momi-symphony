@@ -263,6 +263,8 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /attempt\.state in \('canceled', 'superseded'\)/)
   assert.match(migration, /record_review_start_ambiguous_v1/)
   assert.match(migration, /record_review_cancellation_receipt_v1/)
+  assert.match(migration, /record_unmaterialized_review_cancellation_v1/)
+  assert.match(migration, /host_unmaterialized_at/)
   assert.match(migration, /cancellation_receipt_fingerprint/)
   assert.match(migration, /state in \('reserved', 'running', 'ambiguous'\)/)
   assert.match(migration, /disposition := 'already_ambiguous'/)
@@ -298,6 +300,7 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /fence_current_dispatch_generation_v1/)
   assert.match(migration, /disposition := 'current_generation_refused'/)
   assert.match(migration, /pg_advisory_xact_lock\(pg_catalog\.hashtextextended/)
+  assert.equal((migration.match(/momi_agent_ops\.review_capacity/g) ?? []).length, 2)
   for (const routine of ["create_review_attempt_v1", "create_escalated_review_attempt_v1",
     "record_reviewer_start_v1", "record_review_result_v1",
     "record_lifecycle_evidence_v3", "record_terminal_v5"]) {
@@ -321,6 +324,7 @@ test("independent review receipts are private, exact-revision, and author-proof"
       `${routine} generation fence missing`)
   }
   for (const routine of ["record_review_cancellation_receipt_v1",
+    "record_unmaterialized_review_cancellation_v1",
     "reconstruct_cancellation_targets_v1",
     "recover_abandoned_review_check_publication_v1"]) {
     const start = migration.indexOf(`create function momi_agent_ops.${routine}(`)
