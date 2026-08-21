@@ -158,6 +158,43 @@ test("a retained unready terminal opens one typed operator incident", async (con
   })
 })
 
+test("successful terminals resolve incidents only after durable Linear writeback",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'run_ambiguous',
+        'before-terminal-writeback', 'working', 'recover_dispatch', null, null, now())`
+    const telemetry = { policy_version: "mox-execution-efficiency-v1",
+      stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+      context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 10,
+      cached_input_tokens: 0, output_tokens: 2, model_visible_tool_bytes: 100,
+      model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+      retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1000,
+      disposition: "completed" }
+    await database.sql`
+      select * from momi_agent_ops.record_terminal_v6(
+        ${dispatchId}::uuid, ${capability}::uuid, 'implementation-thread',
+        'implementation-turn', 'ready', 'completed', 'bounded success', now(),
+        ${database.sql.json(telemetry)}::jsonb)`
+    let incident = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state, resolution_code from momi_agent_ops.operator_incidents`
+    assert.deepEqual(incident.map((row) => ({ ...row })), [{
+      lifecycle_state: "ambiguous", resolution_code: null,
+    }])
+    const writeback = await database.sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_linear_writeback_v6(
+        ${dispatchId}::uuid, ${capability}::uuid, null) as recorded`
+    assert.equal(writeback[0]?.recorded, true)
+    incident = await database.sql<Array<Record<string, unknown>>>`
+      select lifecycle_state, resolution_code from momi_agent_ops.operator_incidents`
+    assert.deepEqual(incident.map((row) => ({ ...row })), [{
+      lifecycle_state: "resolved", resolution_code: "completed",
+    }])
+  })
+
 test("dead-letter recovery epochs open a fresh incident after re-exhaustion", async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))

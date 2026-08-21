@@ -110,6 +110,7 @@ declare
   initial_state text;
   initial_resolution_code text;
   initial_superseded_at timestamptz;
+  issue_id uuid;
 begin
   if p_category not in ('terminal_failure', 'run_ambiguous', 'reviewer_ambiguous',
       'callback_ambiguous', 'slot_ambiguous', 'retained_task_ambiguous')
@@ -134,6 +135,13 @@ begin
       (p_guidance_code = 'reconcile_retained_task') then
     raise exception 'operator_incident_category_guidance_mismatch' using errcode = '22023';
   end if;
+  select selected.linear_issue_id into issue_id
+  from momi_agent_ops.dispatches selected
+  where selected.dispatch_id = p_dispatch_id
+    and selected.action = ('exec' || 'ute-run');
+  if not found then return null; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'momi_agent_ops.dispatch_generation:' || issue_id::text, 0));
   select selected.* into work from momi_agent_ops.dispatches selected
   where selected.dispatch_id = p_dispatch_id
     and selected.action = ('exec' || 'ute-run')
@@ -149,12 +157,11 @@ begin
                 p_capability_token::text, 'UTF8'), 'sha256'), 'hex'))))
   for update;
   if not found then return null; end if;
-  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
-    'momi_agent_ops.dispatch_generation:' || work.linear_issue_id::text, 0));
   select selected.* into run from momi_agent_ops.run_records selected
   where selected.dispatch_id = p_dispatch_id for update;
   if not found then return null; end if;
-  if exists (select 1 from momi_agent_ops.dispatches newer
+  if p_category <> 'reviewer_ambiguous'
+    and exists (select 1 from momi_agent_ops.dispatches newer
     where newer.linear_issue_id = work.linear_issue_id
       and newer.linear_project_id = work.linear_project_id
       and newer.action = ('exec' || 'ute-run')
@@ -298,16 +305,39 @@ begin
       'run:' || run.run_id::text, 'terminal', 'reconcile_retained_task',
       null, null, run.terminal_at
     );
-  elsif terminal.action = ('exec' || 'ute-run')
-    and (coalesce(canceled, false)
-      or (run.readiness_result = 'ready' and run.terminal_disposition = 'completed')) then
-    perform momi_agent_ops.resolve_operator_incidents_v1(
-      p_dispatch_id, p_capability_token,
-      case when canceled then 'canceled' else 'completed' end, run.terminal_at
-    );
   end if;
   return query select terminal.issue_id, terminal.issue_identifier,
     terminal.action, terminal.linear_comment_id;
+end;
+$$;
+
+create function momi_agent_ops.record_linear_writeback_v6(
+  p_dispatch_id uuid, p_capability_token uuid, p_comment_id uuid
+) returns boolean language plpgsql security invoker set search_path = '' as $$
+declare recorded boolean;
+declare run momi_agent_ops.run_records%rowtype;
+declare work momi_agent_ops.dispatches%rowtype;
+begin
+  select momi_agent_ops.record_linear_writeback_v5(
+    p_dispatch_id, p_capability_token, p_comment_id
+  ) into recorded;
+  if not coalesce(recorded, false) then return false; end if;
+  select selected.* into work from momi_agent_ops.dispatches selected
+  where selected.dispatch_id = p_dispatch_id;
+  select selected.* into run from momi_agent_ops.run_records selected
+  where selected.dispatch_id = p_dispatch_id;
+  if work.action = ('exec' || 'ute-run')
+    and (work.cancellation_requested_at is not null or work.cancelled_at is not null
+      or (run.readiness_result = 'ready'
+        and run.terminal_disposition = 'completed')) then
+    perform momi_agent_ops.resolve_operator_incidents_v1(
+      p_dispatch_id, p_capability_token,
+      case when work.cancellation_requested_at is not null or work.cancelled_at is not null
+        then 'canceled' else 'completed' end,
+      coalesce(run.linear_writeback_at, now())
+    );
+  end if;
+  return true;
 end;
 $$;
 
@@ -550,6 +580,7 @@ for each row execute function
 grant all on function momi_agent_ops.record_operator_incident_v1(
   uuid, uuid, text, text, text, text, uuid, uuid, timestamptz
 ), momi_agent_ops.resolve_operator_incidents_v1(uuid, uuid, text, timestamptz),
+  momi_agent_ops.record_linear_writeback_v6(uuid, uuid, uuid),
   momi_agent_ops.record_terminal_v6(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
   ) to service_role;
@@ -557,6 +588,7 @@ grant all on function momi_agent_ops.record_operator_incident_v1(
 revoke all on function momi_agent_ops.record_operator_incident_v1(
   uuid, uuid, text, text, text, text, uuid, uuid, timestamptz
 ), momi_agent_ops.resolve_operator_incidents_v1(uuid, uuid, text, timestamptz),
+  momi_agent_ops.record_linear_writeback_v6(uuid, uuid, uuid),
   momi_agent_ops.record_terminal_v6(
     uuid, uuid, text, text, text, text, text, timestamptz, jsonb
   ), momi_agent_ops.reconcile_dispatch_operator_incident_v1(),
