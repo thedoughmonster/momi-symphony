@@ -301,6 +301,8 @@ test("independent review receipts are private, exact-revision, and author-proof"
   assert.match(migration, /disposition := 'current_generation_refused'/)
   assert.match(migration, /pg_advisory_xact_lock\(pg_catalog\.hashtextextended/)
   assert.equal((migration.match(/momi_agent_ops\.review_capacity/g) ?? []).length, 2)
+  assert.match(migration,
+    /create_escalated_review_attempt_v1[\s\S]+work\.work_status in \('writeback_pending', 'active'\)[\s\S]+work\.cancellation_requested_at is null and work\.cancelled_at is null[\s\S]+for update/)
   for (const routine of ["create_review_attempt_v1", "create_escalated_review_attempt_v1",
     "record_reviewer_start_v1", "record_review_result_v1",
     "record_lifecycle_evidence_v3", "record_terminal_v5"]) {

@@ -223,6 +223,38 @@ test("review escalation dispatches a fresh promoted reviewer and exhausts at hig
   exhaustedSql, github as never, async () => "Failed" as never)
   assert.equal(exhausted.disposition, "review_budget_exhausted")
   assertOutput(exhausted)
+
+  let refusedHostCalls = 0
+  const refusedSql = (async (strings: TemplateStringsArray) => {
+    const query = strings.join("?")
+    if (query.includes("mapped_repository as repository")) return [{ repository }]
+    if (query.includes("record_review_result_v1")) return [{ recorded: true }]
+    if (query.includes("select state from")) return [{ state: "escalated" }]
+    if (query.includes("mapping.host_dispatch_url")) return [{
+      host_dispatch_url: "https://host.example/v1/dispatch", issue_id: "issue-id",
+      issue_identifier: "MOX-260", issue_url: "https://linear.example/MOX-260",
+      project_id: "project-id", project_name: "Symphony Control Plane",
+      base_branch: "main", active_states: ["In Progress"],
+    }]
+    if (query.includes("create_escalated_review_attempt_v1")) return [{
+      disposition: "escalation_identity_refused", review_attempt_id: null,
+      reviewer_dispatch_id: null, reviewer_capability_token: null,
+      generation: null, profile: null,
+    }]
+    throw new Error(`unexpected_sql:${query}`)
+  }) as unknown as Sql
+  ;(refusedSql as unknown as { json: (value: unknown) => unknown }).json = (value) => value
+  const refused = await processReviewTerminal(input, refusedSql, github as never,
+    async () => "Canceled" as never, async () => {
+      refusedHostCalls += 1
+      throw new Error("canceled escalation reached host")
+    }, async () => ({ identifier: "MOX-260", title: "Independent review",
+      description: "## Outcome\nRequire independent review.\n## Source decisions",
+      state: "In Progress", native_ref: { project_id: "project-id" } } as never))
+  assert.deepEqual(refused, { ok: true, disposition: "escalation_identity_refused",
+    review_attempt_id: null, reviewer_dispatch_id: null, generation: null, profile: null })
+  assertOutput(refused)
+  assert.equal(refusedHostCalls, 0)
 })
 
 test("strict output contract covers every current review response family", async () => {

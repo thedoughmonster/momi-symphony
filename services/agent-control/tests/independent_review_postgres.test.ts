@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import type { Sql } from "postgres"
 
 import { HostController } from "../../agent-control-host/src/host_controller.ts"
 import { HostLedger } from "../../agent-control-host/src/host_ledger.ts"
@@ -1348,6 +1349,247 @@ async (context) => {
     where state in ('reserved', 'running', 'ambiguous')`
   assert.equal(active.count, 1)
 })
+
+test("cancellation and escalation serialize without escaping the exact target set",
+async (context) => {
+  const database = await schedulerHarness.start()
+  context.after(() => schedulerHarness.stop(database))
+  const projectId = "32100000-0000-4000-8000-000000000001"
+  const cancelFirstDispatchId = "32100000-0000-4000-8000-000000000002"
+  const cancelFirstIssueId = "32100000-0000-4000-8000-000000000003"
+  const cancelFirstDeliveryId = "32100000-0000-4000-8000-000000000004"
+  const cancelFirstSourceId = "32100000-0000-4000-8000-000000000005"
+  const cancelFirstReviewerId = "32100000-0000-4000-8000-000000000006"
+  const cancelFirstReviewerCapability = "32100000-0000-4000-8000-000000000007"
+  const cancelFirstCancelDeliveryId = "32100000-0000-4000-8000-000000000008"
+  const cancelFirstCancelId = "32100000-0000-4000-8000-000000000009"
+  const cancelFirstCapability = "32100000-0000-4000-8000-000000000010"
+  const escalationFirstDispatchId = "32100000-0000-4000-8000-000000000011"
+  const escalationFirstIssueId = "32100000-0000-4000-8000-000000000012"
+  const escalationFirstDeliveryId = "32100000-0000-4000-8000-000000000013"
+  const escalationFirstSourceId = "32100000-0000-4000-8000-000000000014"
+  const escalationFirstReviewerId = "32100000-0000-4000-8000-000000000015"
+  const escalationFirstReviewerCapability = "32100000-0000-4000-8000-000000000016"
+  const escalationFirstCancelDeliveryId = "32100000-0000-4000-8000-000000000017"
+  const escalationFirstCancelId = "32100000-0000-4000-8000-000000000018"
+  const escalationFirstCapability = "32100000-0000-4000-8000-000000000019"
+  const head = "9".repeat(40)
+  await database.sql`
+    insert into momi_agent_ops.project_mappings (
+      linear_project_id, linear_project_name, repository, base_branch,
+      active_states, active, host_dispatch_url
+    ) values (${projectId}::uuid, 'Symphony Control Plane',
+      'thedoughmonster/momi-symphony', 'main', array['In Progress'], true,
+      'https://host.example/v1/dispatch')`
+  await database.sql`
+    insert into momi_agent_ops.raw_webhook_envelopes (
+      delivery_id, raw_body, payload, payload_sha256, auth_result
+    ) values
+      (${cancelFirstDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"1".repeat(64)}, 'verified'),
+      (${cancelFirstCancelDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"2".repeat(64)}, 'verified'),
+      (${escalationFirstDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"3".repeat(64)}, 'verified'),
+      (${escalationFirstCancelDeliveryId}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"4".repeat(64)}, 'verified')`
+  await database.sql`
+    insert into momi_agent_ops.dispatches (
+      dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
+      linear_issue_identifier, linear_issue_url, linear_project_id,
+      linear_project_name, action, changed_fields, mapped_repository,
+      mapped_base_branch, active_states, work_status, capability_token_hash,
+      codex_thread_id, codex_turn_id, cancellation_state, target_dispatch_id
+    ) values
+      (${cancelFirstDispatchId}::uuid, ${cancelFirstDeliveryId}::uuid,
+        'cancel-first-escalation-parent', ${cancelFirstIssueId}::uuid, 'MOX-972',
+        'https://linear.app/moxx-workboard/issue/MOX-972/cancel-first-escalation-parent',
+        ${projectId}::uuid, 'Symphony Control Plane', ${"execute-run"}, '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main', array['In Progress'], 'active',
+        ${"5".repeat(64)}, 'cancel-first-thread', 'cancel-first-turn',
+        'not_requested', null),
+      (${cancelFirstCancelId}::uuid, ${cancelFirstCancelDeliveryId}::uuid,
+        'cancel-first-escalation-cancel', ${cancelFirstIssueId}::uuid, 'MOX-972',
+        'https://linear.app/moxx-workboard/issue/MOX-972/cancel-first-escalation-cancel',
+        ${projectId}::uuid, 'Symphony Control Plane', 'cancel-run', '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main', array['In Progress'], 'claimed',
+        encode(extensions.digest(convert_to(${cancelFirstCapability}, 'UTF8'), 'sha256'), 'hex'),
+        null, null, 'requested', ${cancelFirstDispatchId}::uuid),
+      (${escalationFirstDispatchId}::uuid, ${escalationFirstDeliveryId}::uuid,
+        'escalation-first-parent', ${escalationFirstIssueId}::uuid, 'MOX-973',
+        'https://linear.app/moxx-workboard/issue/MOX-973/escalation-first-parent',
+        ${projectId}::uuid, 'Symphony Control Plane', ${"execute-run"}, '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main', array['In Progress'], 'active',
+        ${"6".repeat(64)}, 'escalation-first-thread', 'escalation-first-turn',
+        'not_requested', null),
+      (${escalationFirstCancelId}::uuid, ${escalationFirstCancelDeliveryId}::uuid,
+        'escalation-first-cancel', ${escalationFirstIssueId}::uuid, 'MOX-973',
+        'https://linear.app/moxx-workboard/issue/MOX-973/escalation-first-cancel',
+        ${projectId}::uuid, 'Symphony Control Plane', 'cancel-run', '{}'::jsonb,
+        'thedoughmonster/momi-symphony', 'main', array['In Progress'], 'claimed',
+        encode(extensions.digest(convert_to(${escalationFirstCapability}, 'UTF8'), 'sha256'), 'hex'),
+        null, null, 'requested', ${escalationFirstDispatchId}::uuid)`
+  await database.sql`
+    insert into momi_agent_ops.run_records (dispatch_id) values
+      (${cancelFirstDispatchId}::uuid), (${cancelFirstCancelId}::uuid),
+      (${escalationFirstDispatchId}::uuid), (${escalationFirstCancelId}::uuid)`
+  await database.sql`
+    insert into momi_agent_ops.review_attempts (
+      review_attempt_id, implementation_dispatch_id, reviewer_dispatch_id,
+      generation, repository, base_branch, pull_request_number, head_sha, base_sha,
+      profile, review_model, reasoning_effort, budget_fingerprint, policy_version,
+      state, result, runtime_role, reviewer_capability_token_hash,
+      reviewer_thread_id, reviewer_turn_id, packet_fingerprint, packet_artifact_ref,
+      rules_fingerprint, risk_dimensions, correction_risk_dimensions
+    ) values
+      (${cancelFirstSourceId}::uuid, ${cancelFirstDispatchId}::uuid,
+        ${cancelFirstReviewerId}::uuid, 1, 'thedoughmonster/momi-symphony', 'main', 16,
+        ${head}, ${baseSha}, 'low', 'gpt-5.6-luna', 'low',
+        'fnv1a64:9ede9fa30f041ad1', 'independent-review-v1', 'escalated', 'escalate',
+        'independent_reviewer', encode(extensions.digest(convert_to(
+          ${cancelFirstReviewerCapability}, 'UTF8'), 'sha256'), 'hex'),
+        'cancel-first-review-thread', 'cancel-first-review-turn',
+        'fnv1a64:1111111111111111', 'review://MOX-972/cancel-first-source',
+        'fnv1a64:2222222222222222', array['concurrency'], array['concurrency']),
+      (${escalationFirstSourceId}::uuid, ${escalationFirstDispatchId}::uuid,
+        ${escalationFirstReviewerId}::uuid, 1, 'thedoughmonster/momi-symphony', 'main', 17,
+        ${head}, ${baseSha}, 'low', 'gpt-5.6-luna', 'low',
+        'fnv1a64:9ede9fa30f041ad1', 'independent-review-v1', 'escalated', 'escalate',
+        'independent_reviewer', encode(extensions.digest(convert_to(
+          ${escalationFirstReviewerCapability}, 'UTF8'), 'sha256'), 'hex'),
+        'escalation-first-review-thread', 'escalation-first-review-turn',
+        'fnv1a64:3333333333333333', 'review://MOX-973/escalation-first-source',
+        'fnv1a64:4444444444444444', array['concurrency'], array['concurrency'])`
+
+  let reportCancelFenced!: () => void; let releaseCancel!: () => void
+  const cancelFenced = new Promise<void>((resolve) => { reportCancelFenced = resolve })
+  const cancelRelease = new Promise<void>((resolve) => { releaseCancel = resolve })
+  const cancelWinner = database.sql.begin(async (sql) => {
+    const [fenced] = await sql<{ fenced: boolean }[]>`
+      select momi_agent_ops.fence_cancellation_v1(
+        ${cancelFirstCancelId}::uuid, ${cancelFirstCapability}::uuid) as fenced`
+    assert.equal(fenced.fenced, true)
+    reportCancelFenced(); await cancelRelease
+  })
+  await cancelFenced
+  const refusedEscalation = database.sql<{ disposition: string;
+    reviewer_dispatch_id: string | null }[]>`
+    select disposition, reviewer_dispatch_id::text
+    from momi_agent_ops.create_escalated_review_attempt_v1(
+      ${cancelFirstReviewerId}::uuid, ${cancelFirstReviewerCapability}::uuid,
+      'cancel-first-review-thread', 'cancel-first-review-turn',
+      'fnv1a64:5555555555555555', 'review://MOX-972/cancel-first-replay',
+      'fnv1a64:6666666666666666', array['concurrency'], 4)`
+  try {
+    await waitForAdvisoryWaiters(database.sql, 1)
+  } finally {
+    releaseCancel()
+  }
+  const [refused] = await refusedEscalation
+  await cancelWinner
+  assert.equal(refused.disposition, "escalation_identity_refused")
+  assert.equal(refused.reviewer_dispatch_id, null)
+  const [cancelFirstState] = await database.sql<{
+    attempt_count: number; child_count: number; active_count: number
+  }[]>`
+    select count(*)::integer as attempt_count,
+      count(*) filter (where escalation_of is not null)::integer as child_count,
+      count(*) filter (where state in ('reserved', 'running', 'ambiguous'))::integer
+        as active_count
+    from momi_agent_ops.review_attempts
+    where implementation_dispatch_id = ${cancelFirstDispatchId}::uuid`
+  const [cancelFirstTargets] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${cancelFirstCancelId}::uuid, ${cancelFirstCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(cancelFirstState, { attempt_count: 1, child_count: 0, active_count: 0 })
+  assert.deepEqual(cancelFirstTargets.target_ids, [cancelFirstDispatchId])
+
+  let reportChildCreated!: (child: { reviewer_dispatch_id: string }) => void
+  let releaseEscalation!: () => void
+  const childCreated = new Promise<{ reviewer_dispatch_id: string }>((resolve) => {
+    reportChildCreated = resolve
+  })
+  const escalationRelease = new Promise<void>((resolve) => { releaseEscalation = resolve })
+  const escalationWinner = database.sql.begin(async (sql) => {
+    const [child] = await sql<{ disposition: string; reviewer_dispatch_id: string }[]>`
+      select disposition, reviewer_dispatch_id::text
+      from momi_agent_ops.create_escalated_review_attempt_v1(
+        ${escalationFirstReviewerId}::uuid, ${escalationFirstReviewerCapability}::uuid,
+        'escalation-first-review-thread', 'escalation-first-review-turn',
+        'fnv1a64:7777777777777777', 'review://MOX-973/escalation-first-race',
+        'fnv1a64:8888888888888888', array['concurrency'], 4)`
+    assert.equal(child.disposition, "created")
+    reportChildCreated(child); await escalationRelease
+  })
+  const child = await childCreated
+  const waitingCancellation = database.sql<{ fenced: boolean }[]>`
+    select momi_agent_ops.fence_cancellation_v1(
+      ${escalationFirstCancelId}::uuid, ${escalationFirstCapability}::uuid) as fenced`
+  try {
+    await waitForAdvisoryWaiters(database.sql, 1)
+  } finally {
+    releaseEscalation()
+  }
+  const [fencedAfterChild] = await waitingCancellation
+  await escalationWinner
+  assert.equal(fencedAfterChild.fenced, true)
+  const [targetsBeforeRetirement] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${escalationFirstCancelId}::uuid,
+      ${escalationFirstCapability}::uuid)::text[] as target_ids`
+  const expectedTargets = [escalationFirstDispatchId, child.reviewer_dispatch_id].sort()
+  assert.deepEqual(targetsBeforeRetirement.target_ids, expectedTargets)
+  for (let replay = 0; replay < 2; replay += 1) {
+    const [receipt] = await database.sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_unmaterialized_review_cancellation_v1(
+        ${escalationFirstCancelId}::uuid, ${escalationFirstCapability}::uuid,
+        ${child.reviewer_dispatch_id}::uuid) as recorded`
+    assert.equal(receipt.recorded, true)
+    const [parent] = await database.sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_cancellation_v3(
+        ${escalationFirstCancelId}::uuid, ${escalationFirstCapability}::uuid,
+        'requested') as recorded`
+    assert.equal(parent.recorded, true)
+  }
+  const [targetsAfterRetirement] = await database.sql<{ target_ids: string[] }[]>`
+    select momi_agent_ops.reconstruct_cancellation_targets_v1(
+      ${escalationFirstCancelId}::uuid,
+      ${escalationFirstCapability}::uuid)::text[] as target_ids`
+  assert.deepEqual(targetsAfterRetirement.target_ids, expectedTargets)
+  const [replayedEscalation] = await database.sql<{ disposition: string }[]>`
+    select disposition from momi_agent_ops.create_escalated_review_attempt_v1(
+      ${escalationFirstReviewerId}::uuid, ${escalationFirstReviewerCapability}::uuid,
+      'escalation-first-review-thread', 'escalation-first-review-turn',
+      'fnv1a64:9999999999999999', 'review://MOX-973/escalation-after-cancel',
+      'fnv1a64:aaaaaaaaaaaaaaaa', array['concurrency'], 4)`
+  assert.equal(replayedEscalation.disposition, "escalation_identity_refused")
+  const [escalationFirstState] = await database.sql<{
+    attempts: number; children: number; active: number; child_state: string
+  }[]>`
+    select count(*)::integer as attempts,
+      count(*) filter (where escalation_of is not null)::integer as children,
+      count(*) filter (where state in ('reserved', 'running', 'ambiguous'))::integer as active,
+      max(state) filter (where reviewer_dispatch_id = ${child.reviewer_dispatch_id}::uuid)
+        as child_state
+    from momi_agent_ops.review_attempts
+    where implementation_dispatch_id = ${escalationFirstDispatchId}::uuid`
+  assert.deepEqual(escalationFirstState,
+    { attempts: 2, children: 1, active: 0, child_state: "canceled" })
+})
+
+async function waitForAdvisoryWaiters(sql: Sql,
+  expected: number): Promise<void> {
+  const deadline = Date.now() + 2_000
+  let waiters = 0
+  while (waiters < expected && Date.now() < deadline) {
+    const [waiting] = await sql<{ count: number }[]>`
+      select count(*)::integer as count from pg_catalog.pg_locks
+      where locktype = 'advisory' and not granted`
+    waiters = waiting.count
+    if (waiters < expected) await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal(waiters, expected)
+}
 
 test("cancellation recovers an abandoned exact-head success projection before fencing",
 async (context) => {

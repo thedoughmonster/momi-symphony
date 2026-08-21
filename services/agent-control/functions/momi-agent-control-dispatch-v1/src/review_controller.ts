@@ -386,6 +386,11 @@ async function dispatchEscalatedReview(input: ReviewTerminalInput, repository: s
     return { ok: true, disposition: attempt.disposition,
       generation: attempt.generation, profile: attempt.profile }
   }
+  if (attempt.disposition === "escalation_identity_refused") {
+    await reconcile(input.review_subject.implementation_dispatch_id)
+    return { ok: true, disposition: attempt.disposition,
+      review_attempt_id: null, reviewer_dispatch_id: null, generation: null, profile: null }
+  }
   if (attempt.disposition !== "created") {
     await reconcile(input.review_subject.implementation_dispatch_id)
     return { ok: true, disposition: attempt.disposition,

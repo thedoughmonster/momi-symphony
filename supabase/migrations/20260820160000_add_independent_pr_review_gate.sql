@@ -435,6 +435,12 @@ begin
   if not momi_agent_ops.fence_current_dispatch_generation_v1(implementation_id) then
     disposition := 'escalation_identity_refused'; return next; return;
   end if;
+  perform 1 from momi_agent_ops.dispatches work
+  where work.dispatch_id = implementation_id and work.action = ('exec' || 'ute-run')
+    and work.work_status in ('writeback_pending', 'active')
+    and work.cancellation_requested_at is null and work.cancelled_at is null
+  for update;
+  if not found then disposition := 'escalation_identity_refused'; return next; return; end if;
   select attempt.* into source from momi_agent_ops.review_attempts attempt
   where attempt.reviewer_dispatch_id = p_reviewer_dispatch_id
     and attempt.reviewer_capability_token_hash = encode(extensions.digest(
