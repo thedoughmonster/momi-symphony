@@ -683,6 +683,14 @@ create function momi_agent_ops.record_terminal_v5(
 declare selected momi_agent_ops.dispatches%rowtype;
 declare current_run momi_agent_ops.run_records%rowtype;
 begin
+  if p_telemetry is null or jsonb_typeof(p_telemetry) <> 'object' then
+    raise exception 'invalid execution telemetry' using errcode = '22023';
+  end if;
+  if p_readiness_result not in ('ready', 'unready', 'failed')
+    or p_terminal_disposition not in ('completed', 'failed', 'interrupted')
+    or p_archived_at is null then
+    raise exception 'invalid terminal callback' using errcode = '22023';
+  end if;
   select work.* into selected from momi_agent_ops.dispatches work
   where work.dispatch_id = p_dispatch_id
     and work.host_callback_token_hash = encode(extensions.digest(
@@ -692,27 +700,28 @@ begin
   if p_readiness_result = 'ready' and p_terminal_disposition = 'completed' then
     select run.* into current_run from momi_agent_ops.run_records run
     where run.dispatch_id = p_dispatch_id;
-    if current_run.pull_request_number is null
-      or not momi_agent_ops.lock_current_review_subject_v1(
+    if current_run.pull_request_number is not null then
+      if not momi_agent_ops.lock_current_review_subject_v1(
         p_dispatch_id, selected.mapped_repository, current_run.pull_request_number
       ) then return; end if;
-    select run.* into current_run from momi_agent_ops.run_records run
-    where run.dispatch_id = p_dispatch_id for update;
-    if current_run.validation_state <> 'succeeded'
-      or current_run.validation_sha is distinct from current_run.head_sha
-      or current_run.merge_sha is null
-      or current_run.release_state <> 'succeeded'
-      or current_run.release_sha is distinct from current_run.merge_sha
-      or not exists (
-        select 1 from momi_agent_ops.review_attempts review
-        where review.implementation_dispatch_id = p_dispatch_id
-          and review.repository = selected.mapped_repository
-          and review.pull_request_number = current_run.pull_request_number
-          and review.head_sha = current_run.head_sha
-          and review.state = 'accepted'
-          and not exists (select 1 from jsonb_array_elements(review.findings) finding
-            where finding->>'severity' = 'blocking')
-      ) then return; end if;
+      select run.* into current_run from momi_agent_ops.run_records run
+      where run.dispatch_id = p_dispatch_id for update;
+      if current_run.validation_state <> 'succeeded'
+        or current_run.validation_sha is distinct from current_run.head_sha
+        or current_run.merge_sha is null
+        or current_run.release_state <> 'succeeded'
+        or current_run.release_sha is distinct from current_run.merge_sha
+        or not exists (
+          select 1 from momi_agent_ops.review_attempts review
+          where review.implementation_dispatch_id = p_dispatch_id
+            and review.repository = selected.mapped_repository
+            and review.pull_request_number = current_run.pull_request_number
+            and review.head_sha = current_run.head_sha
+            and review.state = 'accepted'
+            and not exists (select 1 from jsonb_array_elements(review.findings) finding
+              where finding->>'severity' = 'blocking')
+        ) then return; end if;
+    end if;
   end if;
   return query select terminal.issue_id, terminal.issue_identifier,
     terminal.action, terminal.linear_comment_id
