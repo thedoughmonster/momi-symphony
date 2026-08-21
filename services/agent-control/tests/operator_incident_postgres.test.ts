@@ -380,7 +380,9 @@ test("retry persistence takes the generation lock before updating its dispatch",
     await seedImplementation(database.sql)
     await database.sql`
       update momi_agent_ops.dispatches set work_status = 'claimed', attempt_count = 1,
-        lease_expires_at = now() + interval '5 minutes'
+        lease_expires_at = now() + interval '5 minutes',
+        capability_token_hash = encode(extensions.digest(convert_to(
+          ${capability}::uuid::text, 'UTF8'), 'sha256'), 'hex')
       where dispatch_id = ${dispatchId}::uuid`
 
     let releaseLock = () => undefined
