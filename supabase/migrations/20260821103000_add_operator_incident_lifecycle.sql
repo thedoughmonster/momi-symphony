@@ -304,7 +304,7 @@ $$;
 create function momi_agent_ops.reconcile_dispatch_operator_incident_v1()
 returns trigger language plpgsql security invoker set search_path = '' as $$
 declare run momi_agent_ops.run_records%rowtype;
-declare category text;
+declare incident_category text;
 declare phase text;
 declare guidance text;
 declare generation text;
@@ -331,7 +331,7 @@ begin
     return new;
   end if;
   if new.work_status <> 'dead_letter' or old.work_status = 'dead_letter' then return new; end if;
-  category := case when run.terminal_at is null
+  incident_category := case when run.terminal_at is null
     then 'run_ambiguous' else 'callback_ambiguous' end;
   phase := case when run.terminal_at is null then 'working' else 'callback' end;
   guidance := case when run.terminal_at is null
@@ -340,13 +340,13 @@ begin
     ((extract(epoch from new.dead_letter_recovered_at) * 1000000)::bigint)::text,
     'initial');
   identity := encode(extensions.digest(convert_to(
-    new.dispatch_id::text || ':' || run.run_id::text || ':' || category || ':' ||
+    new.dispatch_id::text || ':' || run.run_id::text || ':' || incident_category || ':' ||
       generation, 'UTF8'), 'sha256'), 'hex');
   update momi_agent_ops.operator_incidents incident set
     lifecycle_state = 'superseded', resolution_code = 'generation_superseded',
     superseded_at = now(), updated_at = now()
   where incident.implementation_dispatch_id = new.dispatch_id
-    and incident.category = category and incident.incident_identity <> identity
+    and incident.category = incident_category and incident.incident_identity <> identity
     and incident.lifecycle_state in ('active', 'ambiguous');
   insert into momi_agent_ops.operator_incidents as incident (
     incident_identity, implementation_dispatch_id, run_id, generation_key,
@@ -355,7 +355,7 @@ begin
     head_sha, dispatch_id, first_observed_at, last_progress_at, guidance_code
   ) values (
     identity, new.dispatch_id, run.run_id, generation, new.linear_issue_id,
-    new.linear_issue_identifier, new.linear_issue_url, phase, category, 'ambiguous',
+    new.linear_issue_identifier, new.linear_issue_url, phase, incident_category, 'ambiguous',
     new.mapped_repository, new.mapped_base_branch, run.pull_request_number,
     run.head_sha, new.dispatch_id, now(), now(), guidance
   ) on conflict (incident_identity) do update set
