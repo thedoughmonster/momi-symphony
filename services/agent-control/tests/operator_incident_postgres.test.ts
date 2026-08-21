@@ -199,6 +199,41 @@ test("successful terminals resolve incidents only after durable Linear writeback
     }])
   })
 
+test("failed-terminal writeback retires stale ambiguity but preserves the failure",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'retained_task_ambiguous',
+        'accepted-host-before-failure', 'working', 'reconcile_retained_task',
+        null, null, now())`
+    const telemetry = { policy_version: "mox-execution-efficiency-v1",
+      stable_prefix_fingerprint: "fnv1a64:1111111111111111",
+      context_fingerprint: "fnv1a64:2222222222222222", input_tokens: 10,
+      cached_input_tokens: 0, output_tokens: 2, model_visible_tool_bytes: 100,
+      model_turns: 1, no_progress_cycles: 0, subagents: 0, max_subagent_depth: 0,
+      retries: 0, repeated_failure_fingerprints: 0, elapsed_ms: 1000,
+      disposition: "failed" }
+    await database.sql`
+      select * from momi_agent_ops.record_terminal_v6(
+        ${dispatchId}::uuid, ${capability}::uuid, 'implementation-thread',
+        'implementation-turn', 'failed', 'failed', 'bounded failure', now(),
+        ${database.sql.json(telemetry)}::jsonb)`
+    await database.sql`
+      select momi_agent_ops.record_linear_writeback_v6(
+        ${dispatchId}::uuid, ${capability}::uuid, null)`
+    const incidents = await database.sql<Array<Record<string, unknown>>>`
+      select category, lifecycle_state, resolution_code
+      from momi_agent_ops.operator_incidents order by category`
+    assert.deepEqual(incidents.map((row) => ({ ...row })), [
+      { category: "retained_task_ambiguous", lifecycle_state: "resolved",
+        resolution_code: "automatic_recovery" },
+      { category: "terminal_failure", lifecycle_state: "active", resolution_code: null },
+    ])
+  })
+
 test("dead-letter recovery epochs open a fresh incident after re-exhaustion", async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))

@@ -278,7 +278,15 @@ create function momi_agent_ops.record_terminal_v6(
 declare terminal record;
 declare run momi_agent_ops.run_records%rowtype;
 declare canceled boolean;
+declare issue_id uuid;
 begin
+  select work.linear_issue_id into issue_id from momi_agent_ops.dispatches work
+  where work.dispatch_id = p_dispatch_id
+    and work.action = ('exec' || 'ute-run');
+  if found then
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+      'momi_agent_ops.dispatch_generation:' || issue_id::text, 0));
+  end if;
   select callback.* into terminal from momi_agent_ops.record_terminal_v5(
     p_dispatch_id, p_capability_token, p_thread_id, p_turn_id,
     p_readiness_result, p_terminal_disposition, p_terminal_summary,
@@ -332,13 +340,27 @@ begin
   select selected.* into run from momi_agent_ops.run_records selected
   where selected.dispatch_id = p_dispatch_id for update;
   if work.action = ('exec' || 'ute-run')
-    and (work.cancellation_requested_at is not null or work.cancelled_at is not null
-      or (run.readiness_result = 'ready'
-        and run.terminal_disposition = 'completed')) then
+    and (work.cancellation_requested_at is not null or work.cancelled_at is not null) then
     update momi_agent_ops.operator_incidents incident set
-      lifecycle_state = 'resolved',
-      resolution_code = case when work.cancellation_requested_at is not null
-        or work.cancelled_at is not null then 'canceled' else 'completed' end,
+      lifecycle_state = 'resolved', resolution_code = 'canceled',
+      resolved_at = coalesce(run.linear_writeback_at, now()),
+      updated_at = coalesce(run.linear_writeback_at, now())
+    where incident.implementation_dispatch_id = p_dispatch_id
+      and incident.lifecycle_state in ('active', 'ambiguous');
+  elsif work.action = ('exec' || 'ute-run')
+    and run.terminal_disposition in ('failed', 'interrupted') then
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'resolved', resolution_code = 'automatic_recovery',
+      resolved_at = coalesce(run.linear_writeback_at, now()),
+      updated_at = coalesce(run.linear_writeback_at, now())
+    where incident.implementation_dispatch_id = p_dispatch_id
+      and incident.category <> 'terminal_failure'
+      and incident.lifecycle_state in ('active', 'ambiguous');
+  elsif work.action = ('exec' || 'ute-run')
+    and run.readiness_result = 'ready'
+    and run.terminal_disposition = 'completed' then
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'resolved', resolution_code = 'completed',
       resolved_at = coalesce(run.linear_writeback_at, now()),
       updated_at = coalesce(run.linear_writeback_at, now())
     where incident.implementation_dispatch_id = p_dispatch_id
