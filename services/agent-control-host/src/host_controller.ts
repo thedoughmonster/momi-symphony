@@ -148,9 +148,23 @@ export class HostController {
     }
     return result
   }
-  reviewWorkState(workId: string): import("./types.ts").HostReviewWorkState {
-    const record = this.ledger.get(workId)
+  async reviewWorkState(workId: string): Promise<import("./types.ts").HostReviewWorkState> {
+    let record = this.ledger.get(workId)
     if (!record || record.runtimeRole !== "independent_reviewer") {
+      return { review_work_state: "missing" }
+    }
+    if (record.state === "ambiguous" && record.threadId && !record.turnId) {
+      try {
+        const response = await this.clientFor(record).request<{
+          thread: { turns: TurnShape[] }
+        }>("thread/read", { threadId: record.threadId, includeTurns: true })
+        const turn = response.thread.turns.at(-1)
+        if (!turn?.id) return { review_work_state: "missing" }
+        await this.ledger.turnStarted(record.workId, record.threadId, turn.id)
+        record = await this.ledger.accept(record.workId, record.threadId, turn.id)
+        void this.recover(record).catch(() => undefined)
+      } catch { return { review_work_state: "running" } }
+    } else if (record.state === "ambiguous" && (!record.threadId || !record.turnId)) {
       return { review_work_state: "missing" }
     }
     if (record.state === "terminal" || record.callbackSent) {

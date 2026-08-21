@@ -31,7 +31,8 @@ export async function handleHostRequest(
     if (path === "/v1/review-status") {
       const input = parseHostReviewStatus(body)
       if (!input) { writeNodeJson(response, 400, { ok: false }); return }
-      writeNodeJson(response, 200, { ok: true, ...controller.reviewWorkState(input.work_id) })
+      writeNodeJson(response, 200, { ok: true,
+        ...await controller.reviewWorkState(input.work_id) })
       return
     }
     if (path === "/v1/cancel") {

@@ -44,7 +44,10 @@ win the `state = pending` compare-and-set and all current-parent/current-subject
 cannot restore canceled or obsolete authority. Recovery reports observed host state as running,
 terminal, or missing. Running remains pending, terminal schedules callback replay, and only an
 authenticated implementation retry after an observed missing record may fail the pending attempt
-and create one replacement. Recovery never synthesizes acceptance.
+and create one replacement. If the host acceptance response was lost, the capability-authenticated
+exact-subject terminal callback may atomically bind previously absent independent thread/turn
+identity while completing the pending attempt. A thread-only ambiguous start is recovered from the
+reviewer App Server or reported missing. Recovery never synthesizes acceptance.
 
 Agent State derives `reviewing` from the current exact-head attempt rather than a copied review
 mirror. The merge path alone consumes canonical review authority; successful terminalization

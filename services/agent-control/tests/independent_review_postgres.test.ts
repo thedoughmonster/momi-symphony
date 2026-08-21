@@ -160,3 +160,61 @@ test("minimal review schema enforces independence, exact-subject uniqueness, and
       where review_attempt_id = ${acceptedAttemptId}::uuid
     `, /review_attempt_history_immutable/)
   })
+
+test("lost host acceptance binds reviewer identity atomically at the terminal callback",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    const lostDispatch = "31000000-0000-4000-8000-000000000001"
+    const lostIssue = "31000000-0000-4000-8000-000000000002"
+    const lostDelivery = "31000000-0000-4000-8000-000000000003"
+    const reviewerDispatch = "31000000-0000-4000-8000-000000000004"
+    const reviewerCapability = "31000000-0000-4000-8000-000000000005"
+    await database.sql`
+      insert into momi_agent_ops.raw_webhook_envelopes (
+        delivery_id, raw_body, payload, payload_sha256, auth_result
+      ) values (${lostDelivery}::uuid, decode('7b7d', 'hex'), '{}'::jsonb,
+        ${"0".repeat(64)}, 'verified')
+    `
+    await database.sql`
+      insert into momi_agent_ops.dispatches (
+        dispatch_id, receipt_delivery_id, idempotency_key, linear_issue_id,
+        linear_issue_identifier, linear_issue_url, action, changed_fields,
+        mapped_repository, mapped_base_branch, active_states, work_status,
+        capability_token_hash, host_callback_token_hash, codex_thread_id, codex_turn_id
+      ) values (${lostDispatch}::uuid, ${lostDelivery}::uuid, 'lost-review-acceptance',
+        ${lostIssue}::uuid, 'MOX-260', 'https://linear.app/moxx-workboard/issue/MOX-260/lost',
+        ${"execute-run"}, '{}'::jsonb, ${repository}, 'main', array['In Progress'],
+        'active', ${"1".repeat(64)}, ${"2".repeat(64)},
+        'implementation-thread', 'implementation-turn')
+    `
+    await database.sql`
+      insert into momi_agent_ops.run_records (
+        dispatch_id, pull_request_number, head_sha, validation_state, validation_sha
+      ) values (${lostDispatch}::uuid, 16, ${head}, 'succeeded', ${head})
+    `
+    await database.sql`
+      insert into momi_agent_ops.review_attempts (
+        implementation_dispatch_id, reviewer_dispatch_id,
+        reviewer_callback_capability_hash, repository, pull_request_number,
+        head_sha, base_sha, policy_version, profile
+      ) values (${lostDispatch}::uuid, ${reviewerDispatch}::uuid,
+        encode(extensions.digest(convert_to(${reviewerCapability}::uuid::text,
+          'UTF8'), 'sha256'), 'hex'), ${repository}, 16, ${head}, ${base},
+        'independent-review-v1', 'high')
+    `
+    const recorded = await database.sql<{ recorded: boolean }[]>`
+      select momi_agent_ops.record_review_result_v1(
+        ${reviewerDispatch}::uuid, ${reviewerCapability}::uuid,
+        'review-thread', 'review-turn', ${repository}, 16, ${head}, ${base},
+        'independent-review-v1', 'high', 'accepted', '[]'::jsonb) as recorded
+    `
+    assert.equal(recorded[0]?.recorded, true)
+    const bound = await database.sql<Array<Record<string, unknown>>>`
+      select state, reviewer_identity, reviewer_thread_id, reviewer_turn_id
+      from momi_agent_ops.review_attempts
+      where reviewer_dispatch_id = ${reviewerDispatch}::uuid
+    `
+    assert.deepEqual(bound[0], { state: "accepted", reviewer_identity: "independent_reviewer",
+      reviewer_thread_id: "review-thread", reviewer_turn_id: "review-turn" })
+  })

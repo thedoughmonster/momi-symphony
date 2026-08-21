@@ -474,14 +474,21 @@ begin
     or attempt.base_sha is distinct from p_base_sha
     or attempt.policy_version is distinct from p_policy_version
     or attempt.profile is distinct from p_profile
-    or attempt.reviewer_identity <> 'independent_reviewer'
-    or attempt.reviewer_thread_id is distinct from p_thread_id
-    or attempt.reviewer_turn_id is distinct from p_turn_id then return false; end if;
+    or (attempt.reviewer_identity is not null
+      and attempt.reviewer_identity <> 'independent_reviewer')
+    or (attempt.reviewer_thread_id is not null
+      and attempt.reviewer_thread_id is distinct from p_thread_id)
+    or (attempt.reviewer_turn_id is not null
+      and attempt.reviewer_turn_id is distinct from p_turn_id)
+    or p_thread_id is null or length(p_thread_id) not between 1 and 200
+    or p_turn_id is null or length(p_turn_id) not between 1 and 200
+    then return false; end if;
   if not exists (select 1 from momi_agent_ops.dispatches work
     join momi_agent_ops.run_records run on run.dispatch_id = work.dispatch_id
     where work.dispatch_id = attempt.implementation_dispatch_id
       and work.work_status in ('writeback_pending', 'active')
       and work.cancellation_requested_at is null and work.cancelled_at is null
+      and work.codex_thread_id is distinct from p_thread_id
       and run.pull_request_number = p_pull_request_number
       and run.head_sha = p_head_sha
       and run.validation_state = 'succeeded' and run.validation_sha = p_head_sha
@@ -491,7 +498,11 @@ begin
   reason := case p_result when 'inconclusive' then 'inconclusive'
     when 'escalate' then 'escalation_requested' else null end;
   update momi_agent_ops.review_attempts review set state = next_state,
-    findings = p_findings, failure_reason = reason, terminal_at = now(), updated_at = now()
+    reviewer_identity = coalesce(review.reviewer_identity, 'independent_reviewer'),
+    reviewer_thread_id = coalesce(review.reviewer_thread_id, p_thread_id),
+    reviewer_turn_id = coalesce(review.reviewer_turn_id, p_turn_id),
+    started_at = coalesce(review.started_at, now()), findings = p_findings,
+    failure_reason = reason, terminal_at = now(), updated_at = now()
   where review.review_attempt_id = attempt.review_attempt_id and review.state = 'pending';
   return found;
 end;
