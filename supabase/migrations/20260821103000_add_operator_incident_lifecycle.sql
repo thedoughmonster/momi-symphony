@@ -385,7 +385,8 @@ begin
   if new.work_status <> 'dead_letter' or old.work_status = 'dead_letter' then return new; end if;
   incident_category := case
     when new.source_kind = 'ready_leaf_scheduler' then 'retained_task_ambiguous'
-    when run.terminal_at is null and (new.host_accepted_at is not null
+    when run.terminal_at is null and (new.dead_letter_recovered_at is not null
+      or new.host_accepted_at is not null
       or new.codex_thread_id is not null or new.codex_turn_id is not null
       or new.host_callback_token_hash is not null) then 'retained_task_ambiguous'
     when run.terminal_at is null then 'run_ambiguous'
@@ -396,7 +397,8 @@ begin
     else 'callback' end;
   guidance := case
     when new.source_kind = 'ready_leaf_scheduler' then 'reconcile_retained_task'
-    when run.terminal_at is null and (new.host_accepted_at is not null
+    when run.terminal_at is null and (new.dead_letter_recovered_at is not null
+      or new.host_accepted_at is not null
       or new.codex_thread_id is not null or new.codex_turn_id is not null
       or new.host_callback_token_hash is not null) then 'reconcile_retained_task'
     when run.terminal_at is null then 'recover_dispatch'
@@ -573,6 +575,10 @@ begin
     where prior.dispatch_id = incident.implementation_dispatch_id
       and prior.linear_issue_id = new.linear_issue_id
       and prior.dispatch_id <> new.dispatch_id
+      and not (incident.category = 'reviewer_ambiguous'
+        and exists (select 1 from momi_agent_ops.review_attempts pending_review
+          where pending_review.review_attempt_id = incident.review_attempt_id
+            and pending_review.state = 'pending'))
       and incident.lifecycle_state in ('active', 'ambiguous');
   end if;
   return new;

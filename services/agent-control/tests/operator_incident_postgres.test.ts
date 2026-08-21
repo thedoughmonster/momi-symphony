@@ -202,10 +202,12 @@ test("successful terminals resolve incidents only after durable Linear writeback
 test("dead-letter recovery epochs open a fresh incident after re-exhaustion", async (context) => {
   const database = await schedulerHarness.start()
   context.after(() => schedulerHarness.stop(database))
-  await seedImplementation(database.sql)
+  const preHostDispatch = "67000000-0000-4000-8000-000000000030"
+  await seedAdditionalDispatch(database.sql, { dispatchId: preHostDispatch,
+    deliveryId: "67000000-0000-4000-8000-000000000031", rejected: false })
   await database.sql`
     update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
-    where dispatch_id = ${dispatchId}::uuid`
+    where dispatch_id = ${preHostDispatch}::uuid`
   await database.sql`
     update momi_agent_ops.dispatches set dead_letter_recovered_at = now(),
       dead_letter_recovery_owner_issue_identifier = 'MOX-999',
@@ -213,16 +215,19 @@ test("dead-letter recovery epochs open a fresh incident after re-exhaustion", as
       dead_letter_recovery_from_error_code = 'codex_host_delivery_failed',
       dead_letter_recovery_host_dispatch_url = 'https://host.example/v1/dispatch',
       attempt_count = 0, work_status = 'pending'
-    where dispatch_id = ${dispatchId}::uuid`
+    where dispatch_id = ${preHostDispatch}::uuid`
   await database.sql`
     update momi_agent_ops.dispatches set attempt_count = 8, work_status = 'dead_letter'
-    where dispatch_id = ${dispatchId}::uuid`
+    where dispatch_id = ${preHostDispatch}::uuid`
   const incidents = await database.sql<Array<Record<string, unknown>>>`
-    select generation_key, lifecycle_state from momi_agent_ops.operator_incidents
+    select generation_key, lifecycle_state, category, guidance_code
+    from momi_agent_ops.operator_incidents
     order by first_observed_at, incident_id`
   assert.equal(incidents.length, 2)
   assert.equal(incidents[0]?.lifecycle_state, "resolved")
   assert.equal(incidents[1]?.lifecycle_state, "ambiguous")
+  assert.equal(incidents[1]?.category, "retained_task_ambiguous")
+  assert.equal(incidents[1]?.guidance_code, "reconcile_retained_task")
   assert.notEqual(incidents[0]?.generation_key, incidents[1]?.generation_key)
 })
 
@@ -333,7 +338,7 @@ test("incident observations serialize with dispatch creation and stale slots sta
     }])
   })
 
-test("rejected and delayed older dispatches cannot displace canonical guidance",
+test("rejected dispatches cannot displace guidance and pending reviews stay actionable",
   async (context) => {
     const database = await schedulerHarness.start()
     context.after(() => schedulerHarness.stop(database))
@@ -363,7 +368,7 @@ test("rejected and delayed older dispatches cannot displace canonical guidance",
     current = await database.sql<Array<Record<string, unknown>>>`
       select lifecycle_state from momi_agent_ops.operator_incidents
       where implementation_dispatch_id = ${dispatchId}::uuid`
-    assert.equal(current[0]?.lifecycle_state, "superseded")
+    assert.equal(current[0]?.lifecycle_state, "ambiguous")
   })
 
 async function seedImplementation(sql: Sql) {
