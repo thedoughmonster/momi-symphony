@@ -371,6 +371,29 @@ test("rejected dispatches cannot displace guidance and pending reviews stay acti
     assert.equal(current[0]?.lifecycle_state, "ambiguous")
   })
 
+test("a mapping cutover preserves guidance for work in the former repository",
+  async (context) => {
+    const database = await schedulerHarness.start()
+    context.after(() => schedulerHarness.stop(database))
+    await seedImplementation(database.sql)
+    await database.sql`
+      update momi_agent_ops.dispatches
+      set mapped_repository = 'thedoughmonster/legacy-symphony'
+      where dispatch_id = ${dispatchId}::uuid`
+    await database.sql`
+      select momi_agent_ops.record_operator_incident_v1(
+        ${dispatchId}::uuid, ${capability}::uuid, 'run_ambiguous',
+        'legacy-mapping', 'working', 'recover_dispatch', null, null, now())`
+    await seedAdditionalDispatch(database.sql, {
+      dispatchId: "67000000-0000-4000-8000-000000000032",
+      deliveryId: "67000000-0000-4000-8000-000000000033", rejected: false })
+    const incidents = await database.sql<Array<Record<string, unknown>>>`
+      select repository, lifecycle_state from momi_agent_ops.operator_incidents`
+    assert.deepEqual(incidents.map((row) => ({ ...row })), [{
+      repository: "thedoughmonster/legacy-symphony", lifecycle_state: "ambiguous",
+    }])
+  })
+
 async function seedImplementation(sql: Sql) {
   await sql`
     insert into momi_agent_ops.raw_webhook_envelopes (

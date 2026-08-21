@@ -574,6 +574,9 @@ begin
     from momi_agent_ops.dispatches prior
     where prior.dispatch_id = incident.implementation_dispatch_id
       and prior.linear_issue_id = new.linear_issue_id
+      and prior.linear_project_id = new.linear_project_id
+      and prior.mapped_repository = new.mapped_repository
+      and prior.mapped_base_branch = new.mapped_base_branch
       and prior.dispatch_id <> new.dispatch_id
       and not (incident.category = 'reviewer_ambiguous'
         and exists (select 1 from momi_agent_ops.review_attempts pending_review
