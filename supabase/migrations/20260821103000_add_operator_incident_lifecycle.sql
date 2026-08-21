@@ -318,24 +318,31 @@ declare recorded boolean;
 declare run momi_agent_ops.run_records%rowtype;
 declare work momi_agent_ops.dispatches%rowtype;
 begin
+  select selected.* into work from momi_agent_ops.dispatches selected
+  where selected.dispatch_id = p_dispatch_id
+    and encode(extensions.digest(
+      convert_to(p_capability_token::text, 'UTF8'), 'sha256'), 'hex') in (
+        selected.capability_token_hash, selected.host_callback_token_hash)
+  for update;
+  if not found then return false; end if;
   select momi_agent_ops.record_linear_writeback_v5(
     p_dispatch_id, p_capability_token, p_comment_id
   ) into recorded;
   if not coalesce(recorded, false) then return false; end if;
-  select selected.* into work from momi_agent_ops.dispatches selected
-  where selected.dispatch_id = p_dispatch_id;
   select selected.* into run from momi_agent_ops.run_records selected
-  where selected.dispatch_id = p_dispatch_id;
+  where selected.dispatch_id = p_dispatch_id for update;
   if work.action = ('exec' || 'ute-run')
     and (work.cancellation_requested_at is not null or work.cancelled_at is not null
       or (run.readiness_result = 'ready'
         and run.terminal_disposition = 'completed')) then
-    perform momi_agent_ops.resolve_operator_incidents_v1(
-      p_dispatch_id, p_capability_token,
-      case when work.cancellation_requested_at is not null or work.cancelled_at is not null
-        then 'canceled' else 'completed' end,
-      coalesce(run.linear_writeback_at, now())
-    );
+    update momi_agent_ops.operator_incidents incident set
+      lifecycle_state = 'resolved',
+      resolution_code = case when work.cancellation_requested_at is not null
+        or work.cancelled_at is not null then 'canceled' else 'completed' end,
+      resolved_at = coalesce(run.linear_writeback_at, now()),
+      updated_at = coalesce(run.linear_writeback_at, now())
+    where incident.implementation_dispatch_id = p_dispatch_id
+      and incident.lifecycle_state in ('active', 'ambiguous');
   end if;
   return true;
 end;
