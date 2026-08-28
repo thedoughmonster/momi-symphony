@@ -146,6 +146,8 @@ declare oldest_age integer := 0;
 declare manual_intervention_count integer := 0;
 declare quarantine_inserted boolean;
 declare expired_slot record;
+declare locked_dispatch record;
+declare locked_slot record;
 begin
   if p_active_work_ids is null or cardinality(p_active_work_ids) > 128 then
     raise exception 'scheduler_heartbeat_invalid' using errcode = '22023';
@@ -186,12 +188,32 @@ begin
       and not (slot.dispatch_id = any (p_active_work_ids))
       and work.work_status not in ('completed', 'cancelled', 'rejected', 'dead_letter')
     order by slot.created_at, slot.slot_id
-    for update of slot
   loop
+    -- Every path that can cross dispatches and scheduler_slots locks dispatch first.
+    -- Host acceptance already owns the dispatch row before its reconciliation trigger
+    -- updates the slot, so taking the rows in the opposite order here can deadlock.
+    select work.dispatch_id, work.work_status, work.host_accepted_at
+    into locked_dispatch
+    from momi_agent_ops.dispatches work
+    where work.dispatch_id = expired_slot.dispatch_id
+    for update;
+    if not found or locked_dispatch.work_status in (
+      'completed', 'cancelled', 'rejected', 'dead_letter'
+    ) then continue; end if;
+
+    select slot.slot_id into locked_slot
+    from momi_agent_ops.scheduler_slots slot
+    where slot.slot_id = expired_slot.slot_id
+      and slot.state in ('reserved', 'running')
+      and slot.lease_expires_at <= now()
+      and not (slot.dispatch_id = any (p_active_work_ids))
+    for update;
+    if not found then continue; end if;
+
     quarantine_inserted := false;
     update momi_agent_ops.scheduler_slots slot set
       state = 'quarantined', updated_at = now()
-    where slot.slot_id = expired_slot.slot_id;
+    where slot.slot_id = locked_slot.slot_id;
     update momi_agent_ops.dispatches work set
       capability_token_hash = encode(extensions.digest(
         convert_to(gen_random_uuid()::text, 'UTF8'), 'sha256'), 'hex'),

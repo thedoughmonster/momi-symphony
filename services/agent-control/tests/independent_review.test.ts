@@ -73,12 +73,31 @@ test("independent review covers material boundaries and fails closed on incomple
     { path: "src/copy.ts", patch: "not a complete patch", evidenceComplete: false },
   ]).triggers, ["incomplete_diff_evidence"])
   assert.deepEqual(independentReviewRequirement([
-    { path: "src/check.ts", patch: "@@ -1 +0,0 @@\n-if (!authorize(user)) throw denied" },
+    { path: "src/copy.ts", patch: "not a unified patch" },
+    { path: "src/other.ts" },
+  ]).triggers, ["incomplete_diff_evidence"])
+  assert.deepEqual(independentReviewRequirement([
+    { path: "src/check.ts", patch: "@@ -1 +0,0 @@\n-if (!user.isAdmin) throw" },
+  ]).triggers, ["security_privacy"])
+  assert.deepEqual(independentReviewRequirement([
+    { path: "src/session/cache.ts", patch: "@@ -1 +0,0 @@\n-return cachedValue" },
   ]).triggers, ["security_privacy"])
   assert.deepEqual(independentReviewRequirement([
     { path: ".github/workflows/ci.yml",
       patch: "@@ -1 +1 @@\n-  run: pnpm check\n+  run: echo ok" },
   ]).triggers, ["workflow_ci_integrity"])
+  assert.deepEqual(independentReviewRequirement([
+    { path: ".github/workflows/ci.yml",
+      patch: "@@ -1 +1 @@\n-  uses: actions/checkout@v4\n+  uses: attacker/checkout@v4" },
+  ]).triggers, ["workflow_ci_integrity"])
+  assert.deepEqual(independentReviewRequirement([
+    { path: ".github/workflows/ci.yml",
+      patch: "@@ -1,2 +1 @@\n-permissions:\n-  contents: read\n+permissions: write-all" },
+  ]).triggers, ["workflow_ci_integrity"])
+  assert.equal(independentReviewRequirement([
+    { path: ".github/workflows/ci.yml",
+      patch: "@@ -1 +1 @@\n-# Explain why CI is pinned.\n+# Explain the pinned CI action." },
+  ]).required, false)
   assert.equal(independentReviewRequirement([
     { path: "docs/scheduler.md", patch: "+Explain quarantine and token budgets." },
   ]).required, false)

@@ -106,6 +106,18 @@ async function releaseOne(sql: Sql): Promise<boolean> {
   return true
 }
 
+async function waitForDatabaseLock(sql: Sql, pid: number): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const [activity] = await sql<{ wait_event_type: string | null }[]>`
+      select wait_event_type from pg_catalog.pg_stat_activity where pid = ${pid}
+    `
+    if (activity?.wait_event_type === "Lock") return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`backend ${pid} did not reach the expected lock wait`)
+}
+
 export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   await sql`
     update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
@@ -262,6 +274,120 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
   assert.equal(resolved, true)
+}
+
+export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string): Promise<void> {
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
+    where source_kind = 'ready_leaf_scheduler' and work_status <> 'completed'
+  `
+  await sql`
+    update momi_agent_ops.scheduler_route_policies
+    set max_concurrent = 1, implementation_limit = 1,
+      coordinator_limit = 1, shared_limit = 1
+    where route_key = ${routeKey}
+  `
+  const candidate = await reconcile(sql, 33)
+  const claimed = await claim(sql, ownerThree, 3, candidate)
+  assert.equal(claimed.claimed, true)
+  const [identity] = await sql<{ capability_token: string }[]>`
+    select wake_capability_token::text as capability_token
+    from momi_agent_ops.dispatches where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  await sql`
+    update momi_agent_ops.scheduler_slots set lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+
+  const blocker = postgres(url, { max: 1, prepare: false })
+  const heartbeatClient = postgres(url, { max: 1, prepare: false })
+  const acceptanceClient = postgres(url, { max: 1, prepare: false })
+  let releaseConflict = (): void => undefined
+  let conflictReady = (): void => undefined
+  const release = new Promise<void>((resolve) => { releaseConflict = resolve })
+  const ready = new Promise<void>((resolve) => { conflictReady = resolve })
+  const blockerWork = blocker.begin(async (transaction) => {
+    await transaction`
+      insert into momi_agent_ops.scheduler_issue_quarantines (
+        route_key, linear_issue_id, candidate_id, dispatch_id,
+        quarantined_at, intervention_deadline_at
+      )
+      select slot.route_key, queued.linear_issue_id, slot.candidate_id, slot.dispatch_id,
+        now(), now() + interval '30 seconds'
+      from momi_agent_ops.scheduler_slots slot
+      join momi_agent_ops.scheduler_candidates queued using (candidate_id)
+      where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+    `
+    conflictReady()
+    await release
+    throw new Error("rollback_test_quarantine")
+  }).catch((error: unknown) => {
+    assert.match(String(error), /rollback_test_quarantine/)
+  })
+
+  try {
+    await ready
+    const [{ pid: heartbeatPid }] = await heartbeatClient<{ pid: number }[]>`
+      select pg_backend_pid()::integer as pid
+    `
+    const [{ pid: acceptancePid }] = await acceptanceClient<{ pid: number }[]>`
+      select pg_backend_pid()::integer as pid
+    `
+    const heartbeatWork = heartbeatClient<{ quarantined: number }[]>`
+      select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+    `.then((rows) => rows)
+    await waitForDatabaseLock(sql, heartbeatPid)
+    const acceptanceWork = acceptanceClient<{ accepted: boolean }[]>`
+      select momi_agent_ops.record_host_acceptance_v1(
+        ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
+        'racing-thread', 'racing-turn'
+      ) as accepted
+    `.then((rows) => rows)
+    await waitForDatabaseLock(sql, acceptancePid)
+    releaseConflict()
+    const [[heartbeat], [acceptance]] = await Promise.all([heartbeatWork, acceptanceWork])
+    await blockerWork
+    assert.equal(heartbeat.quarantined, 1)
+    assert.equal(acceptance.accepted, false)
+  } finally {
+    releaseConflict()
+    await blockerWork
+    await Promise.all([
+      blocker.end({ timeout: 2 }), heartbeatClient.end({ timeout: 2 }),
+      acceptanceClient.end({ timeout: 2 }),
+    ])
+  }
+
+  const [quarantined] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(quarantined, { state: "quarantined", active_slots: 1 })
+  await sql`
+    update momi_agent_ops.scheduler_issue_quarantines
+    set intervention_deadline_at = now() - interval '1 second',
+      quarantined_at = now() - interval '31 seconds'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  const [released] = await sql<{ capacity_released: number }[]>`
+    select capacity_released
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.equal(released.capacity_released, 1)
+  const [capacity] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(capacity, { state: "released", active_slots: 0 })
+  assert.equal((await claim(sql, ownerThree, 3, candidate)).claimed, false)
+  const replacement = await reconcile(sql, 34)
+  assert.equal((await claim(sql, ownerThree, 3, replacement)).claimed, true)
 }
 
 export async function assertGenerationRefreshAndStaleLeader(sql: Sql): Promise<void> {

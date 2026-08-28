@@ -4,14 +4,24 @@ Independent review is required only when the exact pull-request diff crosses a n
 boundary: security/privacy, destructive migration, public contract, production exposure/cost,
 concurrency/state integrity, or an explicit owner request (`independent-review` /
 `independent review required` label or `Independent review: required` in the issue). The predicate
-also treats a weakened GitHub Actions/CI gate as material. It is deterministic and returns the
-matching trigger names. Missing, truncated, or otherwise invalid patch evidence fails closed to
+also treats deletion-only changes in security/auth/session/permission-sensitive code as material.
+Protected workflow and CI files fail closed to independent review for every semantic change,
+including action identity, permissions, triggers, commands, and gates. The only safe allowlist is
+an exact diff containing comments or blank lines exclusively. The predicate is deterministic and
+returns the matching trigger names. Missing, truncated, or otherwise invalid patch evidence fails closed to
 independent review because the named boundaries cannot be excluded. All other changes follow
 normal exact-head validation, CI, and GitHub review; the owned policy check records that independent
 review was not required.
 
 Risk-triggered review is a phase of the existing implementation lifecycle; it is not a second
 scheduler, a Linear issue, or a review-debt queue.
+
+Scheduler expiry and host acceptance use one database lock order: dispatch row first, scheduler
+slot second. Heartbeat rechecks expiry after acquiring both locks before creating the absorbing
+issue quarantine. This prevents the host-acceptance trigger from forming a dispatch-to-slot /
+slot-to-dispatch deadlock; whichever path wins the dispatch lock determines whether active work is
+accepted or fenced, and a quarantined stale capability cannot regain execution. Quarantine remains
+unresolved while the bounded intervention deadline releases only the route-capacity slot.
 
 After validation succeeds, agent-control reads the live pull request and creates one `pending`
 attempt for the exact repository, PR, head, base, policy, and risk-derived profile. The only

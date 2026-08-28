@@ -1,4 +1,4 @@
-export const REVIEW_POLICY_VERSION = "risk-proportional-review-v2" as const
+export const REVIEW_POLICY_VERSION = "risk-proportional-review-v3" as const
 export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
 export const REVIEW_FINDING_ID_PATTERN =
   "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$" as const
@@ -83,6 +83,8 @@ export type MergeGateDecision = { eligible: true } | { eligible: false; reason: 
 
 const ownerReviewLabels = new Set(["independent-review", "independent review required"])
 const lowRisk = [/\.md$/i, /(?:^|\/)docs?\//i]
+const securitySensitivePath = /(?:^|\/)(?:auth(?:entication|orization|n|z)?|security|privacy|sessions?|permissions?|access[-_]?control|rbac|iam|identity|credentials?|secrets?|guards?)(?:[./_-]|\/|$)/i
+const protectedCiPath = /^(?:\.github\/(?:workflows\/.+\.ya?ml|actions\/.+\/action\.ya?ml)|\.circleci\/config\.ya?ml|\.gitlab-ci\.ya?ml|azure-pipelines\.ya?ml|Jenkinsfile|\.buildkite\/.+\.ya?ml)$/i
 
 export function independentReviewRequirement(
   files: Array<{ path: string; patch?: string | null; evidenceComplete?: boolean;
@@ -100,7 +102,7 @@ export function independentReviewRequirement(
   for (const entry of files) {
     const file = typeof entry === "string"
       ? { path: entry, patch: "", evidenceComplete: false, status: "" } : entry
-    if (!validRepositoryPath(file.path) || file.patch === null ||
+    if (!validRepositoryPath(file.path) || !hasPatchEvidence(file.patch) ||
       file.evidenceComplete === false) triggers.add("incomplete_diff_evidence")
     if (!validRepositoryPath(file.path)) continue
     const additions = addedPatchLines(file.patch)
@@ -108,8 +110,10 @@ export function independentReviewRequirement(
     const changed = `${additions}\n${deletions}`
     const evidence = `${file.path}\n${changed}`
     const inspectContent = !lowRisk.some((pattern) => pattern.test(file.path))
-    if (/(?:^|\/)(?:auth|security|privacy|credential|secret|permission)(?:[./_-]|$)/i.test(
-      file.path) || (inspectContent &&
+    const deletionOnly = deletions.trim().length > 0 && additions.trim().length === 0
+    const removedSensitiveGuard = deletionOnly &&
+      /(?:\b(?:admin|role|permission|access|session|user|account|tenant|scope|claim|principal|identity|authenticated)\b|\b(?:is|has|can)[A-Z_][A-Za-z0-9_]*)/i.test(deletions)
+    if (securitySensitivePath.test(file.path) || removedSensitiveGuard || (inspectContent &&
       /\b(?:authentication|authoriz(?:e|ed|ation)|privacy|pii|secret|credential|token)\b/i.test(
         changed))) triggers.add("security_privacy")
     if (/\bsupabase\/migrations\//i.test(file.path) &&
@@ -123,10 +127,7 @@ export function independentReviewRequirement(
     if (inspectContent &&
       /(?:\bproduction(?:[A-Z_-]|\b)|\bprod(?:uction)?[-_ ]deploy\b|\b(?:billing|cost|spend|quota|rate limit|autoscal|exposure)\b)/i.test(
         evidence)) triggers.add("production_exposure_cost")
-    if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(file.path) &&
-      (/(?:^|\n)\s*(?:run:\s*)?(?:pnpm|npm|yarn)\s+(?:check|test|lint|typecheck)\b/i.test(
-        deletions) ||
-      /(?:continue-on-error\s*:\s*true|\|\|\s*true|run:\s*echo\s+ok\b)/i.test(additions))) {
+    if (protectedCiPath.test(file.path) && !provablySafeCiCommentChange(file.patch)) {
       triggers.add("workflow_ci_integrity")
     }
     if (inspectContent &&
@@ -334,6 +335,23 @@ function deletedPatchLines(patch: string | null | undefined): string {
   if (typeof patch !== "string") return ""
   return patch.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"))
     .map((line) => line.slice(1)).join("\n")
+}
+
+function hasPatchEvidence(patch: string | null | undefined): patch is string {
+  return typeof patch === "string" && patch.split("\n").some((line) =>
+    (line.startsWith("+") && !line.startsWith("+++")) ||
+    (line.startsWith("-") && !line.startsWith("---")))
+}
+
+function provablySafeCiCommentChange(patch: string | null | undefined): boolean {
+  if (typeof patch !== "string") return false
+  const changedLines = patch.split("\n").filter((line) =>
+    (line.startsWith("+") && !line.startsWith("+++")) ||
+    (line.startsWith("-") && !line.startsWith("---")))
+  return changedLines.length > 0 && changedLines.every((line) => {
+    const content = line.slice(1).trim()
+    return content.length === 0 || content.startsWith("#")
+  })
 }
 
 function denied(reason: string): MergeGateDecision { return { eligible: false, reason } }

@@ -304,6 +304,8 @@ test("quarantine fencing is durable while route capacity release is bounded", as
   assert.match(migration, /wake_capability_token = null/)
   assert.match(migration, /on conflict do nothing returning true into quarantine_inserted/)
   assert.match(migration, /if quarantine_inserted then/)
+  assert.match(migration, /from momi_agent_ops\.dispatches work[\s\S]*for update;[\s\S]*from momi_agent_ops\.scheduler_slots slot[\s\S]*for update;/)
+  assert.doesNotMatch(migration, /for update of slot/)
   assert.match(migration, /from public, anon, authenticated, service_role/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
