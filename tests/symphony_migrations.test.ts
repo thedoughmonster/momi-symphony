@@ -55,7 +55,7 @@ test("the private ledger accepts an exact ordered prefix", async () => {
   const plan = analyzeRemoteState(migrations, state(migrations, rows))
 
   assert.equal(plan.adoptions.length, 0)
-  assert.equal(plan.pending.length, 8)
+  assert.equal(plan.pending.length, 9)
 })
 
 test("the private ledger rejects drift, unknown rows, and partial adoption", async () => {
