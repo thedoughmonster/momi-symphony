@@ -186,7 +186,8 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
 
   await sql`
     update momi_agent_ops.scheduler_issue_quarantines
-    set intervention_deadline_at = now() - interval '1 second'
+    set quarantined_at = now() - interval '31 seconds',
+      intervention_deadline_at = now() - interval '1 second'
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
   const [released] = await sql<{ capacity_released: number;
