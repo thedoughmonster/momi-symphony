@@ -49,7 +49,7 @@ the lifecycle.
 | Dispatch created | `pending` | `pending` | No terminal projection is eligible. |
 | Host accepted | `running` | `pending` | Execution proceeds under the existing bounded lease. |
 | Terminal callback recorded | `succeeded`, `failed`, or `interrupted` | `pending` | Execution is final before any Linear request. |
-| Projection lease claimed | unchanged | `in_progress` | One 30-second database lease fences concurrent workers. |
+| Projection lease claimed | unchanged | `in_progress` | A ten-minute database lease and monotonic attempt generation fence concurrent and reclaimed workers while covering the bounded Linear request sequence. |
 | Linear comment/state/Agent State succeeds | unchanged | `succeeded` | Receipt records the comment and completion time. |
 | Linear projection fails | unchanged | `retryable`, then `failed` after eight attempts | Scheduler backoff retries without a host call or model turn; explicit replay can requeue `retryable` or `failed`. |
 | A newer issue generation supersedes the run | unchanged | `superseded` | The stale run cannot overwrite the current generation. |
@@ -59,6 +59,9 @@ dispatch IDs. It only requeues and reconciles terminal projection; it cannot
 claim scheduler work or rerun code. Scheduler pump receipts expose aggregate
 projection retries and failures, while private `run_records` retain attempts,
 next-attempt time, lease, bounded error code, and completion evidence.
+Projection results must present the attempt generation returned by claim while
+that lease is unexpired. An expired worker cannot record over a reclaimer even
+if its Linear requests finish later.
 
 ## Development verification and rollback
 
@@ -69,7 +72,9 @@ same label is restored without a new dispatch. Verify an older dispatch cannot
 record or project over the current generation.
 
 Rollback deploys the previous dispatch runtime and disables new scheduler claims
-before any investigation. The additive migration backfills completed executions
+before any investigation. A database trigger keeps terminal callbacks from the
+previous `record_terminal_v5` runtime compatible by deriving the v2 execution and
+projection statuses in the same terminal transaction. The additive migration backfills completed executions
 from terminal receipts and successful projections from existing writeback receipts;
 it does not rewrite or delete an existing run. Do not delete the lifecycle columns,
 delivery receipts, or projection audit fields. They are durable evidence. Existing runs remain on

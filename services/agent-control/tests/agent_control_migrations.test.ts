@@ -270,13 +270,18 @@ test("readiness and terminal projection state are minimal, durable, and replayab
   for (const field of ["execution_status", "linear_projection_status",
     "linear_projection_attempt_count", "linear_projection_next_attempt_at",
     "linear_projection_last_error_code"]) assert.match(migration, new RegExp(field))
-  for (const routine of ["record_terminal_v6", "claim_terminal_projection_v1",
+  for (const routine of ["record_terminal_v6", "sync_terminal_execution_projection_v1",
+    "claim_terminal_projection_v1",
     "record_terminal_projection_result_v1", "requeue_terminal_projection_v1"]) {
     assert.match(migration, new RegExp(`momi_agent_ops\\.${routine}`))
   }
   assert.match(migration, /for update/)
   assert.match(migration, /lifecycle_version = 'agent-state-v2'/)
   assert.match(migration, /linear_projection_attempt_count >= 8/)
+  assert.match(migration, /linear_projection_attempt_count <> p_projection_attempt/)
+  assert.match(migration, /linear_projection_lease_expires_at <= now\(\)/)
+  assert.match(migration, /interval '10 minutes'/)
+  assert.match(migration, /before update of terminal_at, terminal_disposition/)
   assert.match(migration, /linear_writeback_at is not null then 'succeeded'/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)

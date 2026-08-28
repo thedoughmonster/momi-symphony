@@ -77,7 +77,8 @@ bounded technical backoff and never become decision alerts.
 The pump response contains counts only: routes, observed candidates, claims,
 technical retries, terminal projection retries, and projection failures. Due
 terminal projections are leased and retried before ordinary Agent State repair;
-neither path invokes the host or creates a new dispatch. Do not add issue bodies, labels, provider responses,
+the ten-minute lease is fenced by an attempt generation so an expired worker
+cannot overwrite its reclaimer. Neither path invokes the host or creates a new dispatch. Do not add issue bodies, labels, provider responses,
 credentials, or work tokens to logs. Durable diagnosis comes from the private
 route policy's mode/retry fields and aggregate candidate/slot generation states.
 An enabled route with a future `next_provider_attempt_at` is in technical

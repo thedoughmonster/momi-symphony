@@ -70,6 +70,35 @@ create index run_records_linear_projection_due_idx
     linear_projection_next_attempt_at, linear_projection_attempt_count, dispatch_id
   ) where linear_projection_status in ('pending', 'retryable', 'in_progress');
 
+create function momi_agent_ops.sync_terminal_execution_projection_v1()
+returns trigger language plpgsql security invoker set search_path = '' as $$
+begin
+  if new.terminal_at is not null and (
+    old.terminal_at is distinct from new.terminal_at
+    or old.terminal_disposition is distinct from new.terminal_disposition
+  ) then
+    new.execution_status := case new.terminal_disposition
+      when 'completed' then 'succeeded'
+      when 'failed' then 'failed'
+      else 'interrupted' end;
+    new.linear_projection_status := case
+      when new.linear_projection_status = 'succeeded' then 'succeeded'
+      when new.linear_projection_status = 'in_progress'
+        and new.linear_projection_lease_expires_at > now() then 'in_progress'
+      else 'pending' end;
+    if new.linear_projection_status <> 'succeeded' then
+      new.linear_projection_next_attempt_at := now();
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger sync_terminal_execution_projection_v1
+before update of terminal_at, terminal_disposition
+on momi_agent_ops.run_records for each row
+execute function momi_agent_ops.sync_terminal_execution_projection_v1();
+
 create function momi_agent_ops.record_terminal_v6(
   p_dispatch_id uuid, p_capability_token uuid, p_thread_id text, p_turn_id text,
   p_readiness_result text, p_terminal_disposition text,
@@ -112,7 +141,7 @@ create function momi_agent_ops.claim_terminal_projection_v1(
   dispatch_id uuid, issue_id uuid, issue_identifier text, action text,
   thread_id text, turn_id text, linear_comment_id uuid,
   readiness_result text, terminal_disposition text,
-  terminal_summary text, archived_at timestamptz
+  terminal_summary text, archived_at timestamptz, projection_attempt integer
 ) language plpgsql security invoker set search_path = '' as $$
 declare selected_work momi_agent_ops.dispatches%rowtype;
 declare selected_run momi_agent_ops.run_records%rowtype;
@@ -150,7 +179,7 @@ begin
     linear_projection_status = 'in_progress',
     linear_projection_attempt_count = run.linear_projection_attempt_count + 1,
     linear_projection_last_attempt_at = now(),
-    linear_projection_lease_expires_at = now() + interval '30 seconds',
+    linear_projection_lease_expires_at = now() + interval '10 minutes',
     linear_projection_last_error_code = null,
     updated_at = now()
   where run.dispatch_id = p_dispatch_id;
@@ -160,17 +189,18 @@ begin
     selected_work.codex_thread_id, selected_work.codex_turn_id,
     selected_run.linear_comment_id, selected_run.readiness_result,
     selected_run.terminal_disposition, coalesce(selected_run.terminal_summary, ''),
-    selected_run.archived_at;
+    selected_run.archived_at, selected_run.linear_projection_attempt_count + 1;
 end;
 $$;
 
 create function momi_agent_ops.record_terminal_projection_result_v1(
-  p_dispatch_id uuid, p_succeeded boolean, p_comment_id uuid, p_error_code text
+  p_dispatch_id uuid, p_projection_attempt integer,
+  p_succeeded boolean, p_comment_id uuid, p_error_code text
 ) returns text language plpgsql security invoker set search_path = '' as $$
 declare selected momi_agent_ops.run_records%rowtype;
 declare next_status text;
 begin
-  if p_succeeded is null
+  if p_projection_attempt is null or p_projection_attempt < 1 or p_succeeded is null
     or (p_succeeded and (p_comment_id is null or p_error_code is not null))
     or (not p_succeeded and (p_comment_id is not null or p_error_code is null
       or length(p_error_code) not between 1 and 120)) then
@@ -178,7 +208,9 @@ begin
   end if;
   select run.* into selected from momi_agent_ops.run_records run
   where run.dispatch_id = p_dispatch_id for update;
-  if not found or selected.linear_projection_status <> 'in_progress' then return null; end if;
+  if not found or selected.linear_projection_status <> 'in_progress'
+    or selected.linear_projection_attempt_count <> p_projection_attempt
+    or selected.linear_projection_lease_expires_at <= now() then return null; end if;
   next_status := case when p_succeeded then 'succeeded'
     when selected.linear_projection_attempt_count >= 8 then 'failed'
     else 'retryable' end;
@@ -220,12 +252,13 @@ $$;
 grant all on function momi_agent_ops.record_terminal_v6(
   uuid, uuid, text, text, text, text, text, timestamptz, jsonb
 ), momi_agent_ops.claim_terminal_projection_v1(uuid),
-  momi_agent_ops.record_terminal_projection_result_v1(uuid, boolean, uuid, text),
+  momi_agent_ops.record_terminal_projection_result_v1(uuid, integer, boolean, uuid, text),
   momi_agent_ops.requeue_terminal_projection_v1(uuid) to service_role;
 
-revoke all on function momi_agent_ops.record_terminal_v6(
+revoke all on function momi_agent_ops.sync_terminal_execution_projection_v1(),
+  momi_agent_ops.record_terminal_v6(
   uuid, uuid, text, text, text, text, text, timestamptz, jsonb
 ), momi_agent_ops.claim_terminal_projection_v1(uuid),
-  momi_agent_ops.record_terminal_projection_result_v1(uuid, boolean, uuid, text),
+  momi_agent_ops.record_terminal_projection_result_v1(uuid, integer, boolean, uuid, text),
   momi_agent_ops.requeue_terminal_projection_v1(uuid)
   from public, anon, authenticated;

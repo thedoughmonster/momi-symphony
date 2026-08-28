@@ -44,7 +44,10 @@ generation, refreshes an issue immediately before an atomic claim, and creates
 the existing dispatch shape only after both route and action-class capacity are
 reserved. `observe` mode cannot claim. Terminal execution is committed before
 Linear reconciliation; a failed projection is leased, visible, and retried by
-the scheduler or explicit replay without another host task or model turn.
+the scheduler or explicit replay without another host task or model turn. Each
+projection result is fenced by the attempt generation returned with its
+ten-minute lease. A database terminal trigger also keeps the prior v5 callback
+runtime safe during rollback.
 
 ## Tests
 

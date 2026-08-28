@@ -12,6 +12,7 @@ const context: TerminalProjectionContext = {
   thread_id: "thread-1", turn_id: "turn-1",
   readiness_result: "ready", terminal_disposition: "completed",
   summary: "Implementation completed.", archived_at: "2026-08-28T19:00:00Z",
+  projection_attempt: 7,
 }
 
 test("failure injection records a retry without re-executing completed code", async () => {
@@ -21,7 +22,8 @@ test("failure injection records a retry without re-executing completed code", as
     claim: () => Promise.resolve(context),
     reconcile: () => { reconciles += 1; return Promise.reject(new Error("linear_outage")) },
     projectState: () => Promise.resolve(),
-    recordResult: (_id, succeeded, commentId, code) => {
+    recordResult: (_id, projectionAttempt, succeeded, commentId, code) => {
+      assert.equal(projectionAttempt, 7)
       results.push([succeeded, commentId, code]); return Promise.resolve("retryable")
     },
   })

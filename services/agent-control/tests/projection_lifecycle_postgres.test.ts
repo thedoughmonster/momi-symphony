@@ -73,7 +73,7 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
   const pendingClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 501))
   const projectedClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 502))
   const runningClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 503))
-  for (const id of [pendingClaim.dispatch_id, projectedClaim.dispatch_id, runningClaim.dispatch_id]) {
+  for (const id of [pendingClaim.dispatch_id, projectedClaim.dispatch_id]) {
     assert.ok(id)
     await sql`
       update momi_agent_ops.dispatches set codex_thread_id = 'thread', codex_turn_id = 'turn',
@@ -94,6 +94,20 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
     update momi_agent_ops.run_records set linear_writeback_at = now()
     where dispatch_id = ${projectedClaim.dispatch_id}::uuid
   `
+  const [rollbackIdentity] = await sql<{ capability_token: string }[]>`
+    select wake_capability_token::text as capability_token
+    from momi_agent_ops.dispatches
+    where dispatch_id = ${runningClaim.dispatch_id}::uuid
+  `
+  await sql`select * from momi_agent_ops.claim_dispatch_v5(
+    ${runningClaim.dispatch_id}::uuid, ${rollbackIdentity.capability_token}::uuid)`
+  const [accepted] = await sql<{ recorded: boolean }[]>`
+    select momi_agent_ops.record_host_acceptance_v1(
+      ${runningClaim.dispatch_id}::uuid, ${rollbackIdentity.capability_token}::uuid,
+      'rollback-thread', 'rollback-turn'
+    ) as recorded
+  `
+  assert.equal(accepted.recorded, true)
 
   await sql.unsafe(projection.sql)
   const backfill = await sql<{ dispatch_id: string; execution_status: string;
@@ -115,28 +129,69 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
     dispatch_id: runningClaim.dispatch_id, execution_status: "running",
     linear_projection_status: "pending" })
 
-  const contention = await Promise.all(Array.from({ length: 8 }, () => sql`
-    select dispatch_id::text
+  const contention = await Promise.all(Array.from({ length: 8 }, () => sql<{
+    dispatch_id: string; projection_attempt: number }[]>`
+    select dispatch_id::text, projection_attempt::integer
     from momi_agent_ops.claim_terminal_projection_v1(${pendingClaim.dispatch_id}::uuid)
   `))
   assert.equal(contention.filter((rows) => rows.length === 1).length, 1)
+  const firstAttempt = contention.find((rows) => rows.length === 1)![0].projection_attempt
+  assert.equal(firstAttempt, 1)
+  const [lease] = await sql<{ realistic_duration: boolean }[]>`
+    select linear_projection_lease_expires_at >=
+      linear_projection_last_attempt_at + interval '9 minutes' as realistic_duration
+    from momi_agent_ops.run_records
+    where dispatch_id = ${pendingClaim.dispatch_id}::uuid
+  `
+  assert.equal(lease.realistic_duration, true)
+  await sql`
+    update momi_agent_ops.run_records set
+      linear_projection_lease_expires_at = now() - interval '1 second',
+      linear_projection_next_attempt_at = now()
+    where dispatch_id = ${pendingClaim.dispatch_id}::uuid
+  `
+  const [reclaimed] = await sql<{ projection_attempt: number }[]>`
+    select projection_attempt::integer
+    from momi_agent_ops.claim_terminal_projection_v1(${pendingClaim.dispatch_id}::uuid)
+  `
+  assert.equal(reclaimed.projection_attempt, 2)
+  const staleCommentId = "30000000-0000-4000-8000-000000000099"
+  const [stale] = await sql<{ status: string | null }[]>`
+    select momi_agent_ops.record_terminal_projection_result_v1(
+      ${pendingClaim.dispatch_id}::uuid, ${firstAttempt}, true,
+      ${staleCommentId}::uuid, null
+    ) as status
+  `
+  assert.equal(stale.status, null)
+  const [afterStale] = await sql<{ status: string; attempt: number;
+    linear_writeback_at: string | null }[]>`
+    select linear_projection_status as status,
+      linear_projection_attempt_count::integer as attempt,
+      linear_writeback_at::text
+    from momi_agent_ops.run_records
+    where dispatch_id = ${pendingClaim.dispatch_id}::uuid
+  `
+  assert.deepEqual(afterStale, {
+    status: "in_progress", attempt: 2, linear_writeback_at: null })
   const [failed] = await sql<{ status: string }[]>`
     select momi_agent_ops.record_terminal_projection_result_v1(
-      ${pendingClaim.dispatch_id}::uuid, false, null, 'linear_outage'
+      ${pendingClaim.dispatch_id}::uuid, ${reclaimed.projection_attempt},
+      false, null, 'linear_outage'
     ) as status
   `
   assert.equal(failed.status, "retryable")
   await sql`select momi_agent_ops.requeue_terminal_projection_v1(
     ${pendingClaim.dispatch_id}::uuid)`
-  const retry = await sql`
-    select dispatch_id::text
+  const retry = await sql<{ dispatch_id: string; projection_attempt: number }[]>`
+    select dispatch_id::text, projection_attempt::integer
     from momi_agent_ops.claim_terminal_projection_v1(${pendingClaim.dispatch_id}::uuid)
   `
   assert.equal(retry.length, 1)
   const commentId = "30000000-0000-4000-8000-000000000001"
   const [succeeded] = await sql<{ status: string }[]>`
     select momi_agent_ops.record_terminal_projection_result_v1(
-      ${pendingClaim.dispatch_id}::uuid, true, ${commentId}::uuid, null
+      ${pendingClaim.dispatch_id}::uuid, ${retry[0].projection_attempt},
+      true, ${commentId}::uuid, null
     ) as status
   `
   assert.equal(succeeded.status, "succeeded")
@@ -144,4 +199,38 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
     select dispatch_id from momi_agent_ops.claim_terminal_projection_v1(
       ${pendingClaim.dispatch_id}::uuid)
   `).length, 0)
+
+  const telemetry = JSON.stringify({
+    policy_version: "execution-efficiency.v1",
+    stable_prefix_fingerprint: "rollback-stable",
+    context_fingerprint: "rollback-context",
+    input_tokens: 10,
+    cached_input_tokens: 0,
+    output_tokens: 5,
+    model_visible_tool_bytes: 100,
+    model_turns: 1,
+    no_progress_cycles: 0,
+    subagents: 0,
+    max_subagent_depth: 0,
+    retries: 0,
+    repeated_failure_fingerprints: 0,
+    elapsed_ms: 120000,
+    disposition: "completed",
+  })
+  const rollbackTerminal = await sql`
+    select * from momi_agent_ops.record_terminal_v5(
+      ${runningClaim.dispatch_id}::uuid, ${rollbackIdentity.capability_token}::uuid,
+      'rollback-thread', 'rollback-turn', 'ready', 'completed',
+      'Previous runtime completed after the v2 migration.', now(), ${telemetry}::jsonb
+    )
+  `
+  assert.equal(rollbackTerminal.length, 1)
+  const [rollbackStatus] = await sql<{ execution_status: string;
+    linear_projection_status: string }[]>`
+    select execution_status, linear_projection_status
+    from momi_agent_ops.run_records
+    where dispatch_id = ${runningClaim.dispatch_id}::uuid
+  `
+  assert.deepEqual(rollbackStatus, {
+    execution_status: "succeeded", linear_projection_status: "pending" })
 })

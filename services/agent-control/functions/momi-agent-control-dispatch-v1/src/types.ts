@@ -43,6 +43,7 @@ export type LinearProjectionStatus = "pending" | "in_progress" | "retryable" |
   "failed" | "succeeded" | "superseded"
 
 export type TerminalProjectionContext = TerminalContext & TerminalProjectionInput
+  & { projection_attempt: number }
 
 export type LifecycleEvidenceInput = DispatchInput & {
   event: "lifecycle_evidence"

@@ -14,7 +14,7 @@ export type TerminalProjectionDependencies = {
   claim: (dispatchId: string) => Promise<TerminalProjectionContext | null>
   reconcile: typeof reconcileTerminal
   projectState: (dispatchId: string) => Promise<unknown>
-  recordResult: (dispatchId: string, succeeded: boolean,
+  recordResult: (dispatchId: string, projectionAttempt: number, succeeded: boolean,
     commentId: string | null, errorCode: string | null) => Promise<LinearProjectionStatus>
 }
 
@@ -39,11 +39,12 @@ export async function claimTerminalProjection(
     terminal_disposition: TerminalProjectionContext["terminal_disposition"]
     terminal_summary: string
     archived_at: string
+    projection_attempt: number
   }[]>`
     select dispatch_id::text, issue_id::text, issue_identifier, action,
       thread_id, turn_id,
       linear_comment_id::text, readiness_result, terminal_disposition,
-      terminal_summary, archived_at::text
+      terminal_summary, archived_at::text, projection_attempt::integer
     from momi_agent_ops.claim_terminal_projection_v1(${dispatchId}::uuid)
   `
   const row = rows[0]
@@ -59,11 +60,13 @@ export async function claimTerminalProjection(
     terminal_disposition: row.terminal_disposition,
     summary: row.terminal_summary,
     archived_at: row.archived_at,
+    projection_attempt: row.projection_attempt,
   } : null
 }
 
 export async function recordTerminalProjectionResult(
   dispatchId: string,
+  projectionAttempt: number,
   succeeded: boolean,
   commentId: string | null,
   code: string | null,
@@ -71,7 +74,8 @@ export async function recordTerminalProjectionResult(
 ): Promise<LinearProjectionStatus> {
   const rows = await sql<{ status: LinearProjectionStatus | null }[]>`
     select momi_agent_ops.record_terminal_projection_result_v1(
-      ${dispatchId}::uuid, ${succeeded}, ${commentId}::uuid, ${code}
+      ${dispatchId}::uuid, ${projectionAttempt}::integer, ${succeeded},
+      ${commentId}::uuid, ${code}
     ) as status
   `
   if (!rows[0]?.status) throw new Error("terminal_projection_result_refused")
@@ -129,15 +133,16 @@ export async function processTerminalProjection(
 ): Promise<TerminalProjectionResult> {
   const context = await dependencies.claim(dispatchId)
   if (!context) return { claimed: false, status: "skipped" }
+  let commentId: string
   try {
-    const commentId = await dependencies.reconcile(context, context)
+    commentId = await dependencies.reconcile(context, context)
     await dependencies.projectState(dispatchId)
-    return { claimed: true, status: await dependencies.recordResult(
-      dispatchId, true, commentId, null,
-    ) }
   } catch (error) {
     return { claimed: true, status: await dependencies.recordResult(
-      dispatchId, false, null, errorCode(error),
+      dispatchId, context.projection_attempt, false, null, errorCode(error),
     ) }
   }
+  return { claimed: true, status: await dependencies.recordResult(
+    dispatchId, context.projection_attempt, true, commentId, null,
+  ) }
 }

@@ -134,6 +134,7 @@
       "momi_agent_ops.record_terminal_v4",
       "momi_agent_ops.record_terminal_v5",
       "momi_agent_ops.record_terminal_v6",
+      "momi_agent_ops.sync_terminal_execution_projection_v1",
       "momi_agent_ops.claim_terminal_projection_v1",
       "momi_agent_ops.record_terminal_projection_result_v1",
       "momi_agent_ops.requeue_terminal_projection_v1",
