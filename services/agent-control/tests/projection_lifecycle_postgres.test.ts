@@ -200,7 +200,7 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
       ${pendingClaim.dispatch_id}::uuid)
   `).length, 0)
 
-  const telemetry = JSON.stringify({
+  const telemetry = {
     policy_version: "execution-efficiency.v1",
     stable_prefix_fingerprint: "rollback-stable",
     context_fingerprint: "rollback-context",
@@ -216,12 +216,13 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
     repeated_failure_fingerprints: 0,
     elapsed_ms: 120000,
     disposition: "completed",
-  })
+  }
   const rollbackTerminal = await sql`
     select * from momi_agent_ops.record_terminal_v5(
       ${runningClaim.dispatch_id}::uuid, ${rollbackIdentity.capability_token}::uuid,
       'rollback-thread', 'rollback-turn', 'ready', 'completed',
-      'Previous runtime completed after the v2 migration.', now(), ${telemetry}::jsonb
+      'Previous runtime completed after the v2 migration.', now(),
+      ${sql.json(telemetry)}::jsonb
     )
   `
   assert.equal(rollbackTerminal.length, 1)
