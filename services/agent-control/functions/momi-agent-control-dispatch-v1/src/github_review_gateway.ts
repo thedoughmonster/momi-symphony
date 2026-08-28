@@ -10,7 +10,8 @@ export type GitHubReviewSubject = {
   headSha: string
   baseSha: string
   changedPaths: string[]
-  changedFiles?: Array<{ path: string; patch: string | null }>
+  changedFiles?: Array<{ path: string; patch: string | null; evidenceComplete: boolean;
+    status: string }>
   riskDimensions: ReviewRiskDimension[]
   diffArtifactRef: string
 }
@@ -26,6 +27,7 @@ export type GitHubMergeFacts = {
   bypassPossible: boolean
   authoritativeBlockingThreads: number
   authoritativeChangesRequested: boolean
+  authoritativeApprovals: number
 }
 
 export class GitHubReviewGateway {
@@ -74,7 +76,8 @@ export class GitHubReviewGateway {
     return { repository, pullRequestNumber, state: pr.state as "open" | "closed",
       baseBranch, headSha, baseSha, changedPaths,
       changedFiles: files.map((file) => ({ path: text(file.filename),
-        patch: typeof file.patch === "string" ? file.patch : null })), riskDimensions,
+        patch: typeof file.patch === "string" ? file.patch : null,
+        evidenceComplete: completePatchEvidence(file), status: text(file.status) })), riskDimensions,
       diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${baseSha}...${headSha}` }
   }
 
@@ -107,10 +110,11 @@ export class GitHubReviewGateway {
     const enforceAdmins = object(protection.enforce_admins)
     const pullRequestReviews = object(protection.required_pull_request_reviews)
     const bypassAllowances = object(pullRequestReviews.bypass_pull_request_allowances)
-    const latestReviewByAuthor = new Map<string, string>()
+    const latestReviewByAuthor = new Map<string, { state: string; commitId: string }>()
     for (const review of reviews.sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))) {
       const login = text(object(review.user).login)
-      if (login) latestReviewByAuthor.set(login, String(review.state ?? "").toUpperCase())
+      if (login) latestReviewByAuthor.set(login, {
+        state: String(review.state ?? "").toUpperCase(), commitId: text(review.commit_id) })
     }
     const baseHeadSha = text(object(branch.commit).sha)
     if (!/^[0-9a-f]{40}$/.test(baseHeadSha)) throw new Error("github_base_branch_malformed")
@@ -124,7 +128,9 @@ export class GitHubReviewGateway {
         hasBypassActors(bypassAllowances) || rulesetBypass !== false,
       authoritativeBlockingThreads: threads === null ? -1 : threads,
       authoritativeChangesRequested: [...latestReviewByAuthor.values()]
-        .some((state) => state === "CHANGES_REQUESTED") }
+        .some((review) => review.state === "CHANGES_REQUESTED"),
+      authoritativeApprovals: [...latestReviewByAuthor.values()]
+        .filter((review) => review.state === "APPROVED" && review.commitId === headSha).length }
   }
 
   async compareChangedPaths(repository: string, previousSha: string,

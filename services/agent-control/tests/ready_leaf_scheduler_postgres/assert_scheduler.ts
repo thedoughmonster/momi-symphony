@@ -164,6 +164,11 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   const expiring = await reconcile(sql, 31)
   const expiringClaim = await claim(sql, ownerThree, 3, expiring)
   assert.equal(expiringClaim.claimed, true)
+  const [lateIdentity] = await sql<{ capability_token: string }[]>`
+    select wake_capability_token::text as capability_token
+    from momi_agent_ops.dispatches
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
   await sql`
     update momi_agent_ops.scheduler_slots
     set lease_expires_at = now() - interval '1 second'
@@ -174,6 +179,38 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
   `
   assert.deepEqual(heartbeat, { quarantined: 1, active_quarantines: 1 })
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'claimed'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [lateAcceptance] = await sql<{ accepted: boolean }[]>`
+    select momi_agent_ops.record_host_acceptance_v1(
+      ${expiringClaim.dispatch_id}::uuid, ${lateIdentity.capability_token}::uuid,
+      'stale-thread', 'stale-turn'
+    ) as accepted
+  `
+  assert.equal(lateAcceptance.accepted, false)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'active', host_accepted_at = now()
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [{ quarantined_state }] = await sql<{ quarantined_state: boolean }[]>`
+    select state = 'quarantined' as quarantined_state
+    from momi_agent_ops.scheduler_slots
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(quarantined_state, true)
+  await sql`
+    update momi_agent_ops.scheduler_slots set state = 'reserved',
+      lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [replayedQuarantine] = await sql<{ quarantined: number;
+    active_quarantines: number }[]>`
+    select quarantined, active_quarantines
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.deepEqual(replayedQuarantine, { quarantined: 0, active_quarantines: 1 })
   const waiting = await reconcile(sql, 32)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
   const [extended] = await sql<{ extended: number }[]>`
@@ -199,6 +236,10 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     active_quarantines: 1, manual_interventions: 1 })
   assert.equal((await claim(sql, ownerThree, 3, expiring)).claimed, false)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'active', host_accepted_at = now()
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
 
   const [fence] = await sql<{ slot_state: string; capacity_released_at: Date | null;
     resolved_at: Date | null }[]>`

@@ -72,7 +72,10 @@ slots; expired nonterminal slots without matching host evidence are quarantined.
 creates a durable per-route/per-issue fence and a configurable 30–3600 second intervention
 deadline (default 15 minutes). The fence remains visible and blocks every duplicate claim until
 the exact dispatch is terminal, while the route slot is released once the bounded intervention
-window expires. Provider failures use
+window expires. Quarantine is absorbing for nonterminal scheduler transitions: its outstanding
+wake capability is invalidated, late host acceptance is refused, active-work heartbeats cannot
+extend it, and dispatch-state reconciliation cannot change the slot back to running. Replayed
+quarantine detection is idempotent and does not inflate the creation metric. Provider failures use
 bounded technical backoff and never become decision alerts.
 
 ## Observability

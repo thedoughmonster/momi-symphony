@@ -34,6 +34,7 @@
     "risk_triggers": {"type": "array", "uniqueItems": true, "items": {"enum": [
       "security_privacy", "destructive_migration", "public_contract",
       "production_exposure_cost", "concurrency_state_integrity",
+      "workflow_ci_integrity", "incomplete_diff_evidence",
       "explicit_owner_request"
     ]}},
     "policy_version": {"type": "string"},

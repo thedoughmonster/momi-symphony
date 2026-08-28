@@ -44,7 +44,8 @@ generation, refreshes an issue immediately before an atomic claim, and creates
 the existing dispatch shape only after both route and action-class capacity are
 reserved. `observe` mode cannot claim.
 The heartbeat creates a durable issue quarantine when host evidence disappears; the issue fence
-survives while route capacity is released after the configured intervention window. Count-only
+survives while route capacity is released after the configured intervention window. Quarantine
+invalidates unaccepted wake capability and absorbs late active/acceptance signals. Count-only
 receipts expose quarantine creation, age, capacity release, and manual-intervention pressure.
 Terminal execution is committed before
 Linear reconciliation; a failed projection is leased, visible, and retried by

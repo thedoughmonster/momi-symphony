@@ -16,7 +16,7 @@ export type ReviewRiskDimension = "architecture" | "security_auth" | "public_con
   "release_credential" | "runtime_network" | "general" | "ambiguous"
 export type IndependentReviewTrigger = "security_privacy" | "destructive_migration" |
   "public_contract" | "production_exposure_cost" | "concurrency_state_integrity" |
-  "explicit_owner_request"
+  "workflow_ci_integrity" | "incomplete_diff_evidence" | "explicit_owner_request"
 export type IndependentReviewRequirement = { required: boolean;
   triggers: IndependentReviewTrigger[]; profile: "high" | null }
 
@@ -71,6 +71,8 @@ export type MergeGateEvidence = {
     conclusion: "success" | "pending" | "failure" | "unknown" }
   authoritative_blocking_threads: number
   authoritative_changes_requested: boolean
+  authoritative_approvals: number
+  owned_validation: { state: string; head_sha: string | null }
   branch_protection: { review_check_required: boolean; bypass_possible: boolean }
   independent_review_required: boolean
   current_policy_version: typeof REVIEW_POLICY_VERSION
@@ -83,7 +85,8 @@ const ownerReviewLabels = new Set(["independent-review", "independent review req
 const lowRisk = [/\.md$/i, /(?:^|\/)docs?\//i]
 
 export function independentReviewRequirement(
-  files: Array<{ path: string; patch?: string | null }> | string[],
+  files: Array<{ path: string; patch?: string | null; evidenceComplete?: boolean;
+    status?: string }> | string[],
   ownerRequest: { labels?: readonly string[]; description?: string | null } = {},
 ): IndependentReviewRequirement {
   const triggers = new Set<IndependentReviewTrigger>()
@@ -93,19 +96,26 @@ export function independentReviewRequirement(
     /(?:^|\n)independent review\s*:\s*required(?:\s|$)/i.test(description)) {
     triggers.add("explicit_owner_request")
   }
+  if (files.length === 0) triggers.add("incomplete_diff_evidence")
   for (const entry of files) {
-    const file = typeof entry === "string" ? { path: entry, patch: "" } : entry
+    const file = typeof entry === "string"
+      ? { path: entry, patch: "", evidenceComplete: false, status: "" } : entry
+    if (!validRepositoryPath(file.path) || file.patch === null ||
+      file.evidenceComplete === false) triggers.add("incomplete_diff_evidence")
     if (!validRepositoryPath(file.path)) continue
     const additions = addedPatchLines(file.patch)
-    const evidence = `${file.path}\n${additions}`
+    const deletions = deletedPatchLines(file.patch)
+    const changed = `${additions}\n${deletions}`
+    const evidence = `${file.path}\n${changed}`
     const inspectContent = !lowRisk.some((pattern) => pattern.test(file.path))
     if (/(?:^|\/)(?:auth|security|privacy|credential|secret|permission)(?:[./_-]|$)/i.test(
       file.path) || (inspectContent &&
-      /\b(?:authentication|authorization|privacy|pii|secret|credential|token)\b/i.test(
-        additions))) triggers.add("security_privacy")
+      /\b(?:authentication|authoriz(?:e|ed|ation)|privacy|pii|secret|credential|token)\b/i.test(
+        changed))) triggers.add("security_privacy")
     if (/\bsupabase\/migrations\//i.test(file.path) &&
+      (file.status === "removed" ||
       /\b(?:drop\s+(?:table|column|schema|type|function|index)|truncate|delete\s+from|alter\s+table[\s\S]{0,160}\bdrop\b)\b/i.test(
-        additions)) triggers.add("destructive_migration")
+        additions))) triggers.add("destructive_migration")
     if (/(?:^|\/)contracts?(?:\/|$)|\.schema\.json$/i.test(file.path) ||
       (inspectContent &&
       /\b(?:public\s+(?:api|contract)|breaking\s+change|webhook\s+(?:schema|contract))\b/i.test(
@@ -113,6 +123,12 @@ export function independentReviewRequirement(
     if (inspectContent &&
       /(?:\bproduction(?:[A-Z_-]|\b)|\bprod(?:uction)?[-_ ]deploy\b|\b(?:billing|cost|spend|quota|rate limit|autoscal|exposure)\b)/i.test(
         evidence)) triggers.add("production_exposure_cost")
+    if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(file.path) &&
+      (/(?:^|\n)\s*(?:run:\s*)?(?:pnpm|npm|yarn)\s+(?:check|test|lint|typecheck)\b/i.test(
+        deletions) ||
+      /(?:continue-on-error\s*:\s*true|\|\|\s*true|run:\s*echo\s+ok\b)/i.test(additions))) {
+      triggers.add("workflow_ci_integrity")
+    }
     if (inspectContent &&
       /\b(?:concurr|race|mutex|semaphore|advisory[_ ]lock|for update|atomic|lease|fenc|idempot|quarant|scheduler slot|state integrity|compare-and-set)\b/i.test(
         evidence)) triggers.add("concurrency_state_integrity")
@@ -207,6 +223,8 @@ export function reduceMergeEligibility(evidence: MergeGateEvidence): MergeGateDe
   if (pr.repository !== evidence.repository || pr.base_branch !== evidence.base_branch) {
     return denied("pull_request_mapping_mismatch")
   }
+  if (evidence.owned_validation.state !== "succeeded" ||
+    evidence.owned_validation.head_sha !== pr.head_sha) return denied("focused_validation_required")
   if (evidence.independent_review_required) {
     const review = evidence.review
     if (!review) return denied("review_not_accepted")
@@ -218,6 +236,10 @@ export function reduceMergeEligibility(evidence: MergeGateEvidence): MergeGateDe
       review.findings.some((finding) => finding.severity === "blocking")) {
       return denied("review_subject_stale_or_invalid")
     }
+  }
+  if (!evidence.independent_review_required) {
+    if (evidence.authoritative_approvals < 0) return denied("normal_review_approval_unknown")
+    if (evidence.authoritative_approvals < 1) return denied("normal_review_approval_required")
   }
   if (evidence.required_ci.head_sha !== pr.head_sha ||
     evidence.required_ci.conclusion !== "success") return denied("required_ci_not_green")
@@ -305,6 +327,12 @@ function validRepositoryPath(path: string): boolean {
 function addedPatchLines(patch: string | null | undefined): string {
   if (typeof patch !== "string") return ""
   return patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1)).join("\n")
+}
+
+function deletedPatchLines(patch: string | null | undefined): string {
+  if (typeof patch !== "string") return ""
+  return patch.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"))
     .map((line) => line.slice(1)).join("\n")
 }
 

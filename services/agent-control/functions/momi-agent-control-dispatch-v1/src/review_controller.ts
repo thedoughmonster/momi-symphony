@@ -126,8 +126,10 @@ export async function processMergeRequest(input: MergeRequestInput,
         ${input.work_id}::uuid, ${input.repository}, ${input.pull_request_number}) as locked`
     if (locked[0]?.locked !== true) return deniedMerge("current_dispatch_refused", subject)
     const identity = await transaction<Array<Record<string, unknown>>>`
-      select work.work_status, work.cancellation_requested_at, work.cancelled_at
+      select work.work_status, work.cancellation_requested_at, work.cancelled_at,
+        run.validation_state, run.validation_sha
       from momi_agent_ops.dispatches work
+      join momi_agent_ops.run_records run on run.dispatch_id = work.dispatch_id
       where work.dispatch_id = ${input.work_id}::uuid
         and work.host_callback_token_hash = encode(extensions.digest(
           convert_to(${input.capability_token}::uuid::text, 'UTF8'), 'sha256'), 'hex')
@@ -160,6 +162,9 @@ export async function processMergeRequest(input: MergeRequestInput,
         conclusion: facts.reviewCheck.conclusion },
       authoritative_blocking_threads: facts.authoritativeBlockingThreads,
       authoritative_changes_requested: facts.authoritativeChangesRequested,
+      authoritative_approvals: facts.authoritativeApprovals,
+      owned_validation: { state: String(row.validation_state),
+        head_sha: typeof row.validation_sha === "string" ? row.validation_sha : null },
       branch_protection: { review_check_required: facts.reviewCheckRequired,
         bypass_possible: facts.bypassPossible },
       independent_review_required: requirement.required,

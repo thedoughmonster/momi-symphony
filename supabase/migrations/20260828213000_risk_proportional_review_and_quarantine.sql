@@ -35,6 +35,41 @@ alter table momi_agent_ops.scheduler_issue_quarantines enable row level security
 revoke all on table momi_agent_ops.scheduler_issue_quarantines
   from public, anon, authenticated, service_role;
 
+create or replace function momi_agent_ops.reconcile_scheduler_dispatch_state_v1()
+returns trigger language plpgsql security invoker set search_path = '' as $$
+begin
+  if new.source_kind <> 'ready_leaf_scheduler' or new.scheduler_candidate_id is null then
+    return new;
+  end if;
+  if new.work_status in ('completed', 'cancelled', 'rejected', 'dead_letter') then
+    update momi_agent_ops.scheduler_slots slot set
+      state = 'released', lease_expires_at = null,
+      released_at = coalesce(slot.released_at, now()), updated_at = now()
+    where slot.dispatch_id = new.dispatch_id and slot.state <> 'released';
+    update momi_agent_ops.scheduler_candidates candidate set
+      generation_state = 'terminal', waiting_reason = null,
+      updated_at = now()
+    where candidate.candidate_id = new.scheduler_candidate_id
+      and candidate.generation = new.scheduler_generation;
+  elsif exists (
+    select 1 from momi_agent_ops.scheduler_issue_quarantines quarantine
+    where quarantine.dispatch_id = new.dispatch_id and quarantine.resolved_at is null
+  ) then
+    return new;
+  elsif new.host_accepted_at is not null or new.work_status = 'active' then
+    update momi_agent_ops.scheduler_slots slot set
+      state = 'running', lease_expires_at = now() + interval '30 seconds',
+      updated_at = now()
+    where slot.dispatch_id = new.dispatch_id and slot.state in ('reserved', 'running');
+    update momi_agent_ops.scheduler_candidates candidate set
+      generation_state = 'running', updated_at = now()
+    where candidate.candidate_id = new.scheduler_candidate_id
+      and candidate.generation = new.scheduler_generation;
+  end if;
+  return new;
+end;
+$$;
+
 insert into momi_agent_ops.scheduler_issue_quarantines (
   route_key, linear_issue_id, candidate_id, dispatch_id,
   quarantined_at, intervention_deadline_at
@@ -48,6 +83,14 @@ join momi_agent_ops.scheduler_route_policies policy
   on policy.route_key = slot.route_key
 where slot.state = 'quarantined'
 on conflict do nothing;
+
+update momi_agent_ops.dispatches work set
+  capability_token_hash = encode(extensions.digest(
+    convert_to(gen_random_uuid()::text, 'UTF8'), 'sha256'), 'hex'),
+  wake_capability_token = null
+from momi_agent_ops.scheduler_issue_quarantines quarantine
+where quarantine.dispatch_id = work.dispatch_id and quarantine.resolved_at is null
+  and work.host_accepted_at is null;
 
 create function momi_agent_ops.claim_scheduler_candidate_v3(
   p_route_key text,
@@ -101,6 +144,7 @@ declare capacity_released_count integer := 0;
 declare active_quarantine_count integer := 0;
 declare oldest_age integer := 0;
 declare manual_intervention_count integer := 0;
+declare quarantine_inserted boolean;
 declare expired_slot record;
 begin
   if p_active_work_ids is null or cardinality(p_active_work_ids) > 128 then
@@ -144,9 +188,15 @@ begin
     order by slot.created_at, slot.slot_id
     for update of slot
   loop
+    quarantine_inserted := false;
     update momi_agent_ops.scheduler_slots slot set
       state = 'quarantined', updated_at = now()
     where slot.slot_id = expired_slot.slot_id;
+    update momi_agent_ops.dispatches work set
+      capability_token_hash = encode(extensions.digest(
+        convert_to(gen_random_uuid()::text, 'UTF8'), 'sha256'), 'hex'),
+      wake_capability_token = null
+    where work.dispatch_id = expired_slot.dispatch_id and work.host_accepted_at is null;
     insert into momi_agent_ops.scheduler_issue_quarantines (
       route_key, linear_issue_id, candidate_id, dispatch_id,
       quarantined_at, intervention_deadline_at
@@ -154,8 +204,10 @@ begin
       expired_slot.route_key, expired_slot.linear_issue_id,
       expired_slot.candidate_id, expired_slot.dispatch_id, now(),
       now() + make_interval(secs => expired_slot.quarantine_intervention_seconds)
-    ) on conflict do nothing;
-    quarantined_count := quarantined_count + 1;
+    ) on conflict do nothing returning true into quarantine_inserted;
+    if quarantine_inserted then
+      quarantined_count := quarantined_count + 1;
+    end if;
   end loop;
 
   with released_slots as (

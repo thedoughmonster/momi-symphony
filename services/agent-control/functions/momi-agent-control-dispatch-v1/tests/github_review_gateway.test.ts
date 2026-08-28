@@ -89,7 +89,10 @@ test("merge facts and exact-SHA merge fail closed on blockers and bypass", async
           { context: "Symphony Independent Review", app_id: 42 }] },
       enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false },
       allow_deletions: { enabled: false } })
-    if (url.includes("/pulls/16/reviews?")) return response([])
+    if (url.includes("/pulls/16/reviews?")) return response([
+      { id: 1, state: "APPROVED", commit_id: head,
+        user: { login: "normal-reviewer" } },
+    ])
     if (url.endsWith("/graphql")) return response({ data: { repository: { pullRequest: {
       reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } })
     if (url.includes("/rulesets?")) return response([])
@@ -102,6 +105,7 @@ test("merge facts and exact-SHA merge fail closed on blockers and bypass", async
   assert.equal(facts.requiredCi.conclusion, "success")
   assert.equal(facts.reviewCheckRequired, true)
   assert.equal(facts.bypassPossible, false)
+  assert.equal(facts.authoritativeApprovals, 1)
   assert.deepEqual(await gateway.mergePullRequest(repository, 16, head),
     { merged: true, sha: "d".repeat(40) })
 })

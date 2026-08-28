@@ -4,9 +4,11 @@ Independent review is required only when the exact pull-request diff crosses a n
 boundary: security/privacy, destructive migration, public contract, production exposure/cost,
 concurrency/state integrity, or an explicit owner request (`independent-review` /
 `independent review required` label or `Independent review: required` in the issue). The predicate
-is deterministic and returns the matching trigger names. Incomplete or unfamiliar evidence alone
-does not manufacture a high-risk classification. All other changes follow normal exact-head CI
-and GitHub review; the owned policy check records that independent review was not required.
+also treats a weakened GitHub Actions/CI gate as material. It is deterministic and returns the
+matching trigger names. Missing, truncated, or otherwise invalid patch evidence fails closed to
+independent review because the named boundaries cannot be excluded. All other changes follow
+normal exact-head validation, CI, and GitHub review; the owned policy check records that independent
+review was not required.
 
 Risk-triggered review is a phase of the existing implementation lifecycle; it is not a second
 scheduler, a Linear issue, or a review-debt queue.
@@ -37,9 +39,12 @@ and exact validated subject. Merge uses that answer once under the shared curren
 lock, alongside live exact-head CI, GitHub blockers, the trusted `Symphony Independent Review`
 check, and branch-protection/bypass facts. When the predicate says independent review is not
 required, the reducer omits independent-review authority but still requires exact-head CI, the
-owned policy check, no authoritative changes-requested review, no unresolved review thread, and
-non-bypassable protection. If eligible, the gateway submits the merge with the exact expected head
-SHA. No merge-preflight receipt is persisted.
+owned policy check, one exact-head affirmative `APPROVED` GitHub review, no authoritative changes-requested
+review, no unresolved review thread, and non-bypassable protection. The normal approval fact is
+GitHub's durable submitted-review record, reduced to the latest state per reviewer. Every path also
+requires `run_records.validation_state = 'succeeded'` with `validation_sha` equal to the exact PR
+head; a green external check cannot substitute for that owned lifecycle evidence. If eligible, the
+gateway submits the merge with the exact expected head SHA. No merge-preflight receipt is persisted.
 
 The GitHub review check is a deterministic projection and enforcement backstop, never review
 authority. Its external ID is stable for repository and head; reconciliation updates the owned
