@@ -1,15 +1,14 @@
 import type { Sql } from "postgres"
 
 import { getDatabase } from "../../../src/database.ts"
-import { buildBoundedReviewerPacket, reduceMergeEligibility, REVIEW_POLICY_VERSION,
-  requiresFreshReviewer, reviewExecutionBudget, selectReviewProfile,
+import { buildBoundedReviewerPacket, independentReviewRequirement, reduceMergeEligibility,
+  REVIEW_POLICY_VERSION, requiresFreshReviewer, reviewExecutionBudget,
   type CurrentReviewAuthority, type ReviewFinding, type ReviewProfile,
   type ReviewRiskDimension, type ReviewSubject } from "../../../src/independent_review.ts"
 import { stableFingerprint } from "../../../src/execution_efficiency.ts"
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import { createLinearAdapterProfile } from "./linear_issue_adapter.ts"
-import { GitHubReviewGateway, type GitHubMergeFacts,
-  type GitHubReviewSubject } from "./github_review_gateway.ts"
+import { GitHubReviewGateway, type GitHubReviewSubject } from "./github_review_gateway.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
 import { reconcileReviewCheck } from "./reconcile_review_check.ts"
 import type { MergeRequestInput, ReviewRequestInput, ReviewStatusInput,
@@ -40,12 +39,23 @@ export async function processReviewRequest(input: ReviewRequestInput,
   if (issue.identifier !== route.issueIdentifier ||
     issue.native_ref.project_id !== route.projectId ||
     !route.activeStates.includes(issue.state)) throw new Error("review_issue_context_refused")
+  const requirement = independentReviewRequirement(subject.changedFiles ?? subject.changedPaths,
+    { labels: issue.labels, description: issue.description })
+  if (!requirement.required) {
+    await reconcileReviewCheck(sql, github, { implementationDispatchId: input.work_id,
+      repository: input.repository, pullRequestNumber: subject.pullRequestNumber,
+      headSha: subject.headSha, baseSha: subject.baseSha,
+      policyVersion: REVIEW_POLICY_VERSION, profile: "high", reviewRequired: false })
+    await reconcileAgentState(input.work_id)
+    return { ok: true, disposition: "normal_review", review_required: false,
+      review_escalated: false, risk_triggers: requirement.triggers }
+  }
   const [applicableRules, headCi, prior] = await Promise.all([
     github.loadApplicableRules(input.repository, subject.baseSha, subject.changedPaths),
     github.loadHeadChecks(input.repository, subject.headSha),
     priorReview(sql, input.work_id),
   ])
-  const profile = reviewProfileForSubject(subject)
+  const profile = "high" as const
   let parentAttemptId: string | null = prior?.review_attempt_id ?? null
   let reuseParentReviewer = false
   let unresolvedFindings: Array<Pick<ReviewFinding,
@@ -73,10 +83,12 @@ export async function processReviewRequest(input: ReviewRequestInput,
   } else if (prior) {
     parentAttemptId = null
   }
-  return launchReview({ input, subject, profile, route, applicableRules, headCi,
+  const launched = await launchReview({ input, subject, profile, route, applicableRules, headCi,
     issue: { identifier: issue.identifier, title: issue.title,
       requiredOutcome: boundedRequiredOutcome(issue.description) }, parentAttemptId,
     reuseParentReviewer, unresolvedFindings, correction, sql, github, fetchImpl })
+  return { ...launched, review_required: true, review_escalated: true,
+    risk_triggers: requirement.triggers }
 }
 
 export async function processReviewStatus(input: ReviewStatusInput,
@@ -93,12 +105,21 @@ export async function processReviewStatus(input: ReviewStatusInput,
 }
 
 export async function processMergeRequest(input: MergeRequestInput,
-  sql: Sql = getDatabase(), github = new GitHubReviewGateway()): Promise<Record<string, unknown>> {
+  sql: Sql = getDatabase(), github = new GitHubReviewGateway(),
+  loadIssue: typeof loadLinearIssue = loadLinearIssue): Promise<Record<string, unknown>> {
   const subject = await github.loadSubject(input.repository, input.pull_request_number)
   const facts = await github.loadMergeFacts(input.repository, input.base_branch,
     input.pull_request_number, subject.headSha)
   if (facts.baseHeadSha !== subject.baseSha) return deniedMerge("base_branch_advanced", subject)
-  const profile = reviewProfileForSubject(subject)
+  const route = await reviewRoute(sql, input.work_id)
+  const issue = await loadIssue(route.issueId, createLinearAdapterProfile({
+    projectId: route.projectId, repository: input.repository, baseBranch: input.base_branch }))
+  if (issue.identifier !== route.issueIdentifier ||
+    issue.native_ref.project_id !== route.projectId ||
+    !route.activeStates.includes(issue.state)) throw new Error("review_issue_context_refused")
+  const requirement = independentReviewRequirement(subject.changedFiles ?? subject.changedPaths,
+    { labels: issue.labels, description: issue.description })
+  const profile = "high" as const
   return withTransaction(sql, async (transaction) => {
     const locked = await transaction<{ locked: boolean }[]>`
       select momi_agent_ops.lock_current_review_subject_v1(
@@ -140,21 +161,24 @@ export async function processMergeRequest(input: MergeRequestInput,
       authoritative_blocking_threads: facts.authoritativeBlockingThreads,
       authoritative_changes_requested: facts.authoritativeChangesRequested,
       branch_protection: { review_check_required: facts.reviewCheckRequired,
-        bypass_possible: facts.bypassPossible }, current_policy_version: REVIEW_POLICY_VERSION,
+        bypass_possible: facts.bypassPossible },
+      independent_review_required: requirement.required,
+      current_policy_version: REVIEW_POLICY_VERSION,
       expected_profile: profile })
     if (!decision.eligible) return deniedMerge(decision.reason, subject)
     const merged = await github.mergePullRequest(input.repository,
       input.pull_request_number, subject.headSha)
     if (!merged.merged) return deniedMerge("github_merge_refused", subject)
     return { ok: true, eligible: true, merged: true,
+      review_required: requirement.required, review_escalated: requirement.required,
+      risk_triggers: requirement.triggers,
       head_sha: subject.headSha, base_sha: subject.baseSha, merge_sha: merged.sha }
   })
 }
 
 export async function processReviewTerminal(input: ReviewTerminalInput,
   sql: Sql = getDatabase(), github = new GitHubReviewGateway(),
-  reconcile: typeof reconcileAgentState = reconcileAgentState,
-  fetchImpl: typeof fetch = fetch): Promise<Record<string, unknown>> {
+  reconcile: typeof reconcileAgentState = reconcileAgentState): Promise<Record<string, unknown>> {
   const subject = input.review_subject
   const repository = await routeRepository(subject.implementation_dispatch_id, sql)
   if (!input.review_result) {
@@ -178,35 +202,12 @@ export async function processReviewTerminal(input: ReviewTerminalInput,
   if (recorded[0]?.recorded !== true) throw new Error("review_result_record_refused")
   await reconcileReviewCheck(sql, github, projectionSubject(subject, repository))
   await reconcile(subject.implementation_dispatch_id)
-  if (result.result !== "escalate") return { ok: true, disposition: result.result }
-  const nextProfile = promoteReviewProfile(subject.profile)
-  if (!nextProfile) return { ok: true, disposition: "failed", reason: "escalation_exhausted" }
-  const route = await reviewRoute(sql, subject.implementation_dispatch_id)
-  const current = await github.loadSubject(repository, subject.pull_request_number)
-  if (current.headSha !== subject.head_sha || current.baseSha !== subject.base_sha ||
-    current.state !== "open") throw new Error("review_escalation_subject_refused")
-  const issue = await loadLinearIssue(route.issueId, createLinearAdapterProfile({
-    projectId: route.projectId, repository, baseBranch: route.baseBranch }))
-  const [rules, headCi] = await Promise.all([
-    github.loadApplicableRules(repository, current.baseSha, current.changedPaths),
-    github.loadHeadChecks(repository, current.headSha),
-  ])
-  return launchReview({ input: { event: "review_request",
-    work_id: subject.implementation_dispatch_id, capability_token: input.capability_token,
-    thread_id: input.thread_id, turn_id: input.turn_id, repository,
-    base_branch: route.baseBranch, branch_name: "review-escalation",
-    pull_request_number: subject.pull_request_number }, subject: current,
-    profile: nextProfile, route, applicableRules: rules, headCi,
-    issue: { identifier: issue.identifier, title: issue.title,
-      requiredOutcome: boundedRequiredOutcome(issue.description) },
-    parentAttemptId: await attemptIdForReviewer(sql, input.reviewer_dispatch_id),
-    reuseParentReviewer: false, unresolvedFindings: [], correction: undefined,
-    sql, github, fetchImpl })
+  return result.result === "escalate"
+    ? { ok: true, disposition: "failed", reason: "manual_intervention_required" }
+    : { ok: true, disposition: result.result }
 }
 
-export function promoteReviewProfile(profile: ReviewProfile): ReviewProfile | null {
-  return profile === "low" ? "standard" : profile === "standard" ? "high" : null
-}
+export function promoteReviewProfile(_profile: ReviewProfile): null { return null }
 
 async function launchReview(args: { input: ReviewRequestInput; subject: GitHubReviewSubject;
   profile: ReviewProfile; route: ReviewRoute; applicableRules: ApplicableRule[];
@@ -310,7 +311,7 @@ async function launchReview(args: { input: ReviewRequestInput; subject: GitHubRe
   await reconcileReviewCheck(sql, args.github, { implementationDispatchId: input.work_id,
     repository: input.repository, pullRequestNumber: subject.pullRequestNumber,
     headSha: subject.headSha, baseSha: subject.baseSha,
-    policyVersion: REVIEW_POLICY_VERSION, profile })
+    policyVersion: REVIEW_POLICY_VERSION, profile, reviewRequired: true })
   await reconcileAgentState(input.work_id)
   return { ok: true, disposition: "pending", review_attempt_id: attempt.review_attempt_id,
     reviewer_dispatch_id: attempt.reviewer_dispatch_id, profile }
@@ -405,14 +406,6 @@ async function routeRepository(dispatchId: string, sql: Sql): Promise<string> {
   return rows[0].repository
 }
 
-async function attemptIdForReviewer(sql: Sql, reviewerDispatchId: string): Promise<string> {
-  const rows = await sql<{ review_attempt_id: string }[]>`
-    select review_attempt_id::text from momi_agent_ops.review_attempts
-    where reviewer_dispatch_id = ${reviewerDispatchId}::uuid`
-  if (!rows[0]) throw new Error("review_attempt_missing")
-  return rows[0].review_attempt_id
-}
-
 function reviewerPrompt(packet: Record<string, unknown>, profile: ReviewProfile,
   reverification: boolean, protectedBaseSha: string, applicableRules: ApplicableRule[]) {
   const protectedRules = applicableRules.map((rule) => {
@@ -430,10 +423,6 @@ function reviewerPrompt(packet: Record<string, unknown>, profile: ReviewProfile,
   "Return only strict JSON with result and compact typed findings.",
   "Acceptance is forbidden when any blocking finding remains.", protectedRules].join("\n"),
   volatile: `Review profile: ${profile}\nExact reviewer packet:\n${JSON.stringify(packet)}` }
-}
-
-function reviewProfileForSubject(subject: GitHubReviewSubject) {
-  return selectReviewProfile(subject.changedPaths, subject.riskDimensions)
 }
 
 function boundedRequiredOutcome(description: string | null): string {

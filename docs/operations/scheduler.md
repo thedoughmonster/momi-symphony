@@ -67,15 +67,19 @@ oldest/null last, then identifier. No aging term participates.
 An eligible generation that becomes ineligible before claim is stale. A later
 false-to-true eligibility transition increments the generation. Claimed,
 running, terminal, or stale generations cannot create a duplicate dispatch.
-Terminal callbacks release slots. Active host ledger IDs heartbeat slots;
-expired nonterminal slots without matching host evidence are quarantined and
-continue consuming capacity until exact reconciliation. Provider failures use
+Terminal callbacks release slots. Active host ledger IDs heartbeat ordinary reserved/running
+slots; expired nonterminal slots without matching host evidence are quarantined. Quarantine
+creates a durable per-route/per-issue fence and a configurable 30–3600 second intervention
+deadline (default 15 minutes). The fence remains visible and blocks every duplicate claim until
+the exact dispatch is terminal, while the route slot is released once the bounded intervention
+window expires. Provider failures use
 bounded technical backoff and never become decision alerts.
 
 ## Observability
 
 The pump response contains counts only: routes, observed candidates, claims,
-technical retries, terminal projection retries, and projection failures. Due
+technical retries, terminal projection retries, projection failures, newly quarantined issues,
+capacity releases, active quarantines, oldest quarantine age, and manual interventions. Due
 terminal projections are leased and retried before ordinary Agent State repair;
 the ten-minute lease is fenced by an attempt generation so an expired worker
 cannot overwrite its reclaimer. Neither path invokes the host or creates a new dispatch. Do not add issue bodies, labels, provider responses,
@@ -83,5 +87,7 @@ credentials, or work tokens to logs. Durable diagnosis comes from the private
 route policy's mode/retry fields and aggregate candidate/slot generation states.
 An enabled route with a future `next_provider_attempt_at` is in technical
 backoff; `last_provider_error_code` is a bounded category, not a decision alert.
-A `quarantined` slot is intentionally capacity-consuming until its exact
-dispatch reaches a terminal state.
+An active quarantine remains the issue-level duplicate fence after its slot becomes `released`.
+Terminal state resolves the fence; capacity release by itself never authorizes a retry. The
+two-identical-fingerprint stop remains unchanged: a third identical repair is refused until
+material input changes.

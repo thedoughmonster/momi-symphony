@@ -48,7 +48,10 @@ test("scheduler pump reuses the host-authenticated control-plane boundary", asyn
       calls += 1
       assert.deepEqual(received, input)
       return { ok: true as const, routes: 0, observed: 0, claimed: 0,
-        technical_retries: 0, projection_retries: 0, projection_failures: 0 }
+        technical_retries: 0, projection_retries: 0, projection_failures: 0,
+        quarantines_created: 0, quarantine_capacity_released: 0,
+        active_quarantines: 0, oldest_quarantine_age_seconds: 0,
+        manual_interventions: 0 }
     } }
   const unauthorized = await handleRequestWithDependencies(new Request(
     "https://agent-control.example/v1/dispatch",
@@ -66,5 +69,7 @@ test("scheduler pump reuses the host-authenticated control-plane boundary", asyn
   assert.equal(calls, 1)
   assert.deepEqual(await authorized.json(), { ok: true, routes: 0, observed: 0,
     claimed: 0, technical_retries: 0, projection_retries: 0,
-    projection_failures: 0 })
+    projection_failures: 0, quarantines_created: 0,
+    quarantine_capacity_released: 0, active_quarantines: 0,
+    oldest_quarantine_age_seconds: 0, manual_interventions: 0 })
 })

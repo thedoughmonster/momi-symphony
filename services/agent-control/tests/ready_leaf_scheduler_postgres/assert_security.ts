@@ -24,10 +24,10 @@ export async function assertSchedulerSecurity(sql: Sql): Promise<void> {
     join pg_namespace namespace on namespace.oid = class.relnamespace
     where namespace.nspname = 'momi_agent_ops'
       and class.relname in ('scheduler_route_policies', 'scheduler_leaders',
-        'scheduler_candidates', 'scheduler_slots')
+        'scheduler_candidates', 'scheduler_issue_quarantines', 'scheduler_slots')
     order by class.relname
   `
-  assert.equal(tables.length, 4)
+  assert.equal(tables.length, 5)
   for (const table of tables) assert.deepEqual(
     [table.relrowsecurity, table.anon_access, table.authenticated_access,
       table.service_access],
@@ -52,7 +52,7 @@ export async function assertSchedulerSecurity(sql: Sql): Promise<void> {
       and procedure.proname like '%scheduler%'
     order by procedure.proname
   `
-  assert.equal(functions.length, 9)
+  assert.equal(functions.length, 12)
   for (const routine of functions) {
     assert.equal(routine.prosecdef, false, routine.proname)
     assert.deepEqual(routine.proconfig, ["search_path=\"\""], routine.proname)
@@ -63,7 +63,7 @@ export async function assertSchedulerSecurity(sql: Sql): Promise<void> {
   for (const role of roles) {
     await assert.rejects(sql.begin(async (transaction) => {
       await transaction.unsafe(`set local role ${role}`)
-      await transaction.unsafe(`select * from momi_agent_ops.claim_scheduler_candidate_v1(
+      await transaction.unsafe(`select * from momi_agent_ops.claim_scheduler_candidate_v3(
         '${routeKey}', '${ownerOne}', '${"b".repeat(40)}', 1,
         '20000000-0000-4000-8000-000000000001', 1, 1
       )`)

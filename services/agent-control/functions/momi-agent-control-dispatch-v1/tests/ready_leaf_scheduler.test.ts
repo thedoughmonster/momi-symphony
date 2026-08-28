@@ -111,7 +111,9 @@ function dependencies(options: {
     project: () => Promise.resolve(),
     projectionIds: () => Promise.resolve([]),
     replayProjection: () => Promise.resolve({ claimed: false, status: "skipped" }),
-    heartbeat: () => Promise.resolve(),
+    heartbeat: () => Promise.resolve({ quarantinesCreated: 0,
+      quarantineCapacityReleased: 0, activeQuarantines: 0,
+      oldestQuarantineAgeSeconds: 0, manualInterventions: 0 }),
     providerRetry: (_routeKey, code) => { retryCodes.push(code); return Promise.resolve() },
     providerSuccess: () => Promise.resolve(),
   }
@@ -152,7 +154,10 @@ test("observe acceptance is allowlisted and structurally cannot claim", async ()
   const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
   assert.deepEqual(receipt, { ok: true, routes: 1, observed: 1, claimed: 0,
-    technical_retries: 0, projection_retries: 0, projection_failures: 0 })
+    technical_retries: 0, projection_retries: 0, projection_failures: 0,
+    quarantines_created: 0, quarantine_capacity_released: 0,
+    active_quarantines: 0, oldest_quarantine_age_seconds: 0,
+    manual_interventions: 0 })
   assert.equal(fixture.dispatched.size, 0)
 })
 
@@ -193,7 +198,10 @@ test("observe mode preserves a bounded typed tracker failure in its count-only r
   const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
   assert.deepEqual(receipt, { ok: true, routes: 1, observed: 0, claimed: 0,
-    technical_retries: 1, projection_retries: 0, projection_failures: 0 })
+    technical_retries: 1, projection_retries: 0, projection_failures: 0,
+    quarantines_created: 0, quarantine_capacity_released: 0,
+    active_quarantines: 0, oldest_quarantine_age_seconds: 0,
+    manual_interventions: 0 })
   assert.deepEqual(fixture.retryCodes, ["tracker_timeout"])
 })
 

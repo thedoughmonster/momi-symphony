@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildBoundedReviewerPacket, reduceMergeEligibility, requiresFreshReviewer,
+import { buildBoundedReviewerPacket, independentReviewRequirement, reduceMergeEligibility,
+  requiresFreshReviewer,
   reviewExecutionBudget, reviewExecutionProfile, reviewRiskDimensions, REVIEW_CHECK_NAME,
-  REVIEW_POLICY_VERSION, selectReviewProfile, validateReviewReceipt,
+  REVIEW_POLICY_VERSION, validateReviewReceipt,
   type CurrentReviewAuthority, type MergeGateEvidence, type ReviewReceipt,
   type ReviewSubject } from "../src/independent_review.ts"
 
@@ -31,24 +32,44 @@ function gate(overrides: Partial<MergeGateEvidence> = {}): MergeGateEvidence {
     review_check: { name: REVIEW_CHECK_NAME, head_sha: head, conclusion: "success" },
     authoritative_blocking_threads: 0, authoritative_changes_requested: false,
     branch_protection: { review_check_required: true, bypass_possible: false },
+    independent_review_required: true,
     current_policy_version: REVIEW_POLICY_VERSION, expected_profile: "high", ...overrides }
 }
 
-test("risk routing is complete-diff based and execution config derives from profile", () => {
-  assert.equal(selectReviewProfile(["docs/operator.md"], ["general"]), "low")
-  assert.equal(selectReviewProfile(["src/feature.ts"], ["general"]), "standard")
-  assert.equal(selectReviewProfile(["src/feature.ts"], ["concurrency"]), "high")
-  assert.equal(selectReviewProfile([], ["general"]), "high")
-  assert.equal(selectReviewProfile(["docs/operator.md"], ["ambiguous"]), "high")
-  for (const patch of ["authenticate token identity", "public API contract",
-    "postgres schema migration", "advisory lock race", "scheduler recovery cancellation",
-    "deploy credential branch protection", "runtime network host workspace"]) {
-    const dimensions = reviewRiskDimensions([{ path: "src/feature.ts", patch }])
-    assert.equal(selectReviewProfile(["src/feature.ts"], dimensions), "high")
-  }
+test("bounded reviewer execution config remains readable for persisted profiles", () => {
   assert.deepEqual(reviewExecutionProfile("standard"),
     { model: "gpt-5.6-terra", reasoning_effort: "medium" })
   assert.equal(reviewExecutionBudget("high").model_turns, 16)
+})
+
+test("independent review is required only for the six named material boundaries", () => {
+  assert.deepEqual(independentReviewRequirement([
+    { path: "src/copy.ts", patch: "+export const message = 'hello'" },
+  ]), { required: false, triggers: [], profile: null })
+  const cases = [
+    ["security_privacy", { path: "src/auth/session.ts", patch: "+rotateToken()" }],
+    ["destructive_migration", { path: "supabase/migrations/x.sql",
+      patch: "+alter table accounts drop column legacy" }],
+    ["public_contract", { path: "contracts/input.schema.json", patch: "+{}" }],
+    ["production_exposure_cost", { path: "ops/config.ts",
+      patch: "+const productionCostLimit = 100" }],
+    ["concurrency_state_integrity", { path: "src/queue.ts",
+      patch: "+await advisory_lock()" }],
+  ] as const
+  for (const [trigger, file] of cases) {
+    assert.deepEqual(independentReviewRequirement([file]).triggers, [trigger])
+  }
+  assert.deepEqual(independentReviewRequirement([{ path: "docs/readme.md", patch: "+safe" }],
+    { labels: ["Independent Review Required"] }).triggers, ["explicit_owner_request"])
+  assert.equal(independentReviewRequirement([
+    { path: "supabase/migrations/x.sql", patch: "+create table safe_addition(id uuid)" },
+  ]).required, false)
+  assert.equal(independentReviewRequirement([
+    { path: "src/unknown.ts", patch: null },
+  ]).required, false)
+  assert.equal(independentReviewRequirement([
+    { path: "docs/scheduler.md", patch: "+Explain quarantine and token budgets." },
+  ]).required, false)
 })
 
 test("strict reviewer result rejects self review, stale subjects, and blockers", () => {
@@ -87,6 +108,8 @@ test("one compact merge reducer fails closed for every missing current fact", ()
   for (const [reason, evidence] of cases) {
     assert.deepEqual(reduceMergeEligibility(evidence), { eligible: false, reason })
   }
+  assert.deepEqual(reduceMergeEligibility(gate({ independent_review_required: false,
+    review: null })), { eligible: true })
 })
 
 test("same reviewer correction uses complete diff, finding paths, and unchanged risk", () => {

@@ -10,6 +10,7 @@ export type GitHubReviewSubject = {
   headSha: string
   baseSha: string
   changedPaths: string[]
+  changedFiles?: Array<{ path: string; patch: string | null }>
   riskDimensions: ReviewRiskDimension[]
   diffArtifactRef: string
 }
@@ -71,7 +72,9 @@ export class GitHubReviewGateway {
         path: text(file.filename), patch: String(file.patch),
       })))
     return { repository, pullRequestNumber, state: pr.state as "open" | "closed",
-      baseBranch, headSha, baseSha, changedPaths, riskDimensions,
+      baseBranch, headSha, baseSha, changedPaths,
+      changedFiles: files.map((file) => ({ path: text(file.filename),
+        patch: typeof file.patch === "string" ? file.patch : null })), riskDimensions,
       diffArtifactRef: `https://api.github.com/repos/${repository}/compare/${baseSha}...${headSha}` }
   }
 

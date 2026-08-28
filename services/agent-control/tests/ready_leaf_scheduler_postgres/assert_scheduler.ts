@@ -169,24 +169,57 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
     set lease_expires_at = now() - interval '1 second'
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
-  const [heartbeat] = await sql<{ quarantined: number }[]>`
-    select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v1('{}'::uuid[])
+  const [heartbeat] = await sql<{ quarantined: number; active_quarantines: number }[]>`
+    select quarantined, active_quarantines
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
   `
-  assert.equal(heartbeat.quarantined, 1)
+  assert.deepEqual(heartbeat, { quarantined: 1, active_quarantines: 1 })
   const waiting = await reconcile(sql, 32)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
   const [extended] = await sql<{ extended: number }[]>`
-    select extended from momi_agent_ops.heartbeat_scheduler_slots_v1(
+    select extended from momi_agent_ops.heartbeat_scheduler_slots_v2(
       array[${expiringClaim.dispatch_id}::uuid]
     )
   `
-  assert.equal(extended.extended, 1)
+  assert.equal(extended.extended, 0)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
+
+  await sql`
+    update momi_agent_ops.scheduler_issue_quarantines
+    set intervention_deadline_at = now() - interval '1 second'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [released] = await sql<{ capacity_released: number;
+    active_quarantines: number; manual_interventions: number }[]>`
+    select capacity_released, active_quarantines, manual_interventions
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.deepEqual(released, { capacity_released: 1,
+    active_quarantines: 1, manual_interventions: 1 })
+  assert.equal((await claim(sql, ownerThree, 3, expiring)).claimed, false)
+  assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
+
+  const [fence] = await sql<{ slot_state: string; capacity_released_at: Date | null;
+    resolved_at: Date | null }[]>`
+    select slot.state as slot_state, quarantine.capacity_released_at,
+      quarantine.resolved_at
+    from momi_agent_ops.scheduler_issue_quarantines quarantine
+    join momi_agent_ops.scheduler_slots slot using (dispatch_id)
+    where quarantine.dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(fence.slot_state, "released")
+  assert.ok(fence.capacity_released_at)
+  assert.equal(fence.resolved_at, null)
   await sql`
     update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
-  assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
+  const [{ resolved }] = await sql<{ resolved: boolean }[]>`
+    select resolved_at is not null as resolved
+    from momi_agent_ops.scheduler_issue_quarantines
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(resolved, true)
 }
 
 export async function assertGenerationRefreshAndStaleLeader(sql: Sql): Promise<void> {

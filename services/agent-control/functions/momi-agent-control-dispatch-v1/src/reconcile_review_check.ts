@@ -11,6 +11,7 @@ export type ReviewProjectionSubject = {
   baseSha: string
   policyVersion: string
   profile: ReviewProfile
+  reviewRequired?: boolean
 }
 
 export async function reconcileReviewCheck(sql: Sql, github: GitHubReviewGateway,
@@ -21,7 +22,8 @@ export async function reconcileReviewCheck(sql: Sql, github: GitHubReviewGateway
         ${subject.implementationDispatchId}::uuid, ${subject.repository},
         ${subject.pullRequestNumber}) as locked`
     let state: "success" | "pending" | "failure" = "failure"
-    if (locked[0]?.locked === true) {
+    if (locked[0]?.locked === true && subject.reviewRequired === false) state = "success"
+    else if (locked[0]?.locked === true) {
       const authority = await transaction<{ authorized: boolean }[]>`
         select exists(select 1 from momi_agent_ops.current_review_authority_v1(
           ${subject.implementationDispatchId}::uuid, ${subject.repository},
@@ -51,7 +53,9 @@ export async function reconcileReviewCheck(sql: Sql, github: GitHubReviewGateway
       }
     }
     await github.projectReviewCheck(subject.repository, subject.headSha, state,
-      state === "success" ? "Independent review authority is current for this exact head"
+      state === "success" && subject.reviewRequired === false
+        ? "Independent review is not required by the risk policy for this exact head"
+      : state === "success" ? "Independent review authority is current for this exact head"
       : state === "pending" ? "Independent review is pending for this exact head"
       : "No valid independent review authority exists for this exact head")
     return state

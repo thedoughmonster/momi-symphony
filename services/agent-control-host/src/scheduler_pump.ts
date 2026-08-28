@@ -8,6 +8,11 @@ export type SchedulerPumpReceipt = {
   technical_retries: number
   projection_retries: number
   projection_failures: number
+  quarantines_created: number
+  quarantine_capacity_released: number
+  active_quarantines: number
+  oldest_quarantine_age_seconds: number
+  manual_interventions: number
 }
 
 export type SchedulerPumpConfiguration = {
