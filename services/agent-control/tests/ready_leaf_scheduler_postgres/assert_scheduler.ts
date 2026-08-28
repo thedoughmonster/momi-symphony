@@ -302,27 +302,26 @@ export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string):
   const blocker = postgres(url, { max: 1, prepare: false })
   const heartbeatClient = postgres(url, { max: 1, prepare: false })
   const acceptanceClient = postgres(url, { max: 1, prepare: false })
+  await sql.unsafe(`
+    create function momi_agent_ops.test_pause_quarantine_insert()
+    returns trigger language plpgsql set search_path = '' as $$
+    begin
+      perform pg_catalog.pg_advisory_xact_lock(434434);
+      return new;
+    end;
+    $$;
+    create trigger test_pause_quarantine_insert
+    before insert on momi_agent_ops.scheduler_issue_quarantines
+    for each row execute function momi_agent_ops.test_pause_quarantine_insert();
+  `)
   let releaseConflict = (): void => undefined
   let conflictReady = (): void => undefined
   const release = new Promise<void>((resolve) => { releaseConflict = resolve })
   const ready = new Promise<void>((resolve) => { conflictReady = resolve })
   const blockerWork = blocker.begin(async (transaction) => {
-    await transaction`
-      insert into momi_agent_ops.scheduler_issue_quarantines (
-        route_key, linear_issue_id, candidate_id, dispatch_id,
-        quarantined_at, intervention_deadline_at
-      )
-      select slot.route_key, queued.linear_issue_id, slot.candidate_id, slot.dispatch_id,
-        now(), now() + interval '30 seconds'
-      from momi_agent_ops.scheduler_slots slot
-      join momi_agent_ops.scheduler_candidates queued using (candidate_id)
-      where slot.dispatch_id = ${claimed.dispatch_id}::uuid
-    `
+    await transaction`select pg_catalog.pg_advisory_xact_lock(434434)`
     conflictReady()
     await release
-    throw new Error("rollback_test_quarantine")
-  }).catch((error: unknown) => {
-    assert.match(String(error), /rollback_test_quarantine/)
   })
 
   try {
@@ -356,6 +355,11 @@ export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string):
       blocker.end({ timeout: 2 }), heartbeatClient.end({ timeout: 2 }),
       acceptanceClient.end({ timeout: 2 }),
     ])
+    await sql.unsafe(`
+      drop trigger if exists test_pause_quarantine_insert
+        on momi_agent_ops.scheduler_issue_quarantines;
+      drop function if exists momi_agent_ops.test_pause_quarantine_insert();
+    `)
   }
 
   const [quarantined] = await sql<{ state: string; active_slots: number }[]>`
