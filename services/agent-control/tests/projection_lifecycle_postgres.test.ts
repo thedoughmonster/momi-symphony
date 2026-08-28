@@ -58,7 +58,10 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
       returns bigint language sql as 'select 1::bigint';
   `)
   const { migrations } = await loadManagedMigrations()
-  const projection = migrations.at(-1)!
+  const projectionIndex = migrations.findIndex((migration) =>
+    migration.name.includes("simplify_readiness_and_decouple_projection"))
+  assert.ok(projectionIndex > 7)
+  const projection = migrations[projectionIndex]
   assert.match(projection.name, /simplify_readiness_and_decouple_projection/)
   for (const migration of migrations.slice(0, 7)) await sql.unsafe(migration.sql)
   await sql`
@@ -66,7 +69,7 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
       host_dispatch_url = 'https://host.example/v1/dispatch'
     where linear_project_name = 'Backend Stabilization'
   `
-  for (const migration of migrations.slice(7, -1)) await sql.unsafe(migration.sql)
+  for (const migration of migrations.slice(7, projectionIndex)) await sql.unsafe(migration.sql)
   await configure(sql, "enabled")
   const leader = await acquire(sql, ownerOne)
   assert.equal(leader?.fencing_generation, 1)

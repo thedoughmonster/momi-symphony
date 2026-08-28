@@ -44,7 +44,8 @@ select slot.route_key, candidate.linear_issue_id, slot.candidate_id, slot.dispat
     secs => policy.quarantine_intervention_seconds)
 from momi_agent_ops.scheduler_slots slot
 join momi_agent_ops.scheduler_candidates candidate using (candidate_id)
-join momi_agent_ops.scheduler_route_policies policy using (route_key)
+join momi_agent_ops.scheduler_route_policies policy
+  on policy.route_key = slot.route_key
 where slot.state = 'quarantined'
 on conflict do nothing;
 
@@ -133,7 +134,8 @@ begin
       candidate.linear_issue_id, policy.quarantine_intervention_seconds
     from momi_agent_ops.scheduler_slots slot
     join momi_agent_ops.scheduler_candidates candidate using (candidate_id)
-    join momi_agent_ops.scheduler_route_policies policy using (route_key)
+    join momi_agent_ops.scheduler_route_policies policy
+      on policy.route_key = slot.route_key
     join momi_agent_ops.dispatches work using (dispatch_id)
     where slot.state in ('reserved', 'running')
       and slot.lease_expires_at <= now()
