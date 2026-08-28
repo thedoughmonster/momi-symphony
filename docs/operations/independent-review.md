@@ -4,7 +4,9 @@ Independent review is required only when the exact pull-request diff crosses a n
 boundary: security/privacy, destructive migration, public contract, production exposure/cost,
 concurrency/state integrity, or an explicit owner request (`independent-review` /
 `independent review required` label or `Independent review: required` in the issue). The predicate
-also treats deletion-only changes in security/auth/session/permission-sensitive code as material.
+also treats removed security/auth/session/permission guards as material whether the patch is
+deletion-only or replaces the guard with other code. Unrelated additions cannot neutralize the
+risk carried by deleted guard structure or deleted authorization conditions.
 Protected workflow and CI files fail closed to independent review for every semantic change,
 including action identity, permissions, triggers, commands, and gates. The only safe allowlist is
 an exact diff containing comments or blank lines exclusively. The predicate is deterministic and

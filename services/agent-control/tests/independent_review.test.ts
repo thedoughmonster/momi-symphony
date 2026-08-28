@@ -80,6 +80,14 @@ test("independent review covers material boundaries and fails closed on incomple
     { path: "src/check.ts", patch: "@@ -1 +0,0 @@\n-if (!user.isAdmin) throw" },
   ]).triggers, ["security_privacy"])
   assert.deepEqual(independentReviewRequirement([
+    { path: "src/check.ts",
+      patch: "@@ -1 +1 @@\n-if (!user.isAdmin) throw denied\n+return true" },
+  ]).triggers, ["security_privacy"])
+  assert.deepEqual(independentReviewRequirement([
+    { path: "src/check.ts",
+      patch: "@@ -1,2 +1,2 @@\n-if (!hasPermission(user, 'write')) return false\n const value = load()\n+const traceId = request.id" },
+  ]).triggers, ["security_privacy"])
+  assert.deepEqual(independentReviewRequirement([
     { path: "src/session/cache.ts", patch: "@@ -1 +0,0 @@\n-return cachedValue" },
   ]).triggers, ["security_privacy"])
   assert.deepEqual(independentReviewRequirement([

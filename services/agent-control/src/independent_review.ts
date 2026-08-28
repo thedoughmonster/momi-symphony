@@ -1,4 +1,4 @@
-export const REVIEW_POLICY_VERSION = "risk-proportional-review-v3" as const
+export const REVIEW_POLICY_VERSION = "risk-proportional-review-v4" as const
 export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
 export const REVIEW_FINDING_ID_PATTERN =
   "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$" as const
@@ -110,9 +110,7 @@ export function independentReviewRequirement(
     const changed = `${additions}\n${deletions}`
     const evidence = `${file.path}\n${changed}`
     const inspectContent = !lowRisk.some((pattern) => pattern.test(file.path))
-    const deletionOnly = deletions.trim().length > 0 && additions.trim().length === 0
-    const removedSensitiveGuard = deletionOnly &&
-      /(?:\b(?:admin|role|permission|access|session|user|account|tenant|scope|claim|principal|identity|authenticated)\b|\b(?:is|has|can)[A-Z_][A-Za-z0-9_]*)/i.test(deletions)
+    const removedSensitiveGuard = removesSensitiveGuard(deletions)
     if (securitySensitivePath.test(file.path) || removedSensitiveGuard || (inspectContent &&
       /\b(?:authentication|authoriz(?:e|ed|ation)|privacy|pii|secret|credential|token)\b/i.test(
         changed))) triggers.add("security_privacy")
@@ -335,6 +333,15 @@ function deletedPatchLines(patch: string | null | undefined): string {
   if (typeof patch !== "string") return ""
   return patch.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"))
     .map((line) => line.slice(1)).join("\n")
+}
+
+function removesSensitiveGuard(deletions: string): boolean {
+  if (deletions.trim().length === 0) return false
+  const structuralDenyGuard = /\bif\s*\([\s\S]{1,300}?\)[\s\S]{0,120}?\b(?:throw|return(?:\s+(?:false|null|undefined))?)\b/i
+  const sensitiveCondition = /\bif\s*\([^)]*(?:(?:auth|admin|permi|privileg|entitl|role|scope|access|policy|acl|rbac|session|identity|principal|tenant|owner|allow|deny|forbid|unauthoriz)[A-Za-z0-9_]*|(?:is|has|can|may|allow|deny|require|assert|check|verify)[A-Z_][A-Za-z0-9_]*)[^)]*\)/i
+  const standaloneEnforcement = /\b(?:authoriz|authenticat|require|assert|check|verify)(?:e|ed|es|ing|ion|Permission|Access|Role|Scope|Session|Identity)?\s*\(/i
+  return structuralDenyGuard.test(deletions) || sensitiveCondition.test(deletions) ||
+    standaloneEnforcement.test(deletions)
 }
 
 function hasPatchEvidence(patch: string | null | undefined): patch is string {
