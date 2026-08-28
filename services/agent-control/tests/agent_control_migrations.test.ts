@@ -16,10 +16,12 @@ const nativeCancellationPath =
   "supabase/migrations/20260820143000_retire_action_labels_and_native_cancellation.sql"
 const independentReviewPath =
   "supabase/migrations/20260820160000_add_independent_pr_review_gate.sql"
+const projectionPath =
+  "supabase/migrations/20260828190000_simplify_readiness_and_decouple_projection.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
-  assert.equal(foundation.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(foundation.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(foundation, /create schema momi_agent_ops/)
   assert.match(foundation, /enable row level security/g)
   assert.match(foundation, /revoke all on schema momi_agent_ops from public, anon, authenticated, service_role/)
@@ -27,7 +29,7 @@ test("private agent ledger is owned, defended, and absent from the Data API", as
 })
 test("parent runs and cancellation keep reconstructable idempotent evidence", async () => {
   const migration = await readFile(parentRunsPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(migration, /'cancel-run'/)
   assert.match(migration, /parent_dispatch_id uuid references momi_agent_ops\.dispatches/)
   assert.match(migration, /dispatches_parent_child_once_idx/)
@@ -57,7 +59,7 @@ test("receipt, dispatch, claim, retry, and archive evidence are durable and idem
 
 test("ADR-0004 trigger sends only work identity and transient capability token", async () => {
   const adapter = await readFile(adapterPath, "utf8")
-  assert.equal(adapter.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(adapter.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(adapter, /body := jsonb_build_object\('work_id', new\.dispatch_id::text,\s+'capability_token', new\.wake_capability_token::text\)/)
   assert.match(adapter, /wake_capability_token = null/)
   assert.match(adapter, /after insert or update of wake_capability_token/)
@@ -66,7 +68,7 @@ test("ADR-0004 trigger sends only work identity and transient capability token",
 
 test("host endpoint stays private, HTTPS-only, and resolves at claim time", async () => {
   const hostConfig = await readFile(hostConfigPath, "utf8")
-  assert.equal(hostConfig.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(hostConfig.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(hostConfig, /add column host_dispatch_url text/)
   assert.match(hostConfig, /host_dispatch_url ~ '\^https:\/\//)
   assert.match(hostConfig, /create function momi_agent_ops\.claim_dispatch_v2/)
@@ -79,7 +81,7 @@ test("host endpoint stays private, HTTPS-only, and resolves at claim time", asyn
 
 test("action catalog preserves one idempotent dispatch and private write-back", async () => {
   const migration = await readFile(actionCatalogPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   for (const action of ["validate-issue", "investigate-issue",
     "cleanup", "decompose", "run-discovery"]) assert.match(migration, new RegExp(action))
   assert.match(migration, /'exec' \|\| 'ute-run'/)
@@ -94,7 +96,7 @@ test("action catalog preserves one idempotent dispatch and private write-back", 
 
 test("discovery recovery is exact, state-independent, and releases only after archive", async () => {
   const migration = await readFile(recoveryPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(migration, /'recover-discovery'/)
   assert.match(migration, /create function momi_agent_ops\.accept_linear_webhook_v4/)
   assert.match(migration, /target\.action = 'run-discovery'/)
@@ -110,7 +112,7 @@ test("discovery recovery is exact, state-independent, and releases only after ar
 
 test("dead-letter recovery is private, exact, and rotates the existing dispatch", async () => {
   const migration = await readFile(deadLetterPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(migration, /create function momi_agent_ops\.recover_dead_letter_dispatch_v1/)
   assert.match(migration, /for update/)
   assert.match(migration, /'already_recovered'/)
@@ -129,7 +131,7 @@ test("dead-letter recovery is private, exact, and rotates the existing dispatch"
 
 test("ready-leaf scheduling stays private, exact-release gated, and default disabled", async () => {
   const migration = await readFile(schedulerPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   for (const table of ["scheduler_route_policies", "scheduler_leaders",
     "scheduler_candidates", "scheduler_slots"]) {
     assert.match(migration, new RegExp(
@@ -150,7 +152,7 @@ test("ready-leaf scheduling stays private, exact-release gated, and default disa
 
 test("decision alerts are private, attempt-first, exact-release gated, and separate from order alerts", async () => {
   const migration = await readFile(decisionAlertPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   for (const table of ["decision_alert_policies", "decision_alerts",
     "decision_delivery_work", "decision_delivery_attempts"]) {
     assert.match(migration, new RegExp(
@@ -171,7 +173,7 @@ test("decision alerts are private, attempt-first, exact-release gated, and separ
 
 test("execution telemetry is private, complete, percentile-backed, and atomic", async () => {
   const migration = await readFile(efficiencyPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   for (const table of ["execution_attempt_telemetry", "execution_checkpoints"]) {
     assert.match(migration, new RegExp(
       `alter table momi_agent_ops\\.${table} enable row level security`,
@@ -192,7 +194,7 @@ test("execution telemetry is private, complete, percentile-backed, and atomic", 
 
 test("canonical Agent State evidence is exact-generation, private, and repairable", async () => {
   const migration = await readFile(lifecyclePath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   for (const state of ["queued", "checking", "working", "validating", "reviewing",
     "releasing", "waiting", "failed", "stopped", "complete", "coordinating"]) {
     assert.match(migration, new RegExp(`'${state}'`))
@@ -211,7 +213,7 @@ test("canonical Agent State evidence is exact-generation, private, and repairabl
 
 test("native cancellation retires routine labels and fences the exact lifecycle", async () => {
   const migration = await readFile(nativeCancellationPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(migration, /linear_state_cancellation/)
   assert.match(migration, /afterType.*canceled/s)
   assert.match(migration, /with recursive lifecycle/)
@@ -228,7 +230,7 @@ test("native cancellation retires routine labels and fences the exact lifecycle"
 
 test("independent review state is minimal, exact-subject, private, and immutable", async () => {
   const migration = await readFile(independentReviewPath, "utf8")
-  assert.equal(migration.split("\n")[0], "-- service-owner: agent-control")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
   assert.match(migration, /create table momi_agent_ops\.review_attempts/)
   for (const field of ["implementation_dispatch_id", "reviewer_dispatch_id",
     "reviewer_callback_capability_hash", "repository", "pull_request_number",
@@ -258,4 +260,29 @@ test("independent review state is minimal, exact-subject, private, and immutable
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
   assert.match(migration, /from public, anon, authenticated, service_role/)
+})
+
+test("readiness and terminal projection state are minimal, durable, and replayable", async () => {
+  const migration = await readFile(projectionPath, "utf8")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
+  assert.match(migration, /required_labels set default array\['ready-package'\]/)
+  assert.doesNotMatch(migration, /implementation.*ready-package/)
+  for (const field of ["execution_status", "linear_projection_status",
+    "linear_projection_attempt_count", "linear_projection_next_attempt_at",
+    "linear_projection_last_error_code"]) assert.match(migration, new RegExp(field))
+  for (const routine of ["record_terminal_v6", "sync_terminal_execution_projection_v1",
+    "claim_terminal_projection_v1",
+    "record_terminal_projection_result_v1", "requeue_terminal_projection_v1"]) {
+    assert.match(migration, new RegExp(`momi_agent_ops\\.${routine}`))
+  }
+  assert.match(migration, /for update/)
+  assert.match(migration, /lifecycle_version = 'agent-state-v2'/)
+  assert.match(migration, /linear_projection_attempt_count >= 8/)
+  assert.match(migration, /linear_projection_attempt_count <> p_projection_attempt/)
+  assert.match(migration, /linear_projection_lease_expires_at <= now\(\)/)
+  assert.match(migration, /interval '10 minutes'/)
+  assert.match(migration, /before update of terminal_at, terminal_disposition/)
+  assert.match(migration, /linear_writeback_at is not null then 'succeeded'/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
 })

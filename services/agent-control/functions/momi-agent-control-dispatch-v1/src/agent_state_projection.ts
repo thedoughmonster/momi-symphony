@@ -60,7 +60,8 @@ export async function loadAgentStateEvidence(
       work.work_status, work.attempt_count, work.last_error_code,
       work.host_accepted_at::text, work.cancellation_state, work.cancelled_at::text,
       run.readiness_result, run.terminal_disposition, run.terminal_at::text,
-      run.linear_writeback_at::text, run.validation_state, run.validation_sha,
+      run.execution_status, run.linear_projection_status,
+      run.validation_state, run.validation_sha,
       case current_review.state
         when 'pending' then 'pending'
         when 'accepted' then 'succeeded'

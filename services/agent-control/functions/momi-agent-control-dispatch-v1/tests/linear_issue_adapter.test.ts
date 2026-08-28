@@ -131,79 +131,25 @@ test("all native parents remain non-dispatchable and progress comes from sub-iss
   );
 });
 
-test("structural readiness and decision labels fail closed with fixed reason codes", () => {
-  const cases: Array<
-    [string, (payload: Record<string, unknown>) => void, string]
-  > = [
-    ["incomplete", (payload) => {
-      payload.description = "No acceptance section";
-    }, "missing_acceptance_criteria"],
-    ["missing implementation scope", (payload) => {
-      payload.labels = {
-        nodes: [{ id: "ready", name: "ready-package" }],
-        pageInfo: { hasNextPage: false, endCursor: null },
-      };
-    }, "missing_implementation_scope"],
-    ["missing readiness attestation", (payload) => {
-      payload.labels = {
-        nodes: [{ id: "implementation", name: "Implementation" }],
-        pageInfo: { hasNextPage: false, endCursor: null },
-      };
-    }, "missing_readiness_attestation"],
-    ["blocking discovery", (payload) => {
-      (payload.labels as { nodes: unknown[] }).nodes.push({
-        id: "discovery",
-        name: "needs-discovery",
-      });
-    }, "blocking_discovery_required"],
-    ["unresolved material decision", (payload) => {
-      (payload.labels as { nodes: unknown[] }).nodes.push(
-        { id: "decision", name: "blocked-external-decision" },
-      );
-    }, "unresolved_material_decision"],
-  ];
-  for (const [name, mutate, reason] of cases) {
-    const payload = issueFixture();
-    mutate(payload);
-    const issue = normalizeLinearIssue(payload, profile);
-    assert.equal(issue.dispatchable, false, name);
-    assert.ok(issue.dispatchability_reasons.includes(reason as never), name);
-  }
-});
+test("one explicit attestation replaces prose shape, type, and exclusion labels", () => {
+  const payload = issueFixture();
+  payload.description = "A semantically complete package without a prescribed heading.";
+  payload.labels = {
+    nodes: [
+      { id: "ready", name: "ready-package" },
+      { id: "legacy-blocker", name: "needs-discovery" },
+      { id: "legacy-decision", name: "blocked-external-decision" },
+    ],
+    pageInfo: { hasNextPage: false, endCursor: null },
+  };
+  assert.equal(normalizeLinearIssue(payload, profile).dispatchable, true);
 
-test("acceptance detection recognizes standard numbered and case variants only", () => {
-  for (
-    const heading of [
-      "## Acceptance Criteria",
-      "## acceptance criteria",
-      "## 10. Acceptance criteria",
-      "## 10. ACCEPTANCE CRITERIA",
-    ]
-  ) {
-    const payload = issueFixture();
-    payload.description =
-      `${heading}\n\n- A concrete result is required.\n\n## Verification`;
-    assert.equal(
-      normalizeLinearIssue(payload, profile).dispatchable,
-      true,
-      heading,
-    );
-  }
-  for (
-    const description of [
-      "Acceptance criteria: a concrete result is required.",
-      "## Acceptance criteria\n\nA concrete result may be required.",
-      "## Something else\n\n- acceptance criteria appear only in prose",
-    ]
-  ) {
-    const payload = issueFixture();
-    payload.description = description;
-    assert.ok(
-      normalizeLinearIssue(payload, profile).dispatchability_reasons
-        .includes("missing_acceptance_criteria"),
-      description,
-    );
-  }
+  payload.labels = {
+    nodes: [{ id: "implementation", name: "Implementation" }],
+    pageInfo: { hasNextPage: false, endCursor: null },
+  };
+  assert.deepEqual(normalizeLinearIssue(payload, profile).dispatchability_reasons,
+    ["missing_readiness_attestation"]);
 });
 
 test("inverse blocks relation yields blockers while forward blocks relation is ignored", () => {
@@ -369,7 +315,6 @@ test("mapping, scope, labels, and core payload failures are deterministic", () =
     normalizeLinearIssue(malformedLabels, profile).dispatchability_reasons,
     [
       "labels_malformed",
-      "missing_implementation_scope",
       "missing_readiness_attestation",
     ],
   );

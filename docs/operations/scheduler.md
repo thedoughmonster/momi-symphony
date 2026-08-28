@@ -56,6 +56,11 @@ candidate generation, and freshness, counts active route/action slots, then
 creates one slot and one existing `execute-run` dispatch in the same
 transaction.
 
+`required_labels` contains only `ready-package`. It is rechecked from the
+immediately refreshed snapshot inside the atomic claim; `Implementation`, exact
+description headings, and legacy exclusion labels are not parallel readiness
+proofs.
+
 Priority ordering is `1..4` ascending, all other/null last, creation timestamp
 oldest/null last, then identifier. No aging term participates.
 
@@ -70,7 +75,10 @@ bounded technical backoff and never become decision alerts.
 ## Observability
 
 The pump response contains counts only: routes, observed candidates, claims,
-and technical retries. Do not add issue bodies, labels, provider responses,
+technical retries, terminal projection retries, and projection failures. Due
+terminal projections are leased and retried before ordinary Agent State repair;
+the ten-minute lease is fenced by an attempt generation so an expired worker
+cannot overwrite its reclaimer. Neither path invokes the host or creates a new dispatch. Do not add issue bodies, labels, provider responses,
 credentials, or work tokens to logs. Durable diagnosis comes from the private
 route policy's mode/retry fields and aggregate candidate/slot generation states.
 An enabled route with a future `next_provider_attempt_at` is in technical

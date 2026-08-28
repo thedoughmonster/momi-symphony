@@ -1,4 +1,4 @@
-export const AGENT_STATE_LIFECYCLE_VERSION = "agent-state-v1" as const
+export const AGENT_STATE_LIFECYCLE_VERSION = "agent-state-v2" as const
 
 export const AGENT_STATES = [
   "queued", "checking", "working", "validating", "reviewing", "releasing",
@@ -25,7 +25,9 @@ export type AgentStateEvidence = {
   readiness_result: string
   terminal_disposition: string | null
   terminal_at: string | null
-  linear_writeback_at: string | null
+  execution_status: "pending" | "running" | "succeeded" | "failed" | "interrupted"
+  linear_projection_status: "pending" | "in_progress" | "retryable" |
+    "failed" | "succeeded" | "superseded"
   validation_state: DeliveryEvidenceState
   validation_sha: string | null
   current_review_state: DeliveryEvidenceState
@@ -48,14 +50,16 @@ export function deriveAgentState(evidence: AgentStateEvidence): AgentState {
   exactDeliveryCorrelation(evidence)
 
   if (evidence.cancelled_at || evidence.work_status === "cancelled" ||
+    evidence.execution_status === "interrupted" ||
     (evidence.terminal_at && evidence.terminal_disposition === "interrupted")) return "stopped"
   if (evidence.work_status === "dead_letter" || evidence.work_status === "rejected" ||
+    evidence.execution_status === "failed" ||
     evidence.terminal_disposition === "failed" || evidence.readiness_result === "failed" ||
     evidence.validation_state === "failed" || evidence.current_review_state === "failed" ||
     evidence.release_state === "failed") return "failed"
 
   if (evidence.terminal_at && evidence.readiness_result === "ready" &&
-    evidence.terminal_disposition === "completed" && evidence.linear_writeback_at &&
+    evidence.terminal_disposition === "completed" && evidence.execution_status === "succeeded" &&
     obligationComplete(evidence.validation_state) &&
     obligationComplete(evidence.current_review_state) &&
     obligationComplete(evidence.release_state)) return "complete"
@@ -77,7 +81,7 @@ export function deriveAgentState(evidence: AgentStateEvidence): AgentState {
   if (["requested", "operator_intervention"].includes(evidence.cancellation_state)) {
     return "waiting"
   }
-  if (evidence.host_accepted_at ||
+  if (evidence.host_accepted_at || evidence.execution_status === "running" ||
     ["writeback_pending", "active", "completed"].includes(evidence.work_status)) {
     return "working"
   }

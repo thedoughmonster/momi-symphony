@@ -1,8 +1,8 @@
-import type { LinearIssueState, TerminalContext, TerminalInput } from "./types.ts"
+import type { LinearIssueState, TerminalContext, TerminalProjectionInput } from "./types.ts"
 
 export function selectTerminalCompletionState(
   context: TerminalContext,
-  terminal: TerminalInput,
+  terminal: TerminalProjectionInput,
   issue: LinearIssueState,
 ): string | null {
   const shouldComplete = context.action === "execute-run" &&

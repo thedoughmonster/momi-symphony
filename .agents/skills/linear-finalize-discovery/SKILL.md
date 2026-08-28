@@ -28,8 +28,8 @@ filesystem, call GitHub, create a repository/branch/worktree/commit/PR, run
 validation, create an agent/thread/task, add an execution action label, start a
 dispatch, merge, release, deploy, or archive the discovery task.
 
-`Implementation` and `ready-package` are planning/readiness labels, not
-execution actions. Never add `execute-run` or any other action-catalog label.
+`ready-package` is the one explicit execution-readiness attestation. It is not
+an execution action. Never add `execute-run` or any other action-catalog label.
 
 ## 1. Re-read the bounded source of truth
 
@@ -56,7 +56,7 @@ For every desired node, settle in memory:
 - stable title, team/project, priority, and existing identity when known;
 - implementation outcome, bounded scope and non-goals;
 - settled material decisions and unresolved material decisions;
-- a `## Acceptance criteria` section containing at least one list item;
+- acceptance evidence in the natural structure best suited to the issue;
 - proof expectations, ownership, repository, and base branch;
 - native parent and `blockedBy` identities.
 
@@ -101,39 +101,43 @@ body or a concise issue comment. Do not leave the only durable copy in chat.
 
 ## 5. Apply MOX-230 readiness conservatively
 
-A leaf is structurally complete only when every current read or desired write
-proves:
+A leaf is dispatch-ready only when every current read or desired write proves:
 
-- exact project/repository/base mapping and `Implementation` scope;
-- a non-empty `## Acceptance criteria` list;
-- no `needs-discovery` or `blocked-external-decision` label;
-- a valid native parent when applicable and no direct sub-issue; and
-- complete valid native relations.
+- exact project/repository/base mapping;
+- an active mapped state;
+- no direct sub-issue and complete, valid native hierarchy and blocker data;
+- every native blocker has status type `completed`; and
+- the one explicit `ready-package` attestation.
+
+Use the issue body to preserve natural acceptance evidence and settled decisions,
+but do not require a particular heading, list shape, work-type label, or legacy
+exclusion label as an additional readiness proof. Add `ready-package` only when
+the package is semantically ready; removing it is how planning revokes that
+attestation.
 
 For this repository mapping, the exact finalization-ready package is state
-`Todo` with labels `Implementation` and `ready-package`. Apply that package to
+`Todo` with label `ready-package`. Apply that package to
 every structurally complete leaf with no current freeze/baseline gate, including
 a leaf held by a non-completed native blocker. Classify the result exactly:
 
 | Node condition | Linear state | Readiness labels | Report category |
 | --- | --- | --- | --- |
-| Complete leaf, no freeze, every blocker completed | `Todo` | `Implementation` + `ready-package` | `ready` |
-| Complete leaf, no freeze, any blocker non-completed | `Todo` | `Implementation` + `ready-package` | `dependency-blocked` |
-| Structurally incomplete leaf | `Backlog` | never `ready-package`; use `needs-discovery` when material is missing | `unresolved` |
-| Leaf with an unresolved material decision | `Backlog` | never `ready-package`; use `blocked-external-decision` | `unresolved` |
+| Complete leaf, no freeze, every blocker completed | `Todo` | `ready-package` | `ready` |
+| Complete leaf, no freeze, any blocker non-completed | `Todo` | `ready-package` | `dependency-blocked` |
+| Structurally incomplete leaf | `Backlog` | never `ready-package` | `unresolved` |
+| Leaf with an unresolved material decision | `Backlog` | never `ready-package` | `unresolved` |
 | Leaf under a current freeze/baseline gate | `Backlog` | never `ready-package` | `freeze-blocked` |
 | Parent or any node with a direct sub-issue | `Backlog` | never `ready-package` | not a ready leaf |
 
 A native blocker is solely a dispatchability gate, not a finalization-state
 gate. While any blocker status type is not `completed`, the adapter must derive
 `dispatchable=false` from the native relation even though the dependent leaf is
-already `Todo` with both readiness labels. After every blocker becomes
+already `Todo` with its readiness attestation. After every blocker becomes
 `completed`, the existing scheduler observes the same dependent state and
 labels as `dispatchable=true`; do not change the dependent leaf's state or
 labels and do not add a status-promotion process.
 
-Remove a blocking discovery or decision label only when the explicit
-finalization payload settles it. Do not write a competing `dispatchable` field.
+Do not write a competing `dispatchable` field.
 Dispatchability remains the MOX-230 derived result of the native issue shape.
 
 ## 6. Read back and prove convergence
@@ -154,9 +158,9 @@ Return all seven categories, using `none` for an empty category:
 - `created`: new identifiers;
 - `updated`: existing identifiers with explicitly changed fields;
 - `reused`: matching identifiers already converged;
-- `ready`: complete unblocked leaves placed in `Todo` with both readiness labels;
-- `dependency-blocked`: complete leaves already in `Todo` with both readiness
-  labels but held solely by non-completed native blockers;
+- `ready`: complete unblocked leaves placed in `Todo` with `ready-package`;
+- `dependency-blocked`: complete leaves already in `Todo` with `ready-package`
+  but held solely by non-completed native blockers;
 - `freeze-blocked`: otherwise-ready leaves held by a current freeze/baseline;
 - `unresolved`: ambiguous identities, missing decisions, stale reads, ambiguous
   writes, relation mismatches, or other stopped work.

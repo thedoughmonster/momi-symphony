@@ -11,21 +11,26 @@ const terminal: TerminalInput = { event: "terminal",
   terminal_disposition: "completed", archived_at: "2026-08-14T12:00:00.000Z",
   summary: "Merged to dev; deployment pending." }
 
-test("terminal completion persists reconciled Linear evidence", async () => {
-  let recordedComment: string | null = null
+test("terminal completion persists before its Linear projection", async () => {
   const result = await processTerminal(terminal,
     () => Promise.resolve({ issue_id: "issue-1", issue_identifier: "MOX-151",
       action: "cleanup", linear_comment_id: null }),
-    () => Promise.resolve("comment-1"),
-    (_input, commentId) => { recordedComment = commentId; return Promise.resolve(true) },
-    () => Promise.resolve())
-  assert.deepEqual(result, { ok: true, disposition: "completed" })
-  assert.equal(recordedComment, "comment-1")
+    () => Promise.resolve({ claimed: true, status: "succeeded" }))
+  assert.deepEqual(result, { ok: true, disposition: "completed",
+    execution_status: "succeeded", projection_status: "succeeded" })
+})
+
+test("a Linear outage is visible and does not fail completed execution", async () => {
+  const result = await processTerminal(terminal,
+    () => Promise.resolve({ issue_id: "issue-1", issue_identifier: "MOX-151",
+      action: "cleanup", linear_comment_id: null }),
+    () => Promise.resolve({ claimed: true, status: "retryable" }))
+  assert.deepEqual(result, { ok: true, disposition: "completed",
+    execution_status: "succeeded", projection_status: "retryable" })
 })
 
 test("an unbound terminal callback remains retryable", async () => {
   await assert.rejects(processTerminal(terminal, () => Promise.resolve(null),
-    () => Promise.resolve("comment-1"), () => Promise.resolve(true),
-    () => Promise.resolve()),
+    () => Promise.resolve({ claimed: false, status: "skipped" })),
   /terminal_record_refused/)
 })

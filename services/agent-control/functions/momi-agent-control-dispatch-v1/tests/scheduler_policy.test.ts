@@ -9,13 +9,13 @@ import {
 } from "../../../src/scheduler_policy.ts"
 
 const policy = { activeStates: ["Todo", "In Progress"],
-  requiredLabels: ["implementation", "ready-package"] }
+  requiredLabels: ["ready-package"] }
 
 function issue(overrides: Partial<SchedulableIssue> = {}): SchedulableIssue {
   return { id: "issue-1", identifier: "MOX-1", title: "Leaf", state: "Todo",
     priority: 2, created_at: "2026-08-19T00:00:00.000Z",
     url: "https://linear.app/mox/issue/MOX-1/leaf",
-    labels: ["Implementation", "ready-package"], dispatchable: true, ...overrides }
+    labels: ["ready-package"], dispatchable: true, ...overrides }
 }
 
 test("scheduler eligibility is table-driven and consumes normalized dispatchable", () => {
@@ -24,7 +24,7 @@ test("scheduler eligibility is table-driven and consumes normalized dispatchable
     ["parent/non-leaf", issue({ dispatchable: false }), false, "adapter_unroutable"],
     ["dependency blocked leaf", issue({ dispatchable: false }), false, "adapter_unroutable"],
     ["inactive state", issue({ state: "Backlog" }), false, "inactive_state"],
-    ["required label miss", issue({ labels: ["Implementation"] }), false,
+    ["required label miss", issue({ labels: [] }), false,
       "required_label_missing"],
     ["missing canonical URL", issue({ url: null }), false, "invalid_issue_url"],
   ]

@@ -59,22 +59,17 @@ name table; `canceled` and `duplicate` explicitly do not satisfy dependencies.
 `dispatchable=true` requires every structural condition below:
 
 - valid authoritative project/repository/base mapping and scope match;
-- `Implementation` work-type label;
-- `ready-package` attestation label;
-- a second-level `Acceptance criteria` heading, optionally prefixed by the
-  standard numeric section (`## 10. Acceptance criteria`), containing at least
-  one Markdown list item;
-- no `needs-discovery` label;
-- no `blocked-external-decision` label;
+- one explicit `ready-package` attestation label;
 - valid native parent when present;
 - no direct sub-issue;
 - complete, valid native relation data;
 - every native blocker in Linear status type `completed`.
 
-The readiness label is a conservative attestation, never a replacement for the
-mapping, hierarchy, dependency, scope, or acceptance-section checks. The
-acceptance check recognizes only the repository's explicit heading/list shape;
-it does not infer readiness from prose.
+The attestation is the only content-level readiness proof. Issue descriptions
+remain natural planning evidence; their heading/list shape, work-type labels,
+and legacy discovery/decision labels are not additional dispatch gates. Mapping,
+active workflow state, hierarchy integrity, and native blockers remain hard
+structural gates.
 
 Existing issues with neither a native parent nor direct sub-issues use
 `allow_attested_standalone_root`. They may dispatch only after every condition

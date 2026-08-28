@@ -12,6 +12,8 @@ const skillPath = ".agents/skills/linear-finalize-discovery/SKILL.md"
 const metadataPath = ".agents/skills/linear-finalize-discovery/agents/openai.yaml"
 const projectMappingPath = "config/project-mappings.json"
 const schedulerMigrationPath = "supabase/migrations/20260819045838_add_ready_leaf_scheduler.sql"
+const readinessMigrationPath =
+  "supabase/migrations/20260828190000_simplify_readiness_and_decouple_projection.sql"
 
 async function skill(): Promise<string> {
   return await readFile(skillPath, "utf8")
@@ -29,7 +31,7 @@ function assertOrdered(source: string, fragments: string[]): void {
 
 test("skill trigger accepts explicit finalization and rejects inferred intent", async () => {
   const source = await skill()
-  assert.match(source, /current user message clearly requests finalization into\nLinear/)
+  assert.match(source, /current user message clearly requests finalization into\r?\nLinear/)
   assert.match(source, /Finalize this discovery into Linear/)
   assert.match(source, /If intent is ambiguous, ask one concise clarification and make no write/)
   for (const negative of ["quiet conversation", "elapsed time", "turn completion",
@@ -58,20 +60,20 @@ test("skill encodes search-before-create, replay, and ambiguous-write stops", as
 test("golden native graph requires preservation, relations, and exact readback", async () => {
   const source = await skill()
   assert.match(source, /preserve its identifier[\s\S]*all unrelated human-authored description/)
-  assert.match(source, /Set each leaf's native\n`parentId`/)
+  assert.match(source, /Set each leaf's native\r?\n`parentId`/)
   assert.match(source, /Add only missing native `blockedBy` relations/)
-  assert.match(source, /requirements and decisions in the body[\s\S]*hierarchy and dependencies in\nnative fields/)
+  assert.match(source, /requirements and decisions in the body[\s\S]*hierarchy and dependencies in\r?\nnative fields/)
   assert.match(source, /After every write, read the affected issue with relations and verify identity/)
-  assert.match(source, /one identity per desired\nnode and one copy of each relation/)
+  assert.match(source, /one identity per desired\r?\nnode and one copy of each relation/)
 })
 
-test("MOX-230 readiness and report categories are complete", async () => {
+test("minimal readiness and report categories are complete", async () => {
   const source = await skill()
-  for (const requirement of ["Implementation", "ready-package", "## Acceptance criteria",
-    "needs-discovery", "blocked-external-decision", "blocker status type is not `completed`"]) {
+  for (const requirement of ["ready-package", "exact project/repository/base mapping",
+    "active mapped state", "every native blocker has status type `completed`"]) {
     assert.match(source, new RegExp(requirement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   }
-  assert.match(source, /Complete leaf, no freeze, any blocker non-completed \| `Todo` \| `Implementation` \+ `ready-package` \| `dependency-blocked`/)
+  assert.match(source, /Complete leaf, no freeze, any blocker non-completed \| `Todo` \| `ready-package` \| `dependency-blocked`/)
   for (const nonReady of ["Structurally incomplete leaf",
     "Leaf with an unresolved material decision",
     "Leaf under a current freeze/baseline gate",
@@ -86,13 +88,13 @@ test("mixed finalized graph keeps ready, blocked, and excluded nodes distinct", 
   const source = await skill()
   const fixtures = [
     ["Complete leaf, no freeze, every blocker completed", "`Todo`",
-      "`Implementation` + `ready-package`", "`ready`"],
+      "`ready-package`", "`ready`"],
     ["Complete leaf, no freeze, any blocker non-completed", "`Todo`",
-      "`Implementation` + `ready-package`", "`dependency-blocked`"],
+      "`ready-package`", "`dependency-blocked`"],
     ["Structurally incomplete leaf", "`Backlog`",
-      "never `ready-package`; use `needs-discovery` when material is missing", "`unresolved`"],
+      "never `ready-package`", "`unresolved`"],
     ["Leaf with an unresolved material decision", "`Backlog`",
-      "never `ready-package`; use `blocked-external-decision`", "`unresolved`"],
+      "never `ready-package`", "`unresolved`"],
     ["Leaf under a current freeze/baseline gate", "`Backlog`",
       "never `ready-package`", "`freeze-blocked`"],
     ["Parent or any node with a direct sub-issue", "`Backlog`",
@@ -110,10 +112,10 @@ test("mixed finalized graph keeps ready, blocked, and excluded nodes distinct", 
 test("finalizer state and labels converge with scheduler blocker handling", async () => {
   const source = await skill()
   const declared = source.match(
-    /exact finalization-ready package is state\n`([^`]+)` with labels `([^`]+)` and `([^`]+)`/,
+    /exact finalization-ready package is state\r?\n`([^`]+)` with label `([^`]+)`/,
   )
   assert.ok(declared, "skill must declare one exact finalizer/scheduler package")
-  const [, readyState, implementationLabel, readinessLabel] = declared
+  const [, readyState, readinessLabel] = declared
   const mappings = JSON.parse(await readFile(projectMappingPath, "utf8")) as Array<{
     linear_project_id: string
     repository: string
@@ -124,14 +126,15 @@ test("finalizer state and labels converge with scheduler blocker handling", asyn
     candidate.linear_project_id === "de0dbcdb-9025-4ccc-8b3c-56f23d7367d5")
   assert.ok(mapping)
   assert.equal(mapping.active_states[0], readyState)
-  const schedulerMigration = await readFile(schedulerMigrationPath, "utf8")
-  const required = schedulerMigration.match(
-    /required_labels text\[\] not null default array\['([^']+)', '([^']+)'\]::text\[\]/,
+  assert.match(await readFile(schedulerMigrationPath, "utf8"),
+    /required_labels text\[\] not null/)
+  const readinessMigration = await readFile(readinessMigrationPath, "utf8")
+  const required = readinessMigration.match(
+    /required_labels set default array\['([^']+)'\]::text\[\]/,
   )
   assert.ok(required)
   const requiredLabels = required.slice(1)
-  assert.deepEqual(requiredLabels,
-    [implementationLabel.toLowerCase(), readinessLabel.toLowerCase()])
+  assert.deepEqual(requiredLabels, [readinessLabel.toLowerCase()])
 
   const payload = {
     id: "leaf-b",
@@ -146,7 +149,6 @@ test("finalizer state and labels converge with scheduler blocker handling", asyn
     project: { id: mapping.linear_project_id },
     team: { id: "team-1" },
     labels: { nodes: [
-      { id: "implementation", name: implementationLabel },
       { id: "ready", name: readinessLabel },
     ], pageInfo: { hasNextPage: false, endCursor: null } },
     parent: { id: "parent", identifier: "MOX-250",
@@ -159,12 +161,11 @@ test("finalizer state and labels converge with scheduler blocker handling", asyn
   }
   const profile = createLinearAdapterProfile({ projectId: mapping.linear_project_id,
     teamId: "team-1", repository: mapping.repository, baseBranch: mapping.base_branch })
-  assert.deepEqual([...profile.implementationLabels, ...profile.readinessLabels],
-    requiredLabels)
+  assert.deepEqual([...profile.readinessLabels], requiredLabels)
   const policy = { activeStates: mapping.active_states, requiredLabels }
   const blocked = normalizeLinearIssue(payload, profile)
   assert.equal(blocked.state, readyState)
-  assert.deepEqual(blocked.labels, [implementationLabel.toLowerCase(), readinessLabel])
+  assert.deepEqual(blocked.labels, [readinessLabel])
   assert.deepEqual(blocked.dispatchability_reasons, ["blocker_not_accepted"])
   assert.deepEqual(schedulerEligibility(blocked, policy), {
     eligible: false, reason: "adapter_unroutable",

@@ -21,6 +21,8 @@ import {
 import { reconcileAgentState } from "./agent_state_projection.ts"
 import type { NormalizedLinearIssue } from "./linear_issue_adapter.ts"
 import type { SchedulerPumpInput } from "./types.ts"
+import { listDueTerminalProjectionIds, processTerminalProjection } from "./terminal_projection.ts"
+import type { TerminalProjectionResult } from "./terminal_projection.ts"
 
 export type ReadyLeafSchedulerDependencies = {
   routes: () => Promise<SchedulerRoute[]>
@@ -36,6 +38,8 @@ export type ReadyLeafSchedulerDependencies = {
     leader: SchedulerLeader,
     candidate: SchedulerCandidate) => Promise<SchedulerClaim | null>
   project: (dispatchId: string) => Promise<unknown>
+  projectionIds: (route: SchedulerRoute) => Promise<string[]>
+  replayProjection: (dispatchId: string) => Promise<TerminalProjectionResult>
   heartbeat: (activeWorkIds: readonly string[]) => Promise<void>
   providerRetry: (routeKey: string, errorCode: string) => Promise<void>
   providerSuccess: (routeKey: string) => Promise<void>
@@ -47,6 +51,8 @@ export type ReadyLeafSchedulerReceipt = {
   observed: number
   claimed: number
   technical_retries: number
+  projection_retries: number
+  projection_failures: number
 }
 
 function adapterProfile(route: SchedulerRoute) {
@@ -73,6 +79,8 @@ function defaultDependencies(): ReadyLeafSchedulerDependencies {
     stale: markSchedulerCandidateStale,
     claim: claimSchedulerCandidate,
     project: reconcileAgentState,
+    projectionIds: listDueTerminalProjectionIds,
+    replayProjection: processTerminalProjection,
     heartbeat: heartbeatSchedulerSlots,
     providerRetry: recordSchedulerProviderRetry,
     providerSuccess: recordSchedulerProviderSuccess,
@@ -162,6 +170,8 @@ export async function processReadyLeafSchedulerPump(
   let observed = 0
   let claimed = 0
   let technicalRetries = 0
+  let projectionRetries = 0
+  let projectionFailures = 0
   for (const route of routes) {
     const leader = await dependencies.acquireLeader(
       route.routeKey, input.scheduler_id, input.release_sha,
@@ -177,6 +187,13 @@ export async function processReadyLeafSchedulerPump(
         observed += receipt.observed
         claimed += receipt.claimed
       }
+      for (const dispatchId of await dependencies.projectionIds(route)) {
+        const projection = await dependencies.replayProjection(dispatchId)
+        if (projection.claimed) projectionRetries += 1
+        if (projection.status === "failed" || projection.status === "retryable") {
+          projectionFailures += 1
+        }
+      }
       for (const dispatchId of await dependencies.projectable(route)) {
         await dependencies.project(dispatchId)
       }
@@ -187,5 +204,6 @@ export async function processReadyLeafSchedulerPump(
     }
   }
   return { ok: true, routes: routes.length, observed, claimed,
-    technical_retries: technicalRetries }
+    technical_retries: technicalRetries, projection_retries: projectionRetries,
+    projection_failures: projectionFailures }
 }

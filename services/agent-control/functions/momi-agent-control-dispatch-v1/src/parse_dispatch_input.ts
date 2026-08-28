@@ -1,5 +1,6 @@
 import { validReviewFinding } from "../../../src/independent_review.ts"
-import type { DispatchInput, LifecycleEvidenceInput, MergeRequestInput, SchedulerPumpInput,
+import type { DispatchInput, LifecycleEvidenceInput, MergeRequestInput, ProjectionReplayInput,
+  SchedulerPumpInput,
   ReviewRequestInput, ReviewStatusInput, ReviewTerminalInput, TerminalInput } from "./types.ts"
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -7,10 +8,17 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export function parseDispatchInput(
   value: unknown,
 ): DispatchInput | LifecycleEvidenceInput | MergeRequestInput | ReviewRequestInput | ReviewStatusInput |
-  ReviewTerminalInput | SchedulerPumpInput | TerminalInput | null {
+  ProjectionReplayInput | ReviewTerminalInput | SchedulerPumpInput | TerminalInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const body = value as Record<string, unknown>
   if (body.event === "review_terminal") return parseReviewTerminal(body)
+  if (body.event === "projection_replay") {
+    const ids = body.dispatch_ids
+    if (Object.keys(body).sort().join(",") !== "dispatch_ids,event" ||
+      !Array.isArray(ids) || ids.length < 1 || ids.length > 50 ||
+      ids.some((id) => !uuid.test(String(id))) || new Set(ids).size !== ids.length) return null
+    return { event: "projection_replay", dispatch_ids: ids as string[] }
+  }
   if (body.event === "scheduler_pump") {
     const active = body.active_work_ids
     const keys = Object.keys(body).sort().join(",")
