@@ -6,13 +6,14 @@ import type { AgentStateEvidence } from "../src/agent_state.ts"
 
 function evidence(overrides: Partial<AgentStateEvidence> = {}): AgentStateEvidence {
   return {
-    lifecycle_version: "agent-state-v1",
+    lifecycle_version: "agent-state-v2",
     dispatch_id: "00000000-0000-4000-8000-000000000001",
     current_dispatch_id: "00000000-0000-4000-8000-000000000001",
     action: "execute-run", source_kind: "ready_leaf_scheduler", work_status: "pending",
     attempt_count: 0, last_error_code: null, host_accepted_at: null,
     cancellation_state: "not_requested", cancelled_at: null, readiness_result: "pending",
-    terminal_disposition: null, terminal_at: null, linear_writeback_at: null,
+    terminal_disposition: null, terminal_at: null, execution_status: "pending",
+    linear_projection_status: "pending",
     validation_state: "not_required", validation_sha: null,
     current_review_state: "not_required", current_review_sha: null,
     release_state: "not_required", release_sha: null,
@@ -54,15 +55,16 @@ test("review rework resumes working while inconclusive evidence waits", () => {
     work_status: "active" })), "waiting")
 })
 
-test("terminal state requires applicable obligations and Linear writeback", () => {
+test("terminal state requires durable execution but not its Linear projection", () => {
   const terminal = { work_status: "completed" as const, readiness_result: "ready",
-    terminal_disposition: "completed" as const, terminal_at: "2026-08-20T12:00:00Z" }
-  assert.equal(deriveAgentState(evidence(terminal)), "working")
+    terminal_disposition: "completed" as const, terminal_at: "2026-08-20T12:00:00Z",
+    execution_status: "succeeded" as const }
+  assert.equal(deriveAgentState(evidence(terminal)), "complete")
   assert.equal(deriveAgentState(evidence({ ...terminal,
-    linear_writeback_at: "2026-08-20T12:01:00Z" })), "complete")
+    linear_projection_status: "retryable" })), "complete")
   const head = "a".repeat(40)
   assert.equal(deriveAgentState(evidence({ ...terminal,
-    linear_writeback_at: "2026-08-20T12:01:00Z", head_sha: head,
+    head_sha: head,
     validation_state: "pending", validation_sha: head })), "validating")
 })
 

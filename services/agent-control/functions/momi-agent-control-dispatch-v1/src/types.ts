@@ -13,6 +13,11 @@ export type SchedulerPumpInput = {
   active_work_ids: string[]
 }
 
+export type ProjectionReplayInput = {
+  event: "projection_replay"
+  dispatch_ids: string[]
+}
+
 export type CancellationState = "not_requested" | "queued_cancelled" | "requested" |
   "already_terminal" | "no_target" | "operator_intervention"
 
@@ -29,6 +34,15 @@ export type TerminalInput = DispatchInput & {
   summary: string
   telemetry: AttemptTelemetry
 }
+
+export type TerminalProjectionInput = Pick<TerminalInput,
+  "work_id" | "thread_id" | "turn_id" | "readiness_result" |
+  "terminal_disposition" | "archived_at" | "summary">
+
+export type LinearProjectionStatus = "pending" | "in_progress" | "retryable" |
+  "failed" | "succeeded" | "superseded"
+
+export type TerminalProjectionContext = TerminalContext & TerminalProjectionInput
 
 export type LifecycleEvidenceInput = DispatchInput & {
   event: "lifecycle_evidence"

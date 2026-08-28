@@ -14,11 +14,7 @@ export type LinearDispatchabilityReason =
   | "project_scope_mismatch"
   | "team_scope_mismatch"
   | "labels_malformed"
-  | "missing_implementation_scope"
   | "missing_readiness_attestation"
-  | "missing_acceptance_criteria"
-  | "blocking_discovery_required"
-  | "unresolved_material_decision"
   | "parent_malformed"
   | "sub_issue_malformed"
   | "sub_issues_truncated"
@@ -33,10 +29,7 @@ export type LinearAdapterProfile = {
   teamId: string | null;
   repository: string | null;
   baseBranch: string | null;
-  implementationLabels: readonly string[];
   readinessLabels: readonly string[];
-  discoveryBlockingLabels: readonly string[];
-  decisionBlockingLabels: readonly string[];
   acceptedBlockerStateTypes: readonly LinearStatusType[];
   compatibility: "allow_attested_standalone_root";
 };
@@ -91,7 +84,6 @@ export type NormalizedLinearIssue = {
 };
 
 export type LinearReadinessInput = {
-  description: string | null;
   labels: readonly string[];
   labelsMalformed: boolean;
   projectId: string | null;
@@ -138,10 +130,7 @@ export function createLinearAdapterProfile(mapping: {
     teamId: cleanOptional(mapping.teamId),
     repository: cleanOptional(mapping.repository),
     baseBranch: cleanOptional(mapping.baseBranch),
-    implementationLabels: ["implementation"],
     readinessLabels: ["ready-package"],
-    discoveryBlockingLabels: ["needs-discovery"],
-    decisionBlockingLabels: ["blocked-external-decision"],
     acceptedBlockerStateTypes: ["completed"],
     compatibility: "allow_attested_standalone_root",
   };
@@ -170,20 +159,8 @@ export function deriveLinearDispatchability(
     add("team_scope_mismatch");
   }
   if (issue.labelsMalformed) add("labels_malformed");
-  if (!hasAnyLabel(issue.labels, profile.implementationLabels)) {
-    add("missing_implementation_scope");
-  }
   if (!hasEveryLabel(issue.labels, profile.readinessLabels)) {
     add("missing_readiness_attestation");
-  }
-  if (!hasAcceptanceCriteria(issue.description)) {
-    add("missing_acceptance_criteria");
-  }
-  if (hasAnyLabel(issue.labels, profile.discoveryBlockingLabels)) {
-    add("blocking_discovery_required");
-  }
-  if (hasAnyLabel(issue.labels, profile.decisionBlockingLabels)) {
-    add("unresolved_material_decision");
   }
   if (issue.parentMalformed) add("parent_malformed");
   if (issue.subIssuesMalformed) add("sub_issue_malformed");
@@ -224,7 +201,6 @@ export function normalizeLinearIssue(
   const projectId = optionalText(asRecord(issue.project)?.id);
   const teamId = optionalText(asRecord(issue.team)?.id);
   const readiness = deriveLinearDispatchability({
-    description,
     labels: labelsResult.labels,
     labelsMalformed: labelsResult.malformed,
     projectId,
@@ -402,28 +378,6 @@ function decodeIssueRef(value: Record<string, unknown> | null): {
     malformed: !ref.id || !ref.identifier || !ref.state || !ref.state_id ||
       !stateType,
   };
-}
-
-function hasAcceptanceCriteria(description: string | null): boolean {
-  if (!description) return false;
-  const lines = description.replace(/\r\n?/g, "\n").split("\n");
-  const heading = lines.findIndex((line) =>
-    /^##\s+(?:\d+\.\s+)?acceptance criteria\s*$/i.test(line.trim())
-  );
-  if (heading < 0) return false;
-  for (const line of lines.slice(heading + 1)) {
-    if (/^##\s+/.test(line.trim())) break;
-    if (/^\s*(?:[-*+] |\d+\. )\S/.test(line)) return true;
-  }
-  return false;
-}
-
-function hasAnyLabel(
-  labels: readonly string[],
-  expected: readonly string[],
-): boolean {
-  const present = new Set(labels.map((label) => label.trim().toLowerCase()));
-  return expected.some((label) => present.has(label.trim().toLowerCase()));
 }
 
 function hasEveryLabel(

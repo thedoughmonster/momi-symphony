@@ -28,6 +28,17 @@ test("scheduler pump input is exact, bounded, and replay-safe", () => {
     scheduler_id: schedulerId, release_sha: "b".repeat(39), active_work_ids: [] }), null)
 })
 
+test("projection replay input is exact, explicit, and bounded", () => {
+  assert.deepEqual(parseDispatchInput({ event: "projection_replay",
+    dispatch_ids: [workId] }), { event: "projection_replay", dispatch_ids: [workId] })
+  assert.equal(parseDispatchInput({ event: "projection_replay",
+    dispatch_ids: [workId, workId] }), null)
+  assert.equal(parseDispatchInput({ event: "projection_replay", dispatch_ids: [] }), null)
+  assert.equal(parseDispatchInput({ event: "projection_replay",
+    dispatch_ids: Array.from({ length: 51 }, (_, index) =>
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`) }), null)
+})
+
 test("scheduler pump reuses the host-authenticated control-plane boundary", async () => {
   const input = { event: "scheduler_pump" as const, scheduler_id: schedulerId,
     release_sha: releaseSha, active_work_ids: [workId] }
@@ -37,7 +48,7 @@ test("scheduler pump reuses the host-authenticated control-plane boundary", asyn
       calls += 1
       assert.deepEqual(received, input)
       return { ok: true as const, routes: 0, observed: 0, claimed: 0,
-        technical_retries: 0 }
+        technical_retries: 0, projection_retries: 0, projection_failures: 0 }
     } }
   const unauthorized = await handleRequestWithDependencies(new Request(
     "https://agent-control.example/v1/dispatch",
@@ -54,5 +65,6 @@ test("scheduler pump reuses the host-authenticated control-plane boundary", asyn
   assert.equal(authorized.status, 200)
   assert.equal(calls, 1)
   assert.deepEqual(await authorized.json(), { ok: true, routes: 0, observed: 0,
-    claimed: 0, technical_retries: 0 })
+    claimed: 0, technical_retries: 0, projection_retries: 0,
+    projection_failures: 0 })
 })

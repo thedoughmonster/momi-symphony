@@ -1,13 +1,13 @@
 import { buildLinearComment } from "./build_linear_comment.ts"
 import { loadLinearIssue } from "./load_linear_issue.ts"
-import type { ClaimedDispatch, TerminalContext, TerminalInput } from "./types.ts"
+import type { ClaimedDispatch, TerminalContext, TerminalProjectionInput } from "./types.ts"
 import { selectTerminalCompletionState } from "./terminal_state_transition.ts"
 import { writeLinearComment } from "./write_linear_comment.ts"
 import { writeLinearCompletion, writeLinearLabels } from "./write_linear_labels.ts"
 
 export async function reconcileTerminal(
   context: TerminalContext,
-  terminal: TerminalInput,
+  terminal: TerminalProjectionInput,
 ): Promise<string> {
   const issue = await loadLinearIssue(context.issue_id)
   if (issue.identifier !== context.issue_identifier) {

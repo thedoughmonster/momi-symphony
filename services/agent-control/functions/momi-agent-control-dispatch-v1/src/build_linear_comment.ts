@@ -1,6 +1,7 @@
-import type { ClaimedDispatch, TerminalInput } from "./types.ts"
+import type { ClaimedDispatch, TerminalProjectionInput } from "./types.ts"
 
-export function buildLinearComment(work: ClaimedDispatch, terminal?: TerminalInput): string {
+export function buildLinearComment(work: ClaimedDispatch,
+  terminal?: TerminalProjectionInput): string {
   const marker = `<!-- momi-agent-control:${work.work_id} -->`
   if (work.action === "run-discovery") {
     if (work.rejection_code) return `${marker}\nDiscovery unavailable · ${work.rejection_code}.`

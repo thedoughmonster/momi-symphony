@@ -14,6 +14,8 @@ The authenticated host adapter uses the same route for a terminal callback.
 The same bearer-authenticated route accepts the host-owned scheduler pump; its
 input contains only a scheduler UUID, exact release SHA, and bounded active
 work IDs.
+The same authenticated boundary accepts a bounded `projection_replay` request
+containing one to fifty explicit completed dispatch IDs.
 `GET` is a configuration-only probe.
 
 Dispatch input contains only the work identity and per-work token. Terminal
@@ -40,7 +42,9 @@ sanitized pending status before host delivery, and never starts a Codex task.
 The scheduler pump reads normalized candidates, reconciles their current
 generation, refreshes an issue immediately before an atomic claim, and creates
 the existing dispatch shape only after both route and action-class capacity are
-reserved. `observe` mode cannot claim.
+reserved. `observe` mode cannot claim. Terminal execution is committed before
+Linear reconciliation; a failed projection is leased, visible, and retried by
+the scheduler or explicit replay without another host task or model turn.
 
 ## Tests
 

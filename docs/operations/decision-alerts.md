@@ -58,7 +58,9 @@ excluded category must leave attempt and Slack message counts unchanged.
 
 Resolve only by editing the same Linear comment and removing the blocking
 label. Prove one reply on the initial thread, one resolved lifecycle, and a
-later normalized issue read with no `unresolved_material_decision` reason.
+later normalized issue read that preserves the ready attestation. Decision-alert
+eligibility owns the blocking label; the scheduler no longer treats that legacy
+label as a second readiness gate.
 
 If Slack returns `429`, respect `Retry-After` and do not switch tools. If the
 request or receipt is ambiguous, stop without retry and preserve the evidence.

@@ -11,7 +11,7 @@ const workId = "00000000-0000-4000-8000-000000000002"
 const releaseSha = "a".repeat(40)
 const callbackUrl = new URL("https://agent-control.example/v1/dispatch")
 const receipt = { ok: true as const, routes: 1, observed: 1, claimed: 0,
-  technical_retries: 0 }
+  technical_retries: 0, projection_retries: 0, projection_failures: 0 }
 
 test("scheduler pump remains disabled unless explicitly enabled", () => {
   assert.deepEqual(readSchedulerPumpConfiguration({}), {

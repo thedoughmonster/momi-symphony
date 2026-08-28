@@ -77,18 +77,18 @@ test("resolution requires the same durable record and label removal", () => {
     { eligible: true, reason: "resolved" })
 })
 
-test("Linear resolution restores normalized eligibility when every other condition passes", () => {
+test("decision labels do not duplicate the explicit scheduler attestation", () => {
   const profile = createLinearAdapterProfile({ projectId: "project-1",
     repository: "thedoughmonster/momi-symphony", baseBranch: "main" })
   const input = {
-    description: "## Acceptance criteria\n\n- The fixture is accepted.",
     labels: ["implementation", "ready-package", "blocked-external-decision"],
     labelsMalformed: false, projectId: "project-1", teamId: "team-1",
     parent: null, parentMalformed: false, subIssues: [], subIssuesMalformed: false,
     subIssuesComplete: true, blockers: [], blockerRelationsMalformed: false,
   }
-  assert.deepEqual(deriveLinearDispatchability(input, profile).reasons,
-    ["unresolved_material_decision"])
+  assert.deepEqual(deriveLinearDispatchability(input, profile), {
+    dispatchable: true, reasons: [],
+  })
   assert.deepEqual(deriveLinearDispatchability({ ...input,
     labels: ["implementation", "ready-package"] }, profile), {
     dispatchable: true, reasons: [],

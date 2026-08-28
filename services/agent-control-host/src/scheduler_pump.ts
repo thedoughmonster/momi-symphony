@@ -6,6 +6,8 @@ export type SchedulerPumpReceipt = {
   observed: number
   claimed: number
   technical_retries: number
+  projection_retries: number
+  projection_failures: number
 }
 
 export type SchedulerPumpConfiguration = {

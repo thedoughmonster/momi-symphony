@@ -2,7 +2,7 @@
   "$schema": "../../../../schemas/function-manifest-v1.schema.json",
   "function_key": "momi.agent_control.dispatch.v1",
   "contract_version": 1,
-  "purpose": "Pump ready leaves, deliver or cancel one claimed Linear action, and reconcile durable state back to Linear.",
+  "purpose": "Pump ready leaves, deliver or cancel one claimed Linear action, and retry durable state projection to Linear.",
   "owner_service": "agent-control",
   "function_type": "coordinator",
   "capability": "deliver",
@@ -25,6 +25,7 @@
     "creates_codex_task",
     "requests_codex_turn_interruption",
     "reconciles_linear_action",
-    "records_terminal_archive"
+    "records_terminal_archive",
+    "retries_terminal_projection_without_execution"
   ]
 }

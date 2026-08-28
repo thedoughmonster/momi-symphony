@@ -1,0 +1,147 @@
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import test from "node:test"
+
+import postgres, { type Sql } from "postgres"
+
+import { loadManagedMigrations } from "../../../scripts/symphony_migrations.ts"
+import { acquire, claim, configure, ownerOne, reconcile } from
+  "./ready_leaf_scheduler_postgres/contract.ts"
+
+function docker(args: string[]): string {
+  const result = spawnSync("docker", args, { encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024, timeout: 180_000 })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(result.stderr.trim())
+  return result.stdout.trim()
+}
+
+async function connect(container: string): Promise<Sql> {
+  const port = Number(docker(["port", container, "5432/tcp"]).match(/:(\d+)$/)?.[1])
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    const sql = postgres(`postgres://postgres:momi-agent-test@127.0.0.1:${port}/postgres`,
+      { connect_timeout: 2, max: 16, prepare: false })
+    try { await sql`select 1`; return sql } catch {
+      await sql.end({ timeout: 1 }).catch(() => undefined)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+  throw new Error("Disposable PostgreSQL did not start")
+}
+
+test("migration backfills in-flight runs and projection claims are atomic", async (context) => {
+  const container = `momi-projection-${process.pid}-${Date.now()}`
+  docker(["run", "--detach", "--rm", "--name", container,
+    "--env", "POSTGRES_PASSWORD=momi-agent-test",
+    "--publish", "127.0.0.1::5432", "postgres:17-alpine"])
+  const sql = await connect(container)
+  context.after(async () => {
+    await sql.end({ timeout: 2 }).catch(() => undefined)
+    spawnSync("docker", ["rm", "-f", container], { encoding: "utf8" })
+  })
+  await sql.unsafe(`
+    do $$ begin
+      if not exists (select from pg_roles where rolname = 'anon') then create role anon nologin; end if;
+      if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+      if not exists (select from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
+    end $$;
+    create schema extensions;
+    create extension pgcrypto with schema extensions;
+    create schema vault;
+    create table vault.decrypted_secrets (name text primary key, decrypted_secret text);
+    create schema net;
+    create function net.http_post(url text, headers jsonb, body jsonb,
+      timeout_milliseconds integer) returns bigint language sql as 'select 1::bigint';
+    create schema cron;
+    create function cron.schedule(name text, schedule text, command text)
+      returns bigint language sql as 'select 1::bigint';
+  `)
+  const { migrations } = await loadManagedMigrations()
+  const projection = migrations.at(-1)!
+  assert.match(projection.name, /simplify_readiness_and_decouple_projection/)
+  for (const migration of migrations.slice(0, 7)) await sql.unsafe(migration.sql)
+  await sql`
+    update momi_agent_ops.project_mappings set
+      host_dispatch_url = 'https://host.example/v1/dispatch'
+    where linear_project_name = 'Backend Stabilization'
+  `
+  for (const migration of migrations.slice(7, -1)) await sql.unsafe(migration.sql)
+  await configure(sql, "enabled")
+  const leader = await acquire(sql, ownerOne)
+  assert.equal(leader?.fencing_generation, 1)
+  const pendingClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 501))
+  const projectedClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 502))
+  const runningClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 503))
+  for (const id of [pendingClaim.dispatch_id, projectedClaim.dispatch_id, runningClaim.dispatch_id]) {
+    assert.ok(id)
+    await sql`
+      update momi_agent_ops.dispatches set codex_thread_id = 'thread', codex_turn_id = 'turn',
+        host_accepted_at = now(), work_status = 'active' where dispatch_id = ${id}::uuid
+    `
+  }
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
+    where dispatch_id in (${pendingClaim.dispatch_id}::uuid, ${projectedClaim.dispatch_id}::uuid)
+  `
+  await sql`
+    update momi_agent_ops.run_records set readiness_result = 'ready',
+      terminal_disposition = 'completed', terminal_at = now(), archive_state = 'archived',
+      archived_at = now()
+    where dispatch_id in (${pendingClaim.dispatch_id}::uuid, ${projectedClaim.dispatch_id}::uuid)
+  `
+  await sql`
+    update momi_agent_ops.run_records set linear_writeback_at = now()
+    where dispatch_id = ${projectedClaim.dispatch_id}::uuid
+  `
+
+  await sql.unsafe(projection.sql)
+  const backfill = await sql<{ dispatch_id: string; execution_status: string;
+    linear_projection_status: string }[]>`
+    select dispatch_id::text, execution_status, linear_projection_status
+    from momi_agent_ops.run_records
+    where dispatch_id in (${pendingClaim.dispatch_id}::uuid,
+      ${projectedClaim.dispatch_id}::uuid, ${runningClaim.dispatch_id}::uuid)
+    order by dispatch_id
+  `
+  const statuses = new Map(backfill.map((row) => [row.dispatch_id, row]))
+  assert.deepEqual(statuses.get(pendingClaim.dispatch_id!), {
+    dispatch_id: pendingClaim.dispatch_id, execution_status: "succeeded",
+    linear_projection_status: "retryable" })
+  assert.deepEqual(statuses.get(projectedClaim.dispatch_id!), {
+    dispatch_id: projectedClaim.dispatch_id, execution_status: "succeeded",
+    linear_projection_status: "succeeded" })
+  assert.deepEqual(statuses.get(runningClaim.dispatch_id!), {
+    dispatch_id: runningClaim.dispatch_id, execution_status: "running",
+    linear_projection_status: "pending" })
+
+  const contention = await Promise.all(Array.from({ length: 8 }, () => sql`
+    select dispatch_id::text
+    from momi_agent_ops.claim_terminal_projection_v1(${pendingClaim.dispatch_id}::uuid)
+  `))
+  assert.equal(contention.filter((rows) => rows.length === 1).length, 1)
+  const [failed] = await sql<{ status: string }[]>`
+    select momi_agent_ops.record_terminal_projection_result_v1(
+      ${pendingClaim.dispatch_id}::uuid, false, null, 'linear_outage'
+    ) as status
+  `
+  assert.equal(failed.status, "retryable")
+  await sql`select momi_agent_ops.requeue_terminal_projection_v1(
+    ${pendingClaim.dispatch_id}::uuid)`
+  const retry = await sql`
+    select dispatch_id::text
+    from momi_agent_ops.claim_terminal_projection_v1(${pendingClaim.dispatch_id}::uuid)
+  `
+  assert.equal(retry.length, 1)
+  const commentId = "30000000-0000-4000-8000-000000000001"
+  const [succeeded] = await sql<{ status: string }[]>`
+    select momi_agent_ops.record_terminal_projection_result_v1(
+      ${pendingClaim.dispatch_id}::uuid, true, ${commentId}::uuid, null
+    ) as status
+  `
+  assert.equal(succeeded.status, "succeeded")
+  assert.equal((await sql`
+    select dispatch_id from momi_agent_ops.claim_terminal_projection_v1(
+      ${pendingClaim.dispatch_id}::uuid)
+  `).length, 0)
+})

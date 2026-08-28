@@ -19,7 +19,7 @@ const route: SchedulerRoute = {
   baseBranch: "main",
   hostDispatchUrl: "https://host.example/v1/dispatch",
   activeStates: ["Todo", "In Progress", "Rework"],
-  requiredLabels: ["implementation", "ready-package"],
+  requiredLabels: ["ready-package"],
   mode: "enabled",
   acceptanceIssueIds: [],
 }
@@ -41,7 +41,7 @@ function normalized(index: number, overrides: Partial<NormalizedLinearIssue> = {
     branch_name: null,
     url: `https://linear.app/mox/issue/${identifier}/issue`,
     assignee_id: null,
-    labels: ["implementation", "ready-package"],
+    labels: ["ready-package"],
     blocked_by: [],
     dispatchable: true,
     dispatchability_reasons: [],
@@ -109,6 +109,8 @@ function dependencies(options: {
       return { dispatchId: candidate.candidateId }
     },
     project: () => Promise.resolve(),
+    projectionIds: () => Promise.resolve([]),
+    replayProjection: () => Promise.resolve({ claimed: false, status: "skipped" }),
     heartbeat: () => Promise.resolve(),
     providerRetry: (_routeKey, code) => { retryCodes.push(code); return Promise.resolve() },
     providerSuccess: () => Promise.resolve(),
@@ -150,7 +152,7 @@ test("observe acceptance is allowlisted and structurally cannot claim", async ()
   const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
   assert.deepEqual(receipt, { ok: true, routes: 1, observed: 1, claimed: 0,
-    technical_retries: 0 })
+    technical_retries: 0, projection_retries: 0, projection_failures: 0 })
   assert.equal(fixture.dispatched.size, 0)
 })
 
@@ -165,6 +167,24 @@ test("provider outage fails closed as technical retry without a claim", async ()
   assert.deepEqual(fixture.retryCodes, ["tracker_response"])
 })
 
+test("scheduler reconciles a due projection without claiming or rerunning work", async () => {
+  const fixture = dependencies({ issues: new Map() })
+  const projected = "00000000-0000-4000-8000-000000000099"
+  let replays = 0
+  fixture.deps.projectionIds = () => Promise.resolve([projected])
+  fixture.deps.replayProjection = (dispatchId) => {
+    assert.equal(dispatchId, projected)
+    replays += 1
+    return Promise.resolve({ claimed: true, status: "succeeded" })
+  }
+  const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
+    scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
+  assert.equal(replays, 1)
+  assert.equal(receipt.claimed, 0)
+  assert.equal(receipt.projection_retries, 1)
+  assert.equal(receipt.projection_failures, 0)
+})
+
 test("observe mode preserves a bounded typed tracker failure in its count-only receipt", async () => {
   const candidate = normalized(5)
   const fixture = dependencies({ issues: new Map([[candidate.id, candidate]]),
@@ -173,7 +193,7 @@ test("observe mode preserves a bounded typed tracker failure in its count-only r
   const receipt = await processReadyLeafSchedulerPump({ event: "scheduler_pump",
     scheduler_id: owner, release_sha: releaseSha, active_work_ids: [] }, fixture.deps)
   assert.deepEqual(receipt, { ok: true, routes: 1, observed: 0, claimed: 0,
-    technical_retries: 1 })
+    technical_retries: 1, projection_retries: 0, projection_failures: 0 })
   assert.deepEqual(fixture.retryCodes, ["tracker_timeout"])
 })
 
