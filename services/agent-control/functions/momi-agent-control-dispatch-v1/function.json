@@ -22,6 +22,8 @@
     "claims_agent_dispatch",
     "reconciles_ready_leaf_candidates",
     "reserves_capacity_slot",
+    "fences_quarantined_issue",
+    "releases_quarantine_capacity_after_bounded_intervention",
     "creates_codex_task",
     "requests_codex_turn_interruption",
     "reconciles_linear_action",

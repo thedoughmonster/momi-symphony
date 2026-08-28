@@ -106,6 +106,18 @@ async function releaseOne(sql: Sql): Promise<boolean> {
   return true
 }
 
+async function waitForDatabaseLock(sql: Sql, pid: number): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const [activity] = await sql<{ wait_event_type: string | null }[]>`
+      select wait_event_type from pg_catalog.pg_stat_activity where pid = ${pid}
+    `
+    if (activity?.wait_event_type === "Lock") return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`backend ${pid} did not reach the expected lock wait`)
+}
+
 export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   await sql`
     update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
@@ -164,29 +176,232 @@ export async function assertContentionAndRecovery(sql: Sql): Promise<void> {
   const expiring = await reconcile(sql, 31)
   const expiringClaim = await claim(sql, ownerThree, 3, expiring)
   assert.equal(expiringClaim.claimed, true)
+  const [lateIdentity] = await sql<{ capability_token: string }[]>`
+    select wake_capability_token::text as capability_token
+    from momi_agent_ops.dispatches
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
   await sql`
     update momi_agent_ops.scheduler_slots
     set lease_expires_at = now() - interval '1 second'
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
-  const [heartbeat] = await sql<{ quarantined: number }[]>`
-    select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v1('{}'::uuid[])
+  const [heartbeat] = await sql<{ quarantined: number; active_quarantines: number }[]>`
+    select quarantined, active_quarantines
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
   `
-  assert.equal(heartbeat.quarantined, 1)
+  assert.deepEqual(heartbeat, { quarantined: 1, active_quarantines: 1 })
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'claimed'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [lateAcceptance] = await sql<{ accepted: boolean }[]>`
+    select momi_agent_ops.record_host_acceptance_v1(
+      ${expiringClaim.dispatch_id}::uuid, ${lateIdentity.capability_token}::uuid,
+      'stale-thread', 'stale-turn'
+    ) as accepted
+  `
+  assert.equal(lateAcceptance.accepted, false)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'active', host_accepted_at = now()
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [{ quarantined_state }] = await sql<{ quarantined_state: boolean }[]>`
+    select state = 'quarantined' as quarantined_state
+    from momi_agent_ops.scheduler_slots
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(quarantined_state, true)
+  await sql`
+    update momi_agent_ops.scheduler_slots set state = 'reserved',
+      lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [replayedQuarantine] = await sql<{ quarantined: number;
+    active_quarantines: number }[]>`
+    select quarantined, active_quarantines
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.deepEqual(replayedQuarantine, { quarantined: 0, active_quarantines: 1 })
   const waiting = await reconcile(sql, 32)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
   const [extended] = await sql<{ extended: number }[]>`
-    select extended from momi_agent_ops.heartbeat_scheduler_slots_v1(
+    select extended from momi_agent_ops.heartbeat_scheduler_slots_v2(
       array[${expiringClaim.dispatch_id}::uuid]
     )
   `
-  assert.equal(extended.extended, 1)
+  assert.equal(extended.extended, 0)
   assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, false)
+
+  await sql`
+    update momi_agent_ops.scheduler_issue_quarantines
+    set quarantined_at = now() - interval '31 seconds',
+      intervention_deadline_at = now() - interval '1 second'
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  const [released] = await sql<{ capacity_released: number;
+    active_quarantines: number; manual_interventions: number }[]>`
+    select capacity_released, active_quarantines, manual_interventions
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.deepEqual(released, { capacity_released: 1,
+    active_quarantines: 1, manual_interventions: 1 })
+  assert.equal((await claim(sql, ownerThree, 3, expiring)).claimed, false)
+  assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'active', host_accepted_at = now()
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+
+  const [fence] = await sql<{ slot_state: string; capacity_released_at: Date | null;
+    resolved_at: Date | null }[]>`
+    select slot.state as slot_state, quarantine.capacity_released_at,
+      quarantine.resolved_at
+    from momi_agent_ops.scheduler_issue_quarantines quarantine
+    join momi_agent_ops.scheduler_slots slot using (dispatch_id)
+    where quarantine.dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(fence.slot_state, "released")
+  assert.ok(fence.capacity_released_at)
+  assert.equal(fence.resolved_at, null)
   await sql`
     update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
     where dispatch_id = ${expiringClaim.dispatch_id}::uuid
   `
-  assert.equal((await claim(sql, ownerThree, 3, waiting)).claimed, true)
+  const [{ resolved }] = await sql<{ resolved: boolean }[]>`
+    select resolved_at is not null as resolved
+    from momi_agent_ops.scheduler_issue_quarantines
+    where dispatch_id = ${expiringClaim.dispatch_id}::uuid
+  `
+  assert.equal(resolved, true)
+}
+
+export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string): Promise<void> {
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'completed', completed_at = now()
+    where source_kind = 'ready_leaf_scheduler' and work_status <> 'completed'
+  `
+  await sql`
+    update momi_agent_ops.scheduler_route_policies
+    set max_concurrent = 1, implementation_limit = 1,
+      coordinator_limit = 1, shared_limit = 1
+    where route_key = ${routeKey}
+  `
+  const candidate = await reconcile(sql, 33)
+  const claimed = await claim(sql, ownerThree, 3, candidate)
+  assert.equal(claimed.claimed, true)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'claimed'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  const [identity] = await sql<{ capability_token: string }[]>`
+    select wake_capability_token::text as capability_token
+    from momi_agent_ops.dispatches where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  await sql`
+    update momi_agent_ops.scheduler_slots set lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+
+  const heartbeatClient = postgres(url, { max: 1, prepare: false })
+  const acceptanceClient = postgres(url, { max: 1, prepare: false })
+  let allowAcceptance = (): void => undefined
+  let acceptanceLocked = (): void => undefined
+  const proceed = new Promise<void>((resolve) => { allowAcceptance = resolve })
+  const locked = new Promise<void>((resolve) => { acceptanceLocked = resolve })
+  const acceptanceWork = acceptanceClient.begin(async (transaction) => {
+    await transaction`
+      select dispatch_id from momi_agent_ops.dispatches
+      where dispatch_id = ${claimed.dispatch_id}::uuid for update
+    `
+    acceptanceLocked()
+    await proceed
+    return transaction<{ accepted: boolean }[]>`
+      select momi_agent_ops.record_host_acceptance_v1(
+        ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
+        'racing-thread', 'racing-turn'
+      ) as accepted
+    `
+  })
+
+  try {
+    await locked
+    const [{ pid: heartbeatPid }] = await heartbeatClient<{ pid: number }[]>`
+      select pg_backend_pid()::integer as pid
+    `
+    const heartbeatWork = heartbeatClient<{ quarantined: number }[]>`
+      select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+    `.then((rows) => rows)
+    await waitForDatabaseLock(sql, heartbeatPid)
+    allowAcceptance()
+    const [[acceptance], [heartbeat]] = await Promise.all([acceptanceWork, heartbeatWork])
+    assert.equal(acceptance.accepted, true)
+    assert.equal(heartbeat.quarantined, 0)
+  } finally {
+    allowAcceptance()
+    await Promise.all([
+      heartbeatClient.end({ timeout: 2 }), acceptanceClient.end({ timeout: 2 }),
+    ])
+  }
+
+  const [accepted] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(accepted, { state: "running", active_slots: 1 })
+  await sql`
+    update momi_agent_ops.scheduler_slots set lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  const [quarantinedHeartbeat] = await sql<{ quarantined: number }[]>`
+    select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.equal(quarantinedHeartbeat.quarantined, 1)
+  const [quarantined] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(quarantined, { state: "quarantined", active_slots: 1 })
+  const [replayedAcceptance] = await sql<{ accepted: boolean }[]>`
+    select momi_agent_ops.record_host_acceptance_v1(
+      ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
+      'racing-thread', 'racing-turn'
+    ) as accepted
+  `
+  assert.equal(replayedAcceptance.accepted, true)
+  const [absorbing] = await sql<{ state: string }[]>`
+    select state from momi_agent_ops.scheduler_slots
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.equal(absorbing.state, "quarantined")
+  await sql`
+    update momi_agent_ops.scheduler_issue_quarantines
+    set intervention_deadline_at = now() - interval '1 second',
+      quarantined_at = now() - interval '31 seconds'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  const [released] = await sql<{ capacity_released: number }[]>`
+    select capacity_released
+    from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.equal(released.capacity_released, 1)
+  const [capacity] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(capacity, { state: "released", active_slots: 0 })
+  assert.equal((await claim(sql, ownerThree, 3, candidate)).claimed, false)
+  const replacement = await reconcile(sql, 34)
+  assert.equal((await claim(sql, ownerThree, 3, replacement)).claimed, true)
 }
 
 export async function assertGenerationRefreshAndStaleLeader(sql: Sql): Promise<void> {

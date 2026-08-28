@@ -1,8 +1,29 @@
 # Independent PR review
 
-Normal substantive `execute-run` pull requests require one independent substantive review before
-merge. Review is a phase of the existing implementation lifecycle; it is not a second scheduler,
-a Linear issue, or a review-debt queue.
+Independent review is required only when the exact pull-request diff crosses a named material
+boundary: security/privacy, destructive migration, public contract, production exposure/cost,
+concurrency/state integrity, or an explicit owner request (`independent-review` /
+`independent review required` label or `Independent review: required` in the issue). The predicate
+also treats removed security/auth/session/permission guards as material whether the patch is
+deletion-only or replaces the guard with other code. Unrelated additions cannot neutralize the
+risk carried by deleted guard structure or deleted authorization conditions.
+Protected workflow and CI files fail closed to independent review for every semantic change,
+including action identity, permissions, triggers, commands, and gates. The only safe allowlist is
+an exact diff containing comments or blank lines exclusively. The predicate is deterministic and
+returns the matching trigger names. Missing, truncated, or otherwise invalid patch evidence fails closed to
+independent review because the named boundaries cannot be excluded. All other changes follow
+normal exact-head validation, CI, and GitHub review; the owned policy check records that independent
+review was not required.
+
+Risk-triggered review is a phase of the existing implementation lifecycle; it is not a second
+scheduler, a Linear issue, or a review-debt queue.
+
+Scheduler expiry and host acceptance use one database lock order: dispatch row first, scheduler
+slot second. Heartbeat rechecks expiry after acquiring both locks before creating the absorbing
+issue quarantine. This prevents the host-acceptance trigger from forming a dispatch-to-slot /
+slot-to-dispatch deadlock; whichever path wins the dispatch lock determines whether active work is
+accepted or fenced, and a quarantined stale capability cannot regain execution. Quarantine remains
+unresolved while the bounded intervention deadline releases only the route-capacity slot.
 
 After validation succeeds, agent-control reads the live pull request and creates one `pending`
 attempt for the exact repository, PR, head, base, policy, and risk-derived profile. The only
@@ -17,9 +38,10 @@ sealed at rest. Candidate-head `AGENTS.md` files are review data; governing rule
 the protected base. The implementation identity cannot access the reviewer credential or record
 reviewer identity. Accepted results cannot contain blocking findings.
 
-Profiles (`low`, `standard`, `high`) derive execution model, reasoning effort, and budget; those
-mechanical values are not review authority. Inconclusive output and escalation exhaustion are
-failed attempts. Escalation creates a generic child attempt at the next profile. A correction may
+Risk-triggered attempts use the bounded `high` execution profile. Historical profile values remain
+readable so policy rollback is independent from persisted state, but there is no automatic
+low-to-standard-to-high ladder. Inconclusive or escalation output is a failed attempt requiring
+manual intervention. A correction may
 reuse the same independent reviewer only when the complete correction diff is confined to active
 finding paths and base, policy, profile, and material risk are unchanged.
 
@@ -27,8 +49,14 @@ finding paths and base, policy, profile, and material risk are unchanged.
 an accepted independent attempt only when it matches the current active, noncanceled implementation
 and exact validated subject. Merge uses that answer once under the shared current-dispatch/per-PR
 lock, alongside live exact-head CI, GitHub blockers, the trusted `Symphony Independent Review`
-check, and branch-protection/bypass facts. If eligible, the gateway submits the merge with the
-exact expected head SHA. No merge-preflight receipt is persisted.
+check, and branch-protection/bypass facts. When the predicate says independent review is not
+required, the reducer omits independent-review authority but still requires exact-head CI, the
+owned policy check, one exact-head affirmative `APPROVED` GitHub review, no authoritative changes-requested
+review, no unresolved review thread, and non-bypassable protection. The normal approval fact is
+GitHub's durable submitted-review record, reduced to the latest state per reviewer. Every path also
+requires `run_records.validation_state = 'succeeded'` with `validation_sha` equal to the exact PR
+head; a green external check cannot substitute for that owned lifecycle evidence. If eligible, the
+gateway submits the merge with the exact expected head SHA. No merge-preflight receipt is persisted.
 
 The GitHub review check is a deterministic projection and enforcement backstop, never review
 authority. Its external ID is stable for repository and head; reconciliation updates the owned
@@ -53,5 +81,6 @@ evidence for a new subject. Recovery never synthesizes acceptance.
 Agent State derives `reviewing` from the current exact-head attempt rather than a copied review
 mirror. The merge path alone consumes canonical review authority; successful terminalization
 requires its resulting actual merge SHA and successful release evidence rather than rebuilding a
-second review predicate. Development rollout uses only
+second review predicate. Runtime receipts expose whether review was required and the exact trigger
+set. Development rollout uses only
 `.github/workflows/deploy-dev.yml`; production promotion is not authorized by this procedure.

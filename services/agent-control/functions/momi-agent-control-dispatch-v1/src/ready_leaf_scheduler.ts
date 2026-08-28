@@ -15,6 +15,7 @@ import {
   recordSchedulerProviderSuccess,
   type SchedulerCandidate,
   type SchedulerClaim,
+  type SchedulerHeartbeatMetrics,
   type SchedulerLeader,
   type SchedulerRoute,
 } from "./scheduler_database.ts"
@@ -40,7 +41,7 @@ export type ReadyLeafSchedulerDependencies = {
   project: (dispatchId: string) => Promise<unknown>
   projectionIds: (route: SchedulerRoute) => Promise<string[]>
   replayProjection: (dispatchId: string) => Promise<TerminalProjectionResult>
-  heartbeat: (activeWorkIds: readonly string[]) => Promise<void>
+  heartbeat: (activeWorkIds: readonly string[]) => Promise<SchedulerHeartbeatMetrics>
   providerRetry: (routeKey: string, errorCode: string) => Promise<void>
   providerSuccess: (routeKey: string) => Promise<void>
 }
@@ -53,6 +54,11 @@ export type ReadyLeafSchedulerReceipt = {
   technical_retries: number
   projection_retries: number
   projection_failures: number
+  quarantines_created: number
+  quarantine_capacity_released: number
+  active_quarantines: number
+  oldest_quarantine_age_seconds: number
+  manual_interventions: number
 }
 
 function adapterProfile(route: SchedulerRoute) {
@@ -165,7 +171,7 @@ export async function processReadyLeafSchedulerPump(
   input: SchedulerPumpInput,
   dependencies: ReadyLeafSchedulerDependencies = defaultDependencies(),
 ): Promise<ReadyLeafSchedulerReceipt> {
-  await dependencies.heartbeat(input.active_work_ids)
+  const heartbeat = await dependencies.heartbeat(input.active_work_ids)
   const routes = await dependencies.routes()
   let observed = 0
   let claimed = 0
@@ -205,5 +211,10 @@ export async function processReadyLeafSchedulerPump(
   }
   return { ok: true, routes: routes.length, observed, claimed,
     technical_retries: technicalRetries, projection_retries: projectionRetries,
-    projection_failures: projectionFailures }
+    projection_failures: projectionFailures,
+    quarantines_created: heartbeat.quarantinesCreated,
+    quarantine_capacity_released: heartbeat.quarantineCapacityReleased,
+    active_quarantines: heartbeat.activeQuarantines,
+    oldest_quarantine_age_seconds: heartbeat.oldestQuarantineAgeSeconds,
+    manual_interventions: heartbeat.manualInterventions }
 }

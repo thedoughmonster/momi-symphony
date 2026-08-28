@@ -18,6 +18,8 @@ const independentReviewPath =
   "supabase/migrations/20260820160000_add_independent_pr_review_gate.sql"
 const projectionPath =
   "supabase/migrations/20260828190000_simplify_readiness_and_decouple_projection.sql"
+const proportionalReviewPath =
+  "supabase/migrations/20260828213000_risk_proportional_review_and_quarantine.sql"
 test("private agent ledger is owned, defended, and absent from the Data API", async () => {
   const [foundation, config] = await Promise.all([
     readFile(foundationPath, "utf8"), readFile("supabase/config.toml", "utf8") ])
@@ -283,6 +285,28 @@ test("readiness and terminal projection state are minimal, durable, and replayab
   assert.match(migration, /interval '10 minutes'/)
   assert.match(migration, /before update of terminal_at, terminal_disposition/)
   assert.match(migration, /linear_writeback_at is not null then 'succeeded'/)
+  assert.doesNotMatch(migration, /security definer/i)
+  assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
+})
+
+test("quarantine fencing is durable while route capacity release is bounded", async () => {
+  const migration = await readFile(proportionalReviewPath, "utf8")
+  assert.equal(migration.split("\n")[0].trimEnd(), "-- service-owner: agent-control")
+  assert.match(migration, /create table momi_agent_ops\.scheduler_issue_quarantines/)
+  assert.match(migration, /scheduler_issue_quarantines_active_issue_idx/)
+  assert.match(migration, /quarantine_intervention_seconds between 30 and 3600/)
+  assert.match(migration, /create function momi_agent_ops\.claim_scheduler_candidate_v3/)
+  assert.match(migration, /waiting_reason = 'issue_quarantined'/)
+  assert.match(migration, /create function momi_agent_ops\.heartbeat_scheduler_slots_v2/)
+  assert.match(migration, /capacity_released_at/)
+  assert.match(migration, /manual_interventions integer/)
+  assert.match(migration, /create or replace function momi_agent_ops\.reconcile_scheduler_dispatch_state_v1/)
+  assert.match(migration, /wake_capability_token = null/)
+  assert.match(migration, /on conflict do nothing returning true into quarantine_inserted/)
+  assert.match(migration, /if quarantine_inserted then/)
+  assert.match(migration, /from momi_agent_ops\.dispatches work[\s\S]*for update;[\s\S]*from momi_agent_ops\.scheduler_slots slot[\s\S]*for update;/)
+  assert.doesNotMatch(migration, /for update of slot/)
+  assert.match(migration, /from public, anon, authenticated, service_role/)
   assert.doesNotMatch(migration, /security definer/i)
   assert.doesNotMatch(migration, /\b(?:net|vault|cron)\./i)
 })

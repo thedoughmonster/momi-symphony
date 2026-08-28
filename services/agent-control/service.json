@@ -84,6 +84,7 @@
       "momi_agent_ops.scheduler_route_policies",
       "momi_agent_ops.scheduler_leaders",
       "momi_agent_ops.scheduler_candidates",
+      "momi_agent_ops.scheduler_issue_quarantines",
       "momi_agent_ops.scheduler_slots"
     ],
     "private_routines": [
@@ -145,8 +146,11 @@
       "momi_agent_ops.mark_scheduler_candidate_stale_v1",
       "momi_agent_ops.claim_scheduler_candidate_v1",
       "momi_agent_ops.claim_scheduler_candidate_v2",
+      "momi_agent_ops.claim_scheduler_candidate_v3",
       "momi_agent_ops.reconcile_scheduler_dispatch_state_v1",
       "momi_agent_ops.heartbeat_scheduler_slots_v1",
+      "momi_agent_ops.heartbeat_scheduler_slots_v2",
+      "momi_agent_ops.resolve_scheduler_issue_quarantine_v1",
       "momi_agent_ops.record_scheduler_provider_retry_v1",
       "momi_agent_ops.record_scheduler_provider_success_v1",
       "momi_agent_ops.wake_agent_control_dispatch"

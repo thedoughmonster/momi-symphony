@@ -42,7 +42,7 @@ test("a durable receipt is recorded before projection", async () => {
   /record_refused/)
 })
 
-test("focused validation success automatically enters independent review", async () => {
+test("focused validation success automatically enters the risk review decision", async () => {
   const order: string[] = []
   const result = await processLifecycleEvidence({ ...input, status: "succeeded" },
     () => { order.push("record"); return Promise.resolve(true) },

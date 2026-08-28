@@ -5,8 +5,22 @@ import test from "node:test"
 import postgres, { type Sql } from "postgres"
 
 import { loadManagedMigrations } from "../../../scripts/symphony_migrations.ts"
-import { acquire, claim, configure, ownerOne, reconcile } from
+import { acquire, configure, ownerOne, reconcile, releaseSha, routeKey,
+  type Candidate, type Claim } from
   "./ready_leaf_scheduler_postgres/contract.ts"
+
+async function claimBeforeQuarantine(sql: Sql, candidate: Candidate): Promise<Claim> {
+  const rows = await sql<Claim[]>`
+    select claimed, dispatch_id::text
+    from momi_agent_ops.claim_scheduler_candidate_v2(
+      ${routeKey}, ${ownerOne}::uuid, ${releaseSha}, 1,
+      ${candidate.candidate_id}::uuid, ${candidate.generation},
+      ${candidate.snapshot_version}
+    )
+  `
+  if (rows.length !== 1) throw new Error("scheduler claim returned no row")
+  return rows[0]
+}
 
 function docker(args: string[]): string {
   const result = spawnSync("docker", args, { encoding: "utf8",
@@ -58,7 +72,10 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
       returns bigint language sql as 'select 1::bigint';
   `)
   const { migrations } = await loadManagedMigrations()
-  const projection = migrations.at(-1)!
+  const projectionIndex = migrations.findIndex((migration) =>
+    migration.name.includes("simplify_readiness_and_decouple_projection"))
+  assert.ok(projectionIndex > 7)
+  const projection = migrations[projectionIndex]
   assert.match(projection.name, /simplify_readiness_and_decouple_projection/)
   for (const migration of migrations.slice(0, 7)) await sql.unsafe(migration.sql)
   await sql`
@@ -66,13 +83,13 @@ test("migration backfills in-flight runs and projection claims are atomic", asyn
       host_dispatch_url = 'https://host.example/v1/dispatch'
     where linear_project_name = 'Backend Stabilization'
   `
-  for (const migration of migrations.slice(7, -1)) await sql.unsafe(migration.sql)
+  for (const migration of migrations.slice(7, projectionIndex)) await sql.unsafe(migration.sql)
   await configure(sql, "enabled")
   const leader = await acquire(sql, ownerOne)
   assert.equal(leader?.fencing_generation, 1)
-  const pendingClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 501))
-  const projectedClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 502))
-  const runningClaim = await claim(sql, ownerOne, 1, await reconcile(sql, 503))
+  const pendingClaim = await claimBeforeQuarantine(sql, await reconcile(sql, 501))
+  const projectedClaim = await claimBeforeQuarantine(sql, await reconcile(sql, 502))
+  const runningClaim = await claimBeforeQuarantine(sql, await reconcile(sql, 503))
   for (const id of [pendingClaim.dispatch_id, projectedClaim.dispatch_id]) {
     assert.ok(id)
     await sql`

@@ -37,5 +37,7 @@ test("review check projection rereads canonical authority while holding the subj
     assert.equal(await reconcileReviewCheck(sql, github, subject), "success")
     authority = false
     assert.equal(await reconcileReviewCheck(sql, github, subject), "failure")
-    assert.deepEqual(projected, ["success", "failure"])
+    assert.equal(await reconcileReviewCheck(sql, github,
+      { ...subject, reviewRequired: false }), "success")
+    assert.deepEqual(projected, ["success", "failure", "success"])
   })

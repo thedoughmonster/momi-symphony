@@ -28,6 +28,13 @@ export type SchedulerCandidate = {
 }
 
 export type SchedulerClaim = { dispatchId: string }
+export type SchedulerHeartbeatMetrics = {
+  quarantinesCreated: number
+  quarantineCapacityReleased: number
+  activeQuarantines: number
+  oldestQuarantineAgeSeconds: number
+  manualInterventions: number
+}
 
 export async function listSchedulerRoutes(): Promise<SchedulerRoute[]> {
   const sql = getDatabase()
@@ -185,7 +192,7 @@ export async function claimSchedulerCandidate(
   const sql = getDatabase()
   const rows = await sql<{ claimed: boolean; dispatch_id: string | null }[]>`
     select claimed, dispatch_id::text
-    from momi_agent_ops.claim_scheduler_candidate_v2(
+    from momi_agent_ops.claim_scheduler_candidate_v3(
       ${route.routeKey}, ${ownerId}::uuid, ${releaseSha}, ${leader.generation},
       ${candidate.candidateId}::uuid, ${candidate.generation},
       ${candidate.snapshotVersion}
@@ -195,13 +202,27 @@ export async function claimSchedulerCandidate(
     ? { dispatchId: rows[0].dispatch_id } : null
 }
 
-export async function heartbeatSchedulerSlots(activeWorkIds: readonly string[]): Promise<void> {
+export async function heartbeatSchedulerSlots(
+  activeWorkIds: readonly string[],
+): Promise<SchedulerHeartbeatMetrics> {
   const sql = getDatabase()
-  await sql`
-    select * from momi_agent_ops.heartbeat_scheduler_slots_v1(
+  const rows = await sql<{ quarantined: number; capacity_released: number;
+    active_quarantines: number; oldest_quarantine_age_seconds: number;
+    manual_interventions: number }[]>`
+    select quarantined::integer, capacity_released::integer,
+      active_quarantines::integer, oldest_quarantine_age_seconds::integer,
+      manual_interventions::integer
+    from momi_agent_ops.heartbeat_scheduler_slots_v2(
       ${activeWorkIds}::uuid[]
     )
   `
+  const row = rows[0]
+  if (!row) throw new Error("scheduler_heartbeat_failed")
+  return { quarantinesCreated: row.quarantined,
+    quarantineCapacityReleased: row.capacity_released,
+    activeQuarantines: row.active_quarantines,
+    oldestQuarantineAgeSeconds: row.oldest_quarantine_age_seconds,
+    manualInterventions: row.manual_interventions }
 }
 
 export async function recordSchedulerProviderRetry(

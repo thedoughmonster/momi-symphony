@@ -1,4 +1,4 @@
-export const REVIEW_POLICY_VERSION = "independent-review-v1" as const
+export const REVIEW_POLICY_VERSION = "risk-proportional-review-v4" as const
 export const REVIEW_CHECK_NAME = "Symphony Independent Review" as const
 export const REVIEW_FINDING_ID_PATTERN =
   "^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$" as const
@@ -14,6 +14,11 @@ export type ReviewResult = "accepted" | "changes_requested" | "inconclusive" | "
 export type ReviewRiskDimension = "architecture" | "security_auth" | "public_contract" |
   "schema_migration" | "concurrency" | "scheduler_recovery_cancellation" |
   "release_credential" | "runtime_network" | "general" | "ambiguous"
+export type IndependentReviewTrigger = "security_privacy" | "destructive_migration" |
+  "public_contract" | "production_exposure_cost" | "concurrency_state_integrity" |
+  "workflow_ci_integrity" | "incomplete_diff_evidence" | "explicit_owner_request"
+export type IndependentReviewRequirement = { required: boolean;
+  triggers: IndependentReviewTrigger[]; profile: "high" | null }
 
 export type ReviewFinding = {
   id: string
@@ -66,29 +71,70 @@ export type MergeGateEvidence = {
     conclusion: "success" | "pending" | "failure" | "unknown" }
   authoritative_blocking_threads: number
   authoritative_changes_requested: boolean
+  authoritative_approvals: number
+  owned_validation: { state: string; head_sha: string | null }
   branch_protection: { review_check_required: boolean; bypass_possible: boolean }
+  independent_review_required: boolean
   current_policy_version: typeof REVIEW_POLICY_VERSION
   expected_profile: ReviewProfile
 }
 
 export type MergeGateDecision = { eligible: true } | { eligible: false; reason: string }
 
-const highRisk = [
-  /^\.github\//, /^supabase\/migrations\//, /(?:^|\/)(?:auth|security|credential|secret)/i,
-  /(?:^|\/)(?:scheduler|recovery|cancellation|migration|database|persistence|network|runtime)/i,
-  /^services\/agent-control(?:-host)?\//, /(?:^|\/)contracts?\//,
-  /(?:^|\/)AGENTS(?:\.override)?\.md$/,
-]
+const ownerReviewLabels = new Set(["independent-review", "independent review required"])
 const lowRisk = [/\.md$/i, /(?:^|\/)docs?\//i]
+const securitySensitivePath = /(?:^|\/)(?:auth(?:entication|orization|n|z)?|security|privacy|sessions?|permissions?|access[-_]?control|rbac|iam|identity|credentials?|secrets?|guards?)(?:[./_-]|\/|$)/i
+const protectedCiPath = /^(?:\.github\/(?:workflows\/.+\.ya?ml|actions\/.+\/action\.ya?ml)|\.circleci\/config\.ya?ml|\.gitlab-ci\.ya?ml|azure-pipelines\.ya?ml|Jenkinsfile|\.buildkite\/.+\.ya?ml)$/i
 
-export function selectReviewProfile(paths: string[],
-  riskDimensions: ReviewRiskDimension[]): ReviewProfile {
-  if (paths.length === 0 || paths.some((path) => !validRepositoryPath(path)) ||
-    riskDimensions.length === 0 || riskDimensions.includes("ambiguous")) return "high"
-  if (riskDimensions.some((dimension) => dimension !== "general")) return "high"
-  if (paths.some((path) => highRisk.some((pattern) => pattern.test(path)))) return "high"
-  if (paths.every((path) => lowRisk.some((pattern) => pattern.test(path)))) return "low"
-  return "standard"
+export function independentReviewRequirement(
+  files: Array<{ path: string; patch?: string | null; evidenceComplete?: boolean;
+    status?: string }> | string[],
+  ownerRequest: { labels?: readonly string[]; description?: string | null } = {},
+): IndependentReviewRequirement {
+  const triggers = new Set<IndependentReviewTrigger>()
+  const labels = (ownerRequest.labels ?? []).map((label) => label.trim().toLowerCase())
+  const description = ownerRequest.description ?? ""
+  if (labels.some((label) => ownerReviewLabels.has(label)) ||
+    /(?:^|\n)independent review\s*:\s*required(?:\s|$)/i.test(description)) {
+    triggers.add("explicit_owner_request")
+  }
+  if (files.length === 0) triggers.add("incomplete_diff_evidence")
+  for (const entry of files) {
+    const file = typeof entry === "string"
+      ? { path: entry, patch: "", evidenceComplete: false, status: "" } : entry
+    if (!validRepositoryPath(file.path) || !hasPatchEvidence(file.patch) ||
+      file.evidenceComplete === false) triggers.add("incomplete_diff_evidence")
+    if (!validRepositoryPath(file.path)) continue
+    const additions = addedPatchLines(file.patch)
+    const deletions = deletedPatchLines(file.patch)
+    const changed = `${additions}\n${deletions}`
+    const evidence = `${file.path}\n${changed}`
+    const inspectContent = !lowRisk.some((pattern) => pattern.test(file.path))
+    const removedSensitiveGuard = removesSensitiveGuard(deletions)
+    if (securitySensitivePath.test(file.path) || removedSensitiveGuard || (inspectContent &&
+      /\b(?:authentication|authoriz(?:e|ed|ation)|privacy|pii|secret|credential|token)\b/i.test(
+        changed))) triggers.add("security_privacy")
+    if (/\bsupabase\/migrations\//i.test(file.path) &&
+      (file.status === "removed" ||
+      /\b(?:drop\s+(?:table|column|schema|type|function|index)|truncate|delete\s+from|alter\s+table[\s\S]{0,160}\bdrop\b)\b/i.test(
+        additions))) triggers.add("destructive_migration")
+    if (/(?:^|\/)contracts?(?:\/|$)|\.schema\.json$/i.test(file.path) ||
+      (inspectContent &&
+      /\b(?:public\s+(?:api|contract)|breaking\s+change|webhook\s+(?:schema|contract))\b/i.test(
+        additions))) triggers.add("public_contract")
+    if (inspectContent &&
+      /(?:\bproduction(?:[A-Z_-]|\b)|\bprod(?:uction)?[-_ ]deploy\b|\b(?:billing|cost|spend|quota|rate limit|autoscal|exposure)\b)/i.test(
+        evidence)) triggers.add("production_exposure_cost")
+    if (protectedCiPath.test(file.path) && !provablySafeCiCommentChange(file.patch)) {
+      triggers.add("workflow_ci_integrity")
+    }
+    if (inspectContent &&
+      /\b(?:concurr|race|mutex|semaphore|advisory[_ ]lock|for update|atomic|lease|fenc|idempot|quarant|scheduler slot|state integrity|compare-and-set)\b/i.test(
+        evidence)) triggers.add("concurrency_state_integrity")
+  }
+  const sorted = [...triggers].sort()
+  return { required: sorted.length > 0, triggers: sorted,
+    profile: sorted.length > 0 ? "high" : null }
 }
 
 export function reviewExecutionProfile(profile: ReviewProfile): {
@@ -176,15 +222,23 @@ export function reduceMergeEligibility(evidence: MergeGateEvidence): MergeGateDe
   if (pr.repository !== evidence.repository || pr.base_branch !== evidence.base_branch) {
     return denied("pull_request_mapping_mismatch")
   }
-  const review = evidence.review
-  if (!review) return denied("review_not_accepted")
-  if (review.state !== "accepted" || review.repository !== pr.repository ||
-    review.pull_request_number !== pr.pull_request_number || review.head_sha !== pr.head_sha ||
-    review.base_sha !== pr.base_sha || review.policy_version !== evidence.current_policy_version ||
-    review.profile !== evidence.expected_profile ||
-    review.reviewer_identity !== "independent_reviewer" ||
-    review.findings.some((finding) => finding.severity === "blocking")) {
-    return denied("review_subject_stale_or_invalid")
+  if (evidence.owned_validation.state !== "succeeded" ||
+    evidence.owned_validation.head_sha !== pr.head_sha) return denied("focused_validation_required")
+  if (evidence.independent_review_required) {
+    const review = evidence.review
+    if (!review) return denied("review_not_accepted")
+    if (review.state !== "accepted" || review.repository !== pr.repository ||
+      review.pull_request_number !== pr.pull_request_number || review.head_sha !== pr.head_sha ||
+      review.base_sha !== pr.base_sha || review.policy_version !== evidence.current_policy_version ||
+      review.profile !== evidence.expected_profile ||
+      review.reviewer_identity !== "independent_reviewer" ||
+      review.findings.some((finding) => finding.severity === "blocking")) {
+      return denied("review_subject_stale_or_invalid")
+    }
+  }
+  if (!evidence.independent_review_required) {
+    if (evidence.authoritative_approvals < 0) return denied("normal_review_approval_unknown")
+    if (evidence.authoritative_approvals < 1) return denied("normal_review_approval_required")
   }
   if (evidence.required_ci.head_sha !== pr.head_sha ||
     evidence.required_ci.conclusion !== "success") return denied("required_ci_not_green")
@@ -267,6 +321,44 @@ export function validReviewFinding(value: unknown): boolean {
 function validRepositoryPath(path: string): boolean {
   return typeof path === "string" && path.length > 0 && path.length <= 500 &&
     new RegExp(REVIEW_FINDING_PATH_PATTERN).test(path)
+}
+
+function addedPatchLines(patch: string | null | undefined): string {
+  if (typeof patch !== "string") return ""
+  return patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1)).join("\n")
+}
+
+function deletedPatchLines(patch: string | null | undefined): string {
+  if (typeof patch !== "string") return ""
+  return patch.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"))
+    .map((line) => line.slice(1)).join("\n")
+}
+
+function removesSensitiveGuard(deletions: string): boolean {
+  if (deletions.trim().length === 0) return false
+  const structuralDenyGuard = /\bif\s*\([\s\S]{1,300}?\)[\s\S]{0,120}?\b(?:throw|return(?:\s+(?:false|null|undefined))?)\b/i
+  const sensitiveCondition = /\bif\s*\([^)]*(?:(?:auth|admin|permi|privileg|entitl|role|scope|access|policy|acl|rbac|session|identity|principal|tenant|owner|allow|deny|forbid|unauthoriz)[A-Za-z0-9_]*|(?:is|has|can|may|allow|deny|require|assert|check|verify)[A-Z_][A-Za-z0-9_]*)[^)]*\)/i
+  const standaloneEnforcement = /\b(?:authoriz|authenticat|require|assert|check|verify)(?:e|ed|es|ing|ion|Permission|Access|Role|Scope|Session|Identity)?\s*\(/i
+  return structuralDenyGuard.test(deletions) || sensitiveCondition.test(deletions) ||
+    standaloneEnforcement.test(deletions)
+}
+
+function hasPatchEvidence(patch: string | null | undefined): patch is string {
+  return typeof patch === "string" && patch.split("\n").some((line) =>
+    (line.startsWith("+") && !line.startsWith("+++")) ||
+    (line.startsWith("-") && !line.startsWith("---")))
+}
+
+function provablySafeCiCommentChange(patch: string | null | undefined): boolean {
+  if (typeof patch !== "string") return false
+  const changedLines = patch.split("\n").filter((line) =>
+    (line.startsWith("+") && !line.startsWith("+++")) ||
+    (line.startsWith("-") && !line.startsWith("---")))
+  return changedLines.length > 0 && changedLines.every((line) => {
+    const content = line.slice(1).trim()
+    return content.length === 0 || content.startsWith("#")
+  })
 }
 
 function denied(reason: string): MergeGateDecision { return { eligible: false, reason } }

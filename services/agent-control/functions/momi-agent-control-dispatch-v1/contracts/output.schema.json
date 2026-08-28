@@ -13,7 +13,7 @@
         "changes_requested", "inconclusive", "failed", "implementation_identity_refused",
         "current_dispatch_refused", "focused_validation_required", "already_accepted",
         "already_pending", "pending_subject_conflict", "parent_attempt_refused",
-        "parent_reviewer_refused", "capacity_wait"
+        "parent_reviewer_refused", "capacity_wait", "normal_review"
       ]
     },
     "thread_id": {"type": "string"},
@@ -29,6 +29,14 @@
     "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "merge_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "profile": {"enum": ["low", "standard", "high"]},
+    "review_required": {"type": "boolean"},
+    "review_escalated": {"type": "boolean"},
+    "risk_triggers": {"type": "array", "uniqueItems": true, "items": {"enum": [
+      "security_privacy", "destructive_migration", "public_contract",
+      "production_exposure_cost", "concurrency_state_integrity",
+      "workflow_ci_integrity", "incomplete_diff_evidence",
+      "explicit_owner_request"
+    ]}},
     "policy_version": {"type": "string"},
     "eligible": {"type": "boolean"},
     "merged": {"type": "boolean"},
@@ -39,6 +47,11 @@
     "technical_retries": {"type": "integer", "minimum": 0},
     "projection_retries": {"type": "integer", "minimum": 0},
     "projection_failures": {"type": "integer", "minimum": 0},
+    "quarantines_created": {"type": "integer", "minimum": 0},
+    "quarantine_capacity_released": {"type": "integer", "minimum": 0},
+    "active_quarantines": {"type": "integer", "minimum": 0},
+    "oldest_quarantine_age_seconds": {"type": "integer", "minimum": 0},
+    "manual_interventions": {"type": "integer", "minimum": 0},
     "requested": {"type": "integer", "minimum": 0},
     "succeeded": {"type": "integer", "minimum": 0},
     "retryable": {"type": "integer", "minimum": 0},

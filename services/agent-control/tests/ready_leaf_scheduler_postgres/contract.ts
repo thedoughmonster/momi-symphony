@@ -69,7 +69,7 @@ export async function claim(
 ): Promise<Claim> {
   const rows = await sql<Claim[]>`
     select claimed, dispatch_id::text
-    from momi_agent_ops.claim_scheduler_candidate_v1(
+    from momi_agent_ops.claim_scheduler_candidate_v3(
       ${routeKey}, ${owner}::uuid, ${sha}, ${leaderGeneration},
       ${candidate.candidate_id}::uuid, ${candidate.generation},
       ${candidate.snapshot_version}
