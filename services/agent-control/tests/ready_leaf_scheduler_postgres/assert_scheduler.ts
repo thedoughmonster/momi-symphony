@@ -290,6 +290,10 @@ export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string):
   const candidate = await reconcile(sql, 33)
   const claimed = await claim(sql, ownerThree, 3, candidate)
   assert.equal(claimed.claimed, true)
+  await sql`
+    update momi_agent_ops.dispatches set work_status = 'claimed'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
   const [identity] = await sql<{ capability_token: string }[]>`
     select wake_capability_token::text as capability_token
     from momi_agent_ops.dispatches where dispatch_id = ${claimed.dispatch_id}::uuid
