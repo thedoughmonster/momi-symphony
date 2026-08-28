@@ -299,69 +299,63 @@ export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string):
     where dispatch_id = ${claimed.dispatch_id}::uuid
   `
 
-  const blocker = postgres(url, { max: 1, prepare: false })
   const heartbeatClient = postgres(url, { max: 1, prepare: false })
   const acceptanceClient = postgres(url, { max: 1, prepare: false })
-  await sql.unsafe(`
-    create function momi_agent_ops.test_pause_quarantine_insert()
-    returns trigger language plpgsql set search_path = '' as $$
-    begin
-      perform pg_catalog.pg_advisory_xact_lock(434434);
-      return new;
-    end;
-    $$;
-    create trigger test_pause_quarantine_insert
-    before insert on momi_agent_ops.scheduler_issue_quarantines
-    for each row execute function momi_agent_ops.test_pause_quarantine_insert();
-  `)
-  let releaseConflict = (): void => undefined
-  let conflictReady = (): void => undefined
-  const release = new Promise<void>((resolve) => { releaseConflict = resolve })
-  const ready = new Promise<void>((resolve) => { conflictReady = resolve })
-  const blockerWork = blocker.begin(async (transaction) => {
-    await transaction`select pg_catalog.pg_advisory_xact_lock(434434)`
-    conflictReady()
-    await release
+  let allowAcceptance = (): void => undefined
+  let acceptanceLocked = (): void => undefined
+  const proceed = new Promise<void>((resolve) => { allowAcceptance = resolve })
+  const locked = new Promise<void>((resolve) => { acceptanceLocked = resolve })
+  const acceptanceWork = acceptanceClient.begin(async (transaction) => {
+    await transaction`
+      select dispatch_id from momi_agent_ops.dispatches
+      where dispatch_id = ${claimed.dispatch_id}::uuid for update
+    `
+    acceptanceLocked()
+    await proceed
+    return transaction<{ accepted: boolean }[]>`
+      select momi_agent_ops.record_host_acceptance_v1(
+        ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
+        'racing-thread', 'racing-turn'
+      ) as accepted
+    `
   })
 
   try {
-    await ready
+    await locked
     const [{ pid: heartbeatPid }] = await heartbeatClient<{ pid: number }[]>`
-      select pg_backend_pid()::integer as pid
-    `
-    const [{ pid: acceptancePid }] = await acceptanceClient<{ pid: number }[]>`
       select pg_backend_pid()::integer as pid
     `
     const heartbeatWork = heartbeatClient<{ quarantined: number }[]>`
       select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
     `.then((rows) => rows)
     await waitForDatabaseLock(sql, heartbeatPid)
-    const acceptanceWork = acceptanceClient<{ accepted: boolean }[]>`
-      select momi_agent_ops.record_host_acceptance_v1(
-        ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
-        'racing-thread', 'racing-turn'
-      ) as accepted
-    `.then((rows) => rows)
-    await waitForDatabaseLock(sql, acceptancePid)
-    releaseConflict()
-    const [[heartbeat], [acceptance]] = await Promise.all([heartbeatWork, acceptanceWork])
-    await blockerWork
-    assert.equal(heartbeat.quarantined, 1)
-    assert.equal(acceptance.accepted, false)
+    allowAcceptance()
+    const [[acceptance], [heartbeat]] = await Promise.all([acceptanceWork, heartbeatWork])
+    assert.equal(acceptance.accepted, true)
+    assert.equal(heartbeat.quarantined, 0)
   } finally {
-    releaseConflict()
-    await blockerWork
+    allowAcceptance()
     await Promise.all([
-      blocker.end({ timeout: 2 }), heartbeatClient.end({ timeout: 2 }),
-      acceptanceClient.end({ timeout: 2 }),
+      heartbeatClient.end({ timeout: 2 }), acceptanceClient.end({ timeout: 2 }),
     ])
-    await sql.unsafe(`
-      drop trigger if exists test_pause_quarantine_insert
-        on momi_agent_ops.scheduler_issue_quarantines;
-      drop function if exists momi_agent_ops.test_pause_quarantine_insert();
-    `)
   }
 
+  const [accepted] = await sql<{ state: string; active_slots: number }[]>`
+    select slot.state,
+      (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
+        where occupied.state in ('reserved', 'running', 'quarantined')) as active_slots
+    from momi_agent_ops.scheduler_slots slot
+    where slot.dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.deepEqual(accepted, { state: "running", active_slots: 1 })
+  await sql`
+    update momi_agent_ops.scheduler_slots set lease_expires_at = now() - interval '1 second'
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  const [quarantinedHeartbeat] = await sql<{ quarantined: number }[]>`
+    select quarantined from momi_agent_ops.heartbeat_scheduler_slots_v2('{}'::uuid[])
+  `
+  assert.equal(quarantinedHeartbeat.quarantined, 1)
   const [quarantined] = await sql<{ state: string; active_slots: number }[]>`
     select slot.state,
       (select count(*)::integer from momi_agent_ops.scheduler_slots occupied
@@ -370,6 +364,18 @@ export async function assertHeartbeatAcceptanceLockOrder(sql: Sql, url: string):
     where slot.dispatch_id = ${claimed.dispatch_id}::uuid
   `
   assert.deepEqual(quarantined, { state: "quarantined", active_slots: 1 })
+  const [replayedAcceptance] = await sql<{ accepted: boolean }[]>`
+    select momi_agent_ops.record_host_acceptance_v1(
+      ${claimed.dispatch_id}::uuid, ${identity.capability_token}::uuid,
+      'racing-thread', 'racing-turn'
+    ) as accepted
+  `
+  assert.equal(replayedAcceptance.accepted, true)
+  const [absorbing] = await sql<{ state: string }[]>`
+    select state from momi_agent_ops.scheduler_slots
+    where dispatch_id = ${claimed.dispatch_id}::uuid
+  `
+  assert.equal(absorbing.state, "quarantined")
   await sql`
     update momi_agent_ops.scheduler_issue_quarantines
     set intervention_deadline_at = now() - interval '1 second',
