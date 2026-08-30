@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  LINEAR_HTTP_ERROR_BODY_LIMIT_BYTES,
   LINEAR_GRAPHQL_TIMEOUT_MS,
   LinearGraphqlError,
   linearGraphql,
@@ -22,6 +23,54 @@ async function withLinearToken(run: () => Promise<void>, token: string | null = 
     else Reflect.deleteProperty(globalThis, "Deno")
   }
 }
+
+test("classifies bounded Linear HTTP 400 rate-limit evidence", async () => {
+  const fetchImpl = (() => Promise.resolve(Response.json({
+    errors: [{
+      message: "private provider detail",
+      extensions: { code: "RATELIMITED" },
+    }],
+  }, { status: 400 }))) as typeof fetch
+  await expectCode("tracker_http_rate_limit", fetchImpl)
+})
+
+test("keeps unrelated HTTP 400 responses fail-closed and sanitized", async () => {
+  const privateMessage = "unrelated private provider detail"
+  for (const body of [
+    { errors: [{ message: privateMessage, extensions: { code: "BAD_USER_INPUT" } }] },
+    { data: null },
+  ]) {
+    const fetchImpl = (() => Promise.resolve(Response.json(body, { status: 400 }))) as typeof fetch
+    await expectCode("tracker_http_other", fetchImpl)
+  }
+})
+
+test("rejects malformed or ambiguous HTTP 400 rate-limit evidence", async () => {
+  const cases: Array<BodyInit> = [
+    "not json",
+    JSON.stringify({ errors: "RATELIMITED" }),
+    JSON.stringify({ errors: [{ extensions: null }] }),
+    JSON.stringify({ errors: [{ extensions: { code: "ratelimited" } }] }),
+    JSON.stringify({ errors: [
+      { extensions: { code: "RATELIMITED" } },
+      { extensions: { code: "BAD_USER_INPUT" } },
+    ] }),
+  ]
+  for (const body of cases) {
+    const fetchImpl = (() => Promise.resolve(new Response(body, { status: 400 }))) as typeof fetch
+    await expectCode("tracker_http_other", fetchImpl)
+  }
+})
+
+test("does not inspect an oversized HTTP 400 provider body", async () => {
+  const padding = "x".repeat(LINEAR_HTTP_ERROR_BODY_LIMIT_BYTES)
+  const body = JSON.stringify({
+    errors: [{ extensions: { code: "RATELIMITED" }, padding }],
+  })
+  assert.ok(new TextEncoder().encode(body).byteLength > LINEAR_HTTP_ERROR_BODY_LIMIT_BYTES)
+  const fetchImpl = (() => Promise.resolve(new Response(body, { status: 400 }))) as typeof fetch
+  await expectCode("tracker_http_other", fetchImpl)
+})
 
 async function expectCode(
   code: LinearGraphqlErrorCode,
