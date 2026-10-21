@@ -68,6 +68,12 @@ bounded invocation, and uncertain receipts. Optional PGlite tests use only a
 synthetic local fixture and an existing module supplied by `MOMI_PGLITE_MODULE`;
 they do not establish real multi-session locking or hosted execution.
 
+Required Linux CI also runs the retirement wrapper against the full historical
+schema in disposable PostgreSQL. It verifies active-producer rejection, a
+competing-session lock timeout, postcondition rollback, history preservation,
+and replay. Legacy behavior tests explicitly stop at the last pre-retirement
+migration; the dedicated test covers the later shutdown without weakening it.
+
 Re-enabling the trigger or any producer requires fresh explicit authorization
 and an outstanding-work check. Retirement alone does not prove that an external
 host is stopped or that a webhook registration has been removed. Endpoint deletion
