@@ -41,13 +41,18 @@ export const schedulerHarness = {
       returns bigint language sql as 'select 1::bigint';
     `)
     const { migrations } = await loadManagedMigrations()
+    // These fixtures exercise historical active behavior, before deliberate shutdown.
+    // The dedicated retirement test applies the shutdown after checking quiescence.
+    const legacyEnd = migrations.findIndex((migration) => migration.filename ===
+      "20260828213000_risk_proportional_review_and_quarantine.sql")
+    if (legacyEnd < 7) throw new Error("Historical scheduler migration baseline is missing")
     for (const migration of migrations.slice(0, 7)) await sql.unsafe(migration.sql)
     await sql`
       update momi_agent_ops.project_mappings
       set host_dispatch_url = 'https://host.example/v1/dispatch'
       where linear_project_name = 'Backend Stabilization'
     `
-    for (const migration of migrations.slice(7)) await sql.unsafe(migration.sql)
+    for (const migration of migrations.slice(7, legacyEnd + 1)) await sql.unsafe(migration.sql)
   },
   async start(): Promise<SchedulerDatabase> {
     const container = `momi-ready-leaf-${process.pid}-${Date.now()}`
