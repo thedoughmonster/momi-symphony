@@ -19,7 +19,30 @@ Production ref `viodfldzuoypnpqaagag` is forbidden.
 - Host secrets remain in root-owned mode-0600 `/etc/momi-agent-control/host.env`; reviewer
   App Server state remains under group-restricted `/var/lib/momi-agent-reviewer`.
 
-## Release
+## Retirement-only operation
+
+The `retirement` phase is a separate, reversible operator operation. It disables
+only `dispatch_agent_control_work` after checking that the legacy workflow is
+quiescent. It does not deploy a runtime, restart a host, apply pending migrations,
+or read/write either migration ledger. Use this phase only with explicit retirement
+authorization and a green reviewed commit merged to protected `main`.
+
+The job requires the owner repository, `main`, a manual workflow dispatch, and the
+exact commit before any credentialed step. It retains the protected `development`
+environment and existing project pin. Choose `retirement` and leave
+`runtime_function` set to `all`; no runtime deployment step runs. The fixed runner
+rechecks this boundary and the linked project, verifies the canonical checksum of
+the reviewed trigger migration, then submits one transaction through the pinned
+CLI's linked query route. It does not invoke the private migration runner.
+
+The server lock timeout is 2 seconds and statement timeout is 10 seconds per
+statement. The CLI call has a 60-second client deadline. These are not a total
+transaction duration guarantee. A failed or missing receipt is uncertain and
+requires read-only verification before any separately authorized retry; the
+runner never retries automatically. See [the retirement procedure](retirement.md)
+for the checks, receipt contract, and rollback boundary.
+
+## Activation release
 
 1. Merge a green pull request to protected `main`.
 2. Run the `preflight` phase of `Deploy development` with the exact validated

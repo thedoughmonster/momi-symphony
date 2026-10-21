@@ -8,7 +8,7 @@ and every future change to the private `momi_agent_ops` schema.
 
 ## Hard rules
 
-- Work only from a Linear issue in the Symphony Control Plane project.
+- Work from an explicitly authorized task or reviewed pull request; no tracker is mandatory.
 - Use feature branches; protect `main` and require the `CI` status check.
 - Keep `symphony-evaluation` disposable and independent from this repository.
 - Never add another scheduler or another path that invokes Symphony.
@@ -23,10 +23,10 @@ and every future change to the private `momi_agent_ops` schema.
 - Production deployment, promotion, or repository authority is not granted here.
 - Run focused tests while iterating and `pnpm check` before handoff.
 - Keep handwritten TypeScript files focused and independently testable.
-- Do not change downstream readiness, discovery-finalization, scheduler, or Slack-alert semantics unless their owning Linear leaf is active.
+- Change downstream readiness, discovery-finalization, scheduler, or Slack-alert semantics only within explicit recorded task scope.
 
 ## Delivery
 
-- Pull requests must name the owning Linear issue and include tests and rollback impact.
+- Pull requests must describe the authorized scope, tests and rollback impact.
 - Development release is manual, environment-gated, and limited to the configured development project.
-- Never merge or deploy to production without a separately approved issue.
+- Never merge or deploy to production without separate explicit approval for that action.
