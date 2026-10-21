@@ -12,7 +12,7 @@ test("development migrations use the CLI-owned short-lived login role", async ()
   assert.match(workflow, /pnpm migration:apply/)
   assert.equal(
     workflow.match(/unset SUPABASE_DB_PASSWORD PGPASSWORD/g)?.length,
-    3,
+    4,
   )
   assert.match(operations, /Supabase CLI obtains its own short-lived login role/)
 })

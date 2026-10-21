@@ -5,6 +5,6 @@
     "repository": "thedoughmonster/momi-symphony",
     "base_branch": "main",
     "active_states": ["Todo", "In Progress", "Rework"],
-    "active": true
+    "active": false
   }
 ]

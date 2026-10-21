@@ -12,5 +12,5 @@ assert.deepEqual(expected[0], {
   repository: "thedoughmonster/momi-symphony",
   base_branch: "main",
   active_states: ["Todo", "In Progress", "Rework"],
-  active: true,
+  active: false,
 })
